@@ -2,8 +2,9 @@ import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
-# Load environment variables from .env
-load_dotenv()
+# This tells Python to look for the .env file in the SAME folder as database.py
+env_path = os.path.join(os.path.dirname(__file__), '.env')
+load_dotenv(dotenv_path=env_path)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SECRET_KEY")
