@@ -34,4 +34,10 @@ A unified Discord bot and web dashboard designed for Monster Legends alliances t
 * **Dashboard Frontend:** Next.js (React) + Tailwind CSS
 * **Backend & Database:** Supabase (PostgreSQL, Auth, Realtime)
 * **Hosting:** Wispbyte (Bot) / Vercel (Dashboard)
-* **Billing:** Stripe
+* **Billing:** Stripe (under process)
+
+## 💼 Subscription & Support
+* **This platform operates on a Server Premium model. The first 7 days are free (Trial)
+*  **If you have any billing issues or need to claim subscription manually, please email to warbot.support@gmail.com
+
+*  Created by [lohit/lohit-byte]
