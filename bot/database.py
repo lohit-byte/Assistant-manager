@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
-# Load .env (searches upward from this file)
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 env_path = os.path.join(root_dir, '.env')
 load_dotenv(dotenv_path=env_path)
@@ -21,7 +20,6 @@ def get_or_create_guild(guild_id: int) -> dict:
     if res.data:
         return res.data[0]
     
-    # Upsert prevents race conditions if two events fire at once
     supabase.table("guilds").upsert(
         {"guild_id": guild_id, "premium_status": "trial"},
         on_conflict="guild_id",
@@ -41,10 +39,15 @@ def check_premium_status(guild_id: int) -> bool:
         
     if status == "trial":
         ends = guild.get("trial_ends_at")
-        if ends:
-            # Parse the ISO timestamp from Supabase
-            end_date = datetime.fromisoformat(ends.replace("Z", "+00:00"))
+        if not ends:
+            return True
+            
+        try:
+            clean_date = ends.replace("Z", "+00:00")
+            end_date = datetime.fromisoformat(clean_date)
             return end_date > datetime.now(timezone.utc)
-        return False
-        
+        except Exception as e:
+            print(f"Error parsing trial date '{ends}': {e}")
+            return True
+            
     return False
