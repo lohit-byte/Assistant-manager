@@ -1,14 +1,16 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useParams } from 'next/navigation'
 import { Save, AlertCircle } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 
-// MOVED OUTSIDE COMPONENT
 const supabase = createClient()
 
-export default function WarSettingsPage({ params }: { params: { guildId: string } }) {
-  const guildId = params.guildId
+export default function WarSettingsPage() {
+  const params = useParams()
+  const guildId = params.guildId as string
+
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState({ text: '', type: '' })
@@ -23,7 +25,7 @@ export default function WarSettingsPage({ params }: { params: { guildId: string 
       setLoading(false)
     }
     fetchData()
-  }, [guildId]) // Removed supabase from deps
+  }, [guildId])
 
   const saveWar = async () => {
     setSaving(true)
@@ -33,8 +35,9 @@ export default function WarSettingsPage({ params }: { params: { guildId: string 
       exempt_absent: warSettings.exempt_absent
     }, { onConflict: 'guild_id' })
     
-    if (error) setMessage({ text: `Failed: ${error.message}`, type: 'error' })
-    else {
+    if (error) {
+      setMessage({ text: `Failed: ${error.message}`, type: 'error' })
+    } else {
       setMessage({ text: 'War settings saved successfully!', type: 'success' })
       setTimeout(() => setMessage({ text: '', type: '' }), 3000)
     }
@@ -48,7 +51,8 @@ export default function WarSettingsPage({ params }: { params: { guildId: string 
       <h1 className="text-3xl font-bold mb-8">War Settings</h1>
       {message.text && (
         <div className={`p-4 mb-6 rounded-lg flex items-center space-x-3 ${message.type === 'error' ? 'bg-red-900/50 text-red-200 border border-red-800' : 'bg-green-900/50 text-green-200 border border-green-800'}`}>
-          <AlertCircle className="w-5 h-5" /><span>{message.text}</span>
+          <AlertCircle className="w-5 h-5" />
+          <span>{message.text}</span>
         </div>
       )}
       <div className="bg-slate-900 border border-slate-800 p-8 rounded-xl space-y-8">
