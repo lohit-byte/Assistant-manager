@@ -1,13 +1,13 @@
 'use client'
 
-import { use, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Save, AlertCircle } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 
+const supabase = createClient()
+
 export default function RaceSettingsPage({ params }: { params: { guildId: string } }) {
   const guildId = params.guildId
-  const supabase = createClient()
-
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState({ text: '', type: '' })
@@ -22,7 +22,7 @@ export default function RaceSettingsPage({ params }: { params: { guildId: string
       setLoading(false)
     }
     fetchData()
-  }, [guildId, supabase])
+  }, [guildId])
 
   const saveRace = async () => {
     setSaving(true)
