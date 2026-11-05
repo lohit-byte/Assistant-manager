@@ -208,6 +208,9 @@ class MazeTracker(commands.Cog):
         elif action == "ping":
             raw = (arg1 or "") + (arg2 or "")
             m = re.fullmatch(r"(\d{1,3})%", raw)
+
+            if not ctx.channel.permissions_for(ctx.guild.me).mention_everyone:
+    return await ctx.send("❌ I don't have permission to mention @everyone in this channel.")
             
             if not m or not (1 <= int(m.group(1)) <= 100):
                 return await ctx.send("❌ Use a percentage from 1–100, e.g. `!maze ping 20%`")
