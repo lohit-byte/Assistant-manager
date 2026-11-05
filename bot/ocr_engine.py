@@ -10,9 +10,10 @@ def clean_val(v_str):
         m = re.match(r'\s*([\d.]+)\s*([KMB])?', str(v_str).upper())
         if not m: return 0.0
         return float(m.group(1)) * {'K': 1e3, 'M': 1e6, 'B': 1e9}.get(m.group(2), 1)
-    except (ValueError, AttributeError):
+    except :
         return 0.0
-
+# Then in the DYP return:
+"dyp": {"progress": int(clean_val(extracted_data["dyp"]["progress"])), ...}
 async def process_race_image(image_bytes):
     try:
         api_key = os.environ.get("OCR_SPACE_API_KEY")
