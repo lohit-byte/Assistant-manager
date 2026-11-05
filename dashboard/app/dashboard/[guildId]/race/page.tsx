@@ -1,13 +1,16 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useParams } from 'next/navigation'
 import { Save, AlertCircle } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 
 const supabase = createClient()
 
-export default function RaceSettingsPage({ params }: { params: { guildId: string } }) {
-  const guildId = params.guildId
+export default function RaceSettingsPage() {
+  const params = useParams()
+  const guildId = params.guildId as string
+
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState({ text: '', type: '' })
