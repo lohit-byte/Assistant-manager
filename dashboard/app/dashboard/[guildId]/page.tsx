@@ -1,10 +1,6 @@
 'use client'
 
-import { use } from 'react'
-
-export default function OverviewPage({ params }: { params: Promise<{ guildId: string }> }) {
-  const resolvedParams = use(params)
-
+export default function OverviewPage({ params }: { params: { guildId: string } }) {
   return (
     <div className="max-w-2xl">
       <h1 className="text-3xl font-bold mb-8">Server Overview</h1>
@@ -14,7 +10,7 @@ export default function OverviewPage({ params }: { params: Promise<{ guildId: st
           Select a tab on the left to configure the bot for this server.
         </p>
         <div className="p-4 bg-slate-950 rounded border border-slate-800 text-sm text-slate-500 font-mono">
-          Guild ID: {resolvedParams.guildId}
+          Guild ID: {params.guildId}
         </div>
       </div>
     </div>
