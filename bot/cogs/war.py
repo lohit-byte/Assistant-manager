@@ -28,6 +28,21 @@ def join_names(items, limit=1000):
     text = ", ".join(i["name"] for i in items)
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
+def progress_bar(current, total, length=20):
+    """Generates a text progress bar."""
+    if total == 0: return "░" * length
+    fraction = current / total
+    filled = int(length * fraction)
+    return "█" * filled + "░" * (length - filled)
+
+def fmt_td(td):
+    """Formats a timedelta into a clean string."""
+    total_seconds = int(td.total_seconds())
+    if total_seconds < 0: total_seconds = 0
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, _ = divmod(remainder, 60)
+    return f"{hours}h {minutes}m"
+
 async def get_aliases(guild_id):
     res = await asyncio.to_thread(supabase.table("aliases").select("alias_name, discord_id").eq("guild_id", guild_id).execute)
     return {row["alias_name"]: row["discord_id"] for row in res.data}
@@ -37,7 +52,7 @@ class WarTracker(commands.Cog):
         self.bot = bot
         self.timers = {}
         self.status_tasks = {}
-        self.done_replies = {}  # reply_msg_id -> removed name
+        self.done_replies = {}  
         self.locks = defaultdict(asyncio.Lock)
 
     async def cog_load(self):
@@ -65,7 +80,6 @@ class WarTracker(commands.Cog):
                 
                 start = to_utc(war["war_start"])
                 now = datetime.now(timezone.utc)
-                
                 end = start + timedelta(hours=24 if war["phase"] in DEFENCE else 48)
                 
                 if end > now:
@@ -73,7 +87,6 @@ class WarTracker(commands.Cog):
                         self.timer_countdown(war["guild_id"], channel, war["phase"], end)
                     )
                 elif war["phase"] not in DEFENCE:
-                    # War ended while bot was offline
                     await self.finish_war(war["guild_id"], channel)
                     continue
                 
@@ -105,7 +118,7 @@ class WarTracker(commands.Cog):
             return await self.war_absent(ctx, subaction, args)
         if action == "report":
             return await self.war_report(ctx)
-        if action == "cancel":
+        if action in ("cancel", "reset"):
             return await self.cancel_war(ctx)
             
         if action in ("defence", "defense", "attack"):
@@ -142,7 +155,7 @@ class WarTracker(commands.Cog):
                 "status_message_id": None,
                 "status_channel_id": None,
             }
-            if not continuing:  # Fresh war only
+            if not continuing: 
                 war_data["missing_list"] = []
                 war_data["absent_list"] = []
 
@@ -150,9 +163,10 @@ class WarTracker(commands.Cog):
             
             embed = discord.Embed(
                 title=f"⚔️ War {phase.capitalize()} Phase Started",
-                description=f"**Ends:** <t:{int(end_time.timestamp())}:R>",
+                description=f"The bot is now tracking the timer.\n**Ends:** <t:{int(end_time.timestamp())}:R>",
                 color=discord.Color.blue()
             )
+            embed.set_footer(text="Status updates every minute.")
             await ctx.send(embed=embed)
             
             if ctx.guild.id in self.timers: self.timers[ctx.guild.id].cancel()
@@ -180,7 +194,12 @@ class WarTracker(commands.Cog):
                 await asyncio.sleep(delay)
                 
             if phase in DEFENCE:
-                await channel.send("⚠️ **Defence Phase has ended!** Use `!war attack ends 24h`")
+                embed = discord.Embed(
+                    title="⚠️ Defence Phase Ended",
+                    description="The attack phase has begun!\nStaff: Use `!war attack ends 24h` to start the next timer.",
+                    color=discord.Color.orange()
+                )
+                await channel.send(embed=embed)
             else:
                 await self.finish_war(guild_id, channel)
         except asyncio.CancelledError:
@@ -210,11 +229,19 @@ class WarTracker(commands.Cog):
                 try:
                     msg = await channel.fetch_message(res.data[0]["status_message_id"])
                     await msg.edit(embed=discord.Embed(
-                        title="🏁 War Ended", description="Use `!war report` for the final list.",
-                        color=discord.Color.red()))
+                        title="🏁 War Ended", 
+                        description="Use `!war report` for the final missing list.",
+                        color=discord.Color.red()
+                    ))
                 except discord.HTTPException:
                     pass
-            await channel.send("🏁 **War has ended!** Use `!war report` to see the final missing list.")
+            
+            embed = discord.Embed(
+                title="🏁 The 48-Hour War Has Ended!",
+                description="Use `!war report` to view who missed their attacks and issue warnings.",
+                color=discord.Color.red()
+            )
+            await channel.send(embed=embed)
         except Exception as e:
             print(f"Error finishing war for guild {guild_id}: {e}")
 
@@ -224,19 +251,38 @@ class WarTracker(commands.Cog):
         
         war = res.data[0]
         start = to_utc(war["war_start"])
+        now = datetime.now(timezone.utc)
         
-        embed = discord.Embed(title="🛡️ Active War Status", color=discord.Color.gold())
-        
-        if war["phase"] in DEFENCE:
-            end = start + timedelta(hours=24)
-            embed.description = f"**Phase:** Defence\n**Ends:** <t:{int(end.timestamp())}:R>"
-        else:
-            end = start + timedelta(hours=48)
-            embed.description = f"**Phase:** Attack\n**Ends:** <t:{int(end.timestamp())}:R>"
-            
         missing = war.get("missing_list") or []
         absent = war.get("absent_list") or []
         
+        if war["phase"] in DEFENCE:
+            end = start + timedelta(hours=24)
+            bar = progress_bar((now - start).total_seconds(), 86400)
+            embed = discord.Embed(
+                title="🛡️ DEFENCE PHASE",
+                color=discord.Color.blue(),
+                description=(
+                    f"{bar}\n"
+                    f"**Time left in defence:** {fmt_td(end - now)}\n"
+                    f"**Defence ends:** <t:{int(end.timestamp())}:F> (<t:{int(end.timestamp())}:R>)\n"
+                    f"**War ends:** <t:{int((start + timedelta(hours=48)).timestamp())}:F>"
+                )
+            )
+        else:
+            end = start + timedelta(hours=48)
+            bar = progress_bar((now - (start + timedelta(hours=24))).total_seconds(), 86400)
+            embed = discord.Embed(
+                title="⚔️ ATTACK PHASE",
+                color=discord.Color.red(),
+                description=(
+                    f"{bar}\n"
+                    f"**Time left in attack:** {fmt_td(end - now)}\n"
+                    f"**Attack ends:** <t:{int(end.timestamp())}:F> (<t:{int(end.timestamp())}:R>)\n"
+                    f"**War started:** <t:{int(start.timestamp())}:F>"
+                )
+            )
+            
         if missing:
             embed.add_field(name=f"⚠️ Missing Attacks ({len(missing)})", value=join_names(missing), inline=False)
         else:
@@ -245,6 +291,7 @@ class WarTracker(commands.Cog):
         if absent:
             embed.add_field(name=f"🏖️ Excused ({len(absent)})", value=join_names(absent), inline=False)
             
+        embed.set_footer(text="Updates automatically every minute")
         return embed
 
     async def status_updater(self, guild_id, message):
@@ -298,8 +345,20 @@ class WarTracker(commands.Cog):
                 return await ctx.send("ℹ️ No active war to cancel.")
                 
             if ctx.guild.id in self.timers: self.timers[ctx.guild.id].cancel()
-            await self.finish_war(ctx.guild.id, ctx.channel)
-            await ctx.send("🛑 War tracking cancelled.")
+            
+            task = self.status_tasks.pop(ctx.guild.id, None)
+            if task: task.cancel()
+            
+            await asyncio.to_thread(
+                supabase.table("wars").update({"is_active": False, "phase": "ended"}).eq("guild_id", ctx.guild.id).execute
+            )
+            
+            embed = discord.Embed(
+                title="🛑 War Tracking Cancelled",
+                description="The timers and status updates have been stopped.",
+                color=discord.Color.light_grey()
+            )
+            await ctx.send(embed=embed)
         except Exception as e:
             await ctx.send(f"❌ Database error: {e}")
 
@@ -336,12 +395,16 @@ class WarTracker(commands.Cog):
                 if not any(m.get("name").lower() == name for m in missing):
                     missing.append({"name": name})
                     await asyncio.to_thread(supabase.table("wars").update({"missing_list": missing}).eq("guild_id", ctx.guild.id).execute)
-                await ctx.send(f"✅ Added `{name}` to missing.")
+                
+                embed = discord.Embed(description=f"✅ Added `{name}` to the missing list.", color=discord.Color.green())
+                await ctx.send(embed=embed)
                 
             elif subaction == "remove":
                 missing = [m for m in missing if m.get("name").lower() != name]
                 await asyncio.to_thread(supabase.table("wars").update({"missing_list": missing}).eq("guild_id", ctx.guild.id).execute)
-                await ctx.send(f"✅ Removed `{name}` from missing.")
+                
+                embed = discord.Embed(description=f"✅ Removed `{name}` from the missing list.", color=discord.Color.green())
+                await ctx.send(embed=embed)
 
         except Exception as e:
             await ctx.send(f"❌ Database error: {e}")
@@ -369,12 +432,16 @@ class WarTracker(commands.Cog):
                     absent.append({"name": name})
                     missing = [m for m in missing if m.get("name").lower() != name]
                     await asyncio.to_thread(supabase.table("wars").update({"absent_list": absent, "missing_list": missing}).eq("guild_id", ctx.guild.id).execute)
-                await ctx.send(f"🏖️ Added `{name}` to excused list.")
+                
+                embed = discord.Embed(description=f"🏖️ Added `{name}` to the excused list.", color=discord.Color.green())
+                await ctx.send(embed=embed)
                 
             elif subaction == "remove":
                 absent = [a for a in absent if a.get("name").lower() != name]
                 await asyncio.to_thread(supabase.table("wars").update({"absent_list": absent}).eq("guild_id", ctx.guild.id).execute)
-                await ctx.send(f"✅ Removed `{name}` from excused list.")
+                
+                embed = discord.Embed(description=f"✅ Removed `{name}` from the excused list.", color=discord.Color.green())
+                await ctx.send(embed=embed)
         except Exception as e:
             await ctx.send(f"❌ Database error: {e}")
 
@@ -399,11 +466,17 @@ class WarTracker(commands.Cog):
                     "issued_by": ctx.author.id
                 }).execute)
                 
-                await ctx.send(f"📌 **{member.display_name}** has been warned.")
+                embed = discord.Embed(
+                    title="⚠️ Warning Issued",
+                    description=f"**Player:** {member.mention}\n**Reason:** {reason_text}",
+                    color=discord.Color.orange()
+                )
+                await ctx.send(embed=embed)
+                
                 try:
                     await member.send(f"⚠️ You received a warning from **{ctx.guild.name}** staff.\nReason: {reason_text}")
                 except discord.HTTPException:
-                    await ctx.send("*(Couldn't DM the user, their DMs are closed)*")
+                    pass
             except Exception as e:
                 await ctx.send(f"❌ Database error: {e}")
 
@@ -412,11 +485,11 @@ class WarTracker(commands.Cog):
                 res = await asyncio.to_thread(supabase.table("warnings").select("*").eq("guild_id", ctx.guild.id).eq("discord_id", member.id).execute)
                 if not res.data: return await ctx.send(f"✅ **{member.display_name}** has no warnings.")
                 
-                embed = discord.Embed(title=f"Warnings for {member.display_name}", color=discord.Color.red())
+                embed = discord.Embed(title=f"📋 Warnings for {member.display_name}", color=discord.Color.red())
                 for w in res.data[-10:]:
                     ts = to_utc(w.get("created_at"))
                     when = f"<t:{int(ts.timestamp())}:d>" if ts else "Unknown date"
-                    embed.add_field(name="Warning", value=f"{when} — {w['reason']}", inline=False)
+                    embed.add_field(name=f"Warning — {when}", value=w['reason'], inline=False)
                 await ctx.send(embed=embed)
             except Exception as e:
                 await ctx.send(f"❌ Database error: {e}")
