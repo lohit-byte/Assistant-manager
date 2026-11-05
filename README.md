@@ -1,8 +1,8 @@
-# ⚔️ Monster Legends Team Manager Bot & Dashboard
+# ⚔️ Monster Legends Team Manager Bot with Dashboard
 
 A unified Discord bot and web dashboard designed for Monster Legends alliances to manage Wars, Races, and Maze Islands. Built as a SaaS platform with premium features unlocked via server subscriptions.
 
-## ✨ Features
+# ✨ Features
 
 ### ⚔️ War Tracker
 * **Dynamic Timers:** 48-hour phase timers (Defense & Attack) managed via Discord commands.
