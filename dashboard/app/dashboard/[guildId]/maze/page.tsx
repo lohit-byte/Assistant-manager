@@ -1,13 +1,13 @@
 'use client'
 
-import { use, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Save, AlertCircle } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 
+const supabase = createClient()
+
 export default function MazeSettingsPage({ params }: { params: { guildId: string } }) {
   const guildId = params.guildId
-  const supabase = createClient()
-
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState({ text: '', type: '' })
@@ -34,18 +34,19 @@ export default function MazeSettingsPage({ params }: { params: { guildId: string
       setLoading(false)
     }
     fetchData()
-  }, [guildId, supabase])
+  }, [guildId])
 
   const saveMaze = async () => {
     setSaving(true)
     const startObj = new Date(`${mazeSettings.event_start}T11:00:00Z`)
     const endObj = new Date(`${mazeSettings.event_end}T11:00:00Z`)
     
+    // BIGINT FIX: Just pass the string directly, Supabase handles it.
     const { error } = await supabase.from('maze_schedules').upsert({
       guild_id: guildId, maze_type: mazeSettings.maze_type,
       event_start: startObj.toISOString(), event_end: endObj.toISOString(),
       ping_enabled_global: mazeSettings.ping_enabled_global,
-      channel_id: parseInt(mazeSettings.channel_id) || null 
+      channel_id: mazeSettings.channel_id ? mazeSettings.channel_id : null 
     }, { onConflict: 'guild_id' })
     
     if (error) setMessage({ text: `Failed: ${error.message}`, type: 'error' })
