@@ -37,6 +37,7 @@ class MonsterBot(commands.Bot):
                     print(f"❌ Failed to load {filename}: {e}")
 
 bot = MonsterBot()
+bot.remove_command("help")
 
 @bot.event
 async def on_ready():
