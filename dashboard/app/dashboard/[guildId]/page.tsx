@@ -1,6 +1,11 @@
 'use client'
 
-export default function OverviewPage({ params }: { params: { guildId: string } }) {
+import { useParams } from 'next/navigation'
+
+export default function OverviewPage() {
+  const params = useParams()
+  const guildId = params.guildId as string
+
   return (
     <div className="max-w-2xl">
       <h1 className="text-3xl font-bold mb-8">Server Overview</h1>
@@ -10,7 +15,7 @@ export default function OverviewPage({ params }: { params: { guildId: string } }
           Select a tab on the left to configure the bot for this server.
         </p>
         <div className="p-4 bg-slate-950 rounded border border-slate-800 text-sm text-slate-500 font-mono">
-          Guild ID: {params.guildId}
+          Guild ID: {guildId}
         </div>
       </div>
     </div>
