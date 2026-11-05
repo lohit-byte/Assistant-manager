@@ -10,9 +10,8 @@ interface Alias {
   alias_name: string;
 }
 
-export default function AliasManagerPage({ params }: { params: Promise<{ guildId: string }> }) {
-  const resolvedParams = use(params)
-  const guildId = resolvedParams.guildId
+export default function AliasManagerPage({ params }: { params: { guildId: string } }) {
+  const guildId = params.guildId
   const supabase = createClient()
 
   const [loading, setLoading] = useState(true)
