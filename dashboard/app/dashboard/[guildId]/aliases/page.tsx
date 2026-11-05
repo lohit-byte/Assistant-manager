@@ -1,8 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Save, AlertCircle, Trash2, Plus } from 'lucide-react'
+import { useParams } from 'next/navigation' // <-- ADDED
+import { AlertCircle, Trash2, Plus } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
+
+const supabase = createClient() // <-- MOVED OUTSIDE COMPONENT
 
 interface Alias {
   id: number;
@@ -10,19 +13,17 @@ interface Alias {
   alias_name: string;
 }
 
-export default function AliasManagerPage({ params }: { params: { guildId: string } }) {
-  const guildId = params.guildId
-  const supabase = createClient()
+export default function AliasManagerPage() {
+  const params = useParams() // <-- ADDED
+  const guildId = params.guildId as string // <-- ADDED
 
   const [loading, setLoading] = useState(true)
   const [aliases, setAliases] = useState<Alias[]>([])
   
-  // Form State
   const [newDiscordId, setNewDiscordId] = useState('')
   const [newAliasName, setNewAliasName] = useState('')
   const [message, setMessage] = useState({ text: '', type: '' })
 
-  // Fetch Aliases
   const fetchAliases = async () => {
     const { data } = await supabase
       .from('aliases')
@@ -36,14 +37,12 @@ export default function AliasManagerPage({ params }: { params: { guildId: string
 
   useEffect(() => {
     fetchAliases()
-  }, [guildId, supabase])
+  }, [guildId]) // <-- Removed supabase from deps
 
-  // Add Alias
   const handleAddAlias = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newDiscordId || !newAliasName) return
 
-    // Remove any non-numbers from the Discord ID just in case they pasted a mention like <@123>
     const cleanId = newDiscordId.replace(/\D/g, '')
     const cleanAlias = newAliasName.trim().toLowerCase()
 
@@ -59,12 +58,11 @@ export default function AliasManagerPage({ params }: { params: { guildId: string
       setMessage({ text: 'Alias added successfully!', type: 'success' })
       setNewDiscordId('')
       setNewAliasName('')
-      fetchAliases() // Refresh list
+      fetchAliases()
     }
     setTimeout(() => setMessage({ text: '', type: '' }), 3000)
   }
 
-  // Delete Alias
   const handleDelete = async (id: number) => {
     const { error } = await supabase.from('aliases').delete().eq('id', id)
     if (!error) {
@@ -100,7 +98,6 @@ export default function AliasManagerPage({ params }: { params: { guildId: string
                   onChange={(e) => setNewDiscordId(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple-500"
                 />
-                <p className="text-xs text-slate-500 mt-1">Right-click user in Discord (Dev Mode) to copy ID.</p>
               </div>
               <div>
                 <label className="block text-sm text-slate-400 mb-1">Alias Name</label>
