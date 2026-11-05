@@ -212,7 +212,7 @@ class RaceTracker(commands.Cog):
             try:
                 (ofa_t, ofa_d), (dyp_r, dyp_d), (je_t, je_d) = parse_node_args(args)
                 desc = f"OFA: {ofa_d} | DYP: {dyp_d} | JE: {je_d}"
-                await self._save_new_node(ctx, new_lap, new_node, ofa_t, int(dyp_r), je_t, desc, 0, "0")
+                await self._save_new_node(ctx, new_lap, new_node, ofa_t, int(float(dyp_r)), je_t, desc, 0, "0")
                 return
             except ValueError:
                 return await ctx.send("❌ Invalid format. Use `!race newnode 50 hatch | 10 breed | 5 craft`")
