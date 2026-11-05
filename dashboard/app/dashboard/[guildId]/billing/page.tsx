@@ -5,9 +5,8 @@ import { ShieldCheck, Calendar, ArrowRight, ShieldAlert } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import Link from 'next/link'
 
-export default function BillingPage({ params }: { params: Promise<{ guildId: string }> }) {
-  const resolvedParams = use(params)
-  const guildId = resolvedParams.guildId
+export default function BillingPage({ params }: { params: { guildId: string } }) {
+  const guildId = params.guildId
   const supabase = createClient()
 
   const [loading, setLoading] = useState(true)
