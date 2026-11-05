@@ -1,13 +1,14 @@
 import discord
 from discord.ext import commands
+import re
 
 class MazeTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     @commands.command(name="maze")
-    async def maze_group(self, ctx, action: str = None, args: str = None):
-        """Usage: !maze ping 20%"""
+    @commands.guild_only()
+    async def maze_group(self, ctx, action: str = None, *, args: str = None):
         if not action:
             return await ctx.send("Usage: `!maze ping <percentage>`")
 
@@ -17,16 +18,20 @@ class MazeTracker(commands.Cog):
             if not ctx.author.guild_permissions.administrator:
                 return await ctx.send("❌ Only Admins can trigger maze pings.")
                 
-            if not args:
-                return await ctx.send("❌ Please provide a discount amount. (e.g., `!maze ping 20%`)")
+            if not args or not re.fullmatch(r"\d{1,3}\s?%", args.strip()):
+                return await ctx.send("❌ Use a percentage, e.g. `!maze ping 20%`")
 
             embed = discord.Embed(
                 title="🗺️ Maze Island Discount!",
-                description=f"🚨 **{args} Discount is live right now!**\n\nSpend your Maze Coins!",
+                description=f"🚨 **{args.strip()} Discount is live right now!**\n\nSpend your Maze Coins!",
                 color=discord.Color.purple()
             )
-            # Ping the role or everyone
-            await ctx.send(content="@everyone", embed=embed)
+            
+            await ctx.send(
+                content="@everyone",
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(everyone=True)
+            )
 
 async def setup(bot):
     await bot.add_cog(MazeTracker(bot))
