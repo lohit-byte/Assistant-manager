@@ -5,15 +5,13 @@ import os
 from PIL import Image
 
 def clean_val(v_str):
-    """Parses strings like '4.84 M' or '484M' into a float."""
     try:
         m = re.match(r'\s*([\d.]+)\s*([KMB])?', str(v_str).upper())
         if not m: return 0.0
         return float(m.group(1)) * {'K': 1e3, 'M': 1e6, 'B': 1e9}.get(m.group(2), 1)
-    except :
+    except (ValueError, AttributeError):
         return 0.0
-# Then in the DYP return:
-"dyp": {"progress": int(clean_val(extracted_data["dyp"]["progress"])), ...}
+
 async def process_race_image(image_bytes):
     try:
         api_key = os.environ.get("OCR_SPACE_API_KEY")
@@ -21,13 +19,11 @@ async def process_race_image(image_bytes):
             print("❌ Missing OCR_SPACE_API_KEY in environment variables.")
             return None
 
-        # 1. Open and crop image (Race tasks are on the right half)
         img = Image.open(io.BytesIO(image_bytes))
         w, h = img.size
         img = img.crop((int(w * 0.55), 0, w, h))
         img = img.convert('RGB')
         
-        # 2. Compress to under 1MB to satisfy the free API tier
         buf = io.BytesIO()
         for quality in (90, 80, 70, 60, 50):
             buf = io.BytesIO()
@@ -43,7 +39,6 @@ async def process_race_image(image_bytes):
         for k, v in payload.items():
             form.add_field(k, v)
 
-        # 3. Send to OCR.space
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25)) as session:
             async with session.post('https://api.ocr.space/parse/image', data=form, headers=headers) as resp:
                 data = await resp.json(content_type=None)
@@ -56,7 +51,6 @@ async def process_race_image(image_bytes):
         
         if not lines: return None
 
-        # 4. Find the Y-coordinates of the headers
         headers_y = {}
         for ln in lines:
             text = ln.get("LineText", "").lower()
@@ -66,7 +60,6 @@ async def process_race_image(image_bytes):
 
         if len(headers_y) != 3: return None
 
-        # 5. Extract numbers (e.g., "34/40", "3.5M / 10M")
         sorted_h = sorted(headers_y.items(), key=lambda x: x[1])
         FRAC = re.compile(r'([\dOo]+(?:[.,]\d+)?(?:\s*[KMB]\b)?)\s*[/|\\]\s*(\d+(?:[.,]\d+)?(?:\s*[KMB]\b)?)', re.IGNORECASE)
         bounds = [y for _, y in sorted_h] + [10**9]
@@ -87,7 +80,6 @@ async def process_race_image(image_bytes):
 
         if len(extracted_data) != 3: return None
 
-        # 6. Fix OCR decimal errors (e.g., 484 instead of 4.84)
         for key in ["ofa", "je"]:
             if key in extracted_data:
                 p_str = extracted_data[key]["progress"]
@@ -95,7 +87,6 @@ async def process_race_image(image_bytes):
                 if clean_val(p_str) > clean_val(t_str):
                     extracted_data[key]["progress"] = t_str
 
-        # 7. Extract Task Descriptions
         def get_task_text(start_y, end_y=None):
             text = ""
             for ln in lines:
@@ -117,10 +108,8 @@ async def process_race_image(image_bytes):
                 color = "Gold" if "gold relic" in text_block else ("Silver" if "silver relic" in text_block else "S")
                 return f"Level Up {color} Relics".replace("  ", " ")
             if "craft" in text_block:
-                # Dynamic Rune Level Matcher (L1 - L14)
                 lv = re.search(r'(?:lvl|l|level)\s*(\d+)', text_block)
-                if lv:
-                    return f"Craft Level {lv.group(1)} Runes"
+                if lv: return f"Craft Level {lv.group(1)} Runes"
                 return "Craft Runes"
             if re.search(r'\bwin\b', text_block): return "Win Battles"
             if "feed" in text_block: return "Feed Food"
@@ -131,7 +120,7 @@ async def process_race_image(image_bytes):
 
         return {
             "ofa": {"progress": norm(extracted_data["ofa"]["progress"]), "target": norm(extracted_data["ofa"]["target"]), "task": extract_task(ofa_text, "Race Task")},
-            "dyp": {"progress": int(float(re.sub(r'[^\d.]', '', extracted_data["dyp"]["progress"]))), "target": int(float(re.sub(r'[^\d.]', '', extracted_data["dyp"]["target"]))), "task": extract_task(dyp_text, "Race Task")},
+            "dyp": {"progress": int(clean_val(extracted_data["dyp"]["progress"])), "target": int(clean_val(extracted_data["dyp"]["target"])), "task": extract_task(dyp_text, "Race Task")},
             "je":  {"progress": norm(extracted_data["je"]["progress"]), "target": norm(extracted_data["je"]["target"]), "task": extract_task(je_text, "Race Task")}
         }
     except Exception as e:
