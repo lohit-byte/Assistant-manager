@@ -2,16 +2,12 @@
 
 import { Swords, Trophy, Map, Settings, ArrowLeft, Users, CreditCard } from 'lucide-react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useParams } from 'next/navigation'
 
-export default function DashboardLayout({
-  children,
-  params,
-}: {
-  children: React.ReactNode
-  params: { guildId: string } // <-- Changed from Promise to direct object
-}) {
-  const guildId = params.guildId // <-- Changed
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  // Use the useParams hook to safely get the guildId
+  const params = useParams()
+  const guildId = params.guildId as string
   const pathname = usePathname()
 
   const navItems = [
