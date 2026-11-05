@@ -4,9 +4,8 @@ import { use, useEffect, useState } from 'react'
 import { Save, AlertCircle } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 
-export default function WarSettingsPage({ params }: { params: Promise<{ guildId: string }> }) {
-  const resolvedParams = use(params)
-  const guildId = resolvedParams.guildId
+export default function WarSettingsPage({ params }: { params: { guildId: string } }) {
+  const guildId = params.guildId // <-- Just do this directly
   const supabase = createClient()
 
   const [loading, setLoading] = useState(true)
