@@ -40,7 +40,7 @@ def check_premium_status(guild_id: int) -> bool:
     if status == "trial":
         ends = guild.get("trial_ends_at")
         if not ends:
-            return True
+            return False
             
         try:
             clean_date = ends.replace("Z", "+00:00")
@@ -48,6 +48,6 @@ def check_premium_status(guild_id: int) -> bool:
             return end_date > datetime.now(timezone.utc)
         except Exception as e:
             print(f"Error parsing trial date '{ends}': {e}")
-            return True
+            return False
             
     return False
