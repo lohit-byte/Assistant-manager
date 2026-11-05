@@ -35,10 +35,8 @@ class WarTracker(commands.Cog):
                 if not channel or not war.get("phase_end"):
                     continue
                 
-                # Ensure timezone aware
                 end = datetime.fromisoformat(war["phase_end"].replace("Z", "+00:00"))
                 
-                # Cancel if already past
                 if end <= datetime.now(timezone.utc):
                     await asyncio.to_thread(supabase.table("wars").update({"is_active": False}).eq("guild_id", war["guild_id"]).execute)
                     continue
@@ -63,7 +61,6 @@ class WarTracker(commands.Cog):
             )
             await channel.send("🏁 **War has ended!** Use `!war report` to see who missed attacks.")
         
-        # Clean up timer dict
         self.timers.pop(guild_id, None)
 
     @commands.command(name="war")
@@ -115,7 +112,6 @@ class WarTracker(commands.Cog):
         }
         
         try:
-            # Upsert with on_conflict
             await asyncio.to_thread(
                 supabase.table("wars").upsert(war_data, on_conflict="guild_id").execute
             )
@@ -127,7 +123,6 @@ class WarTracker(commands.Cog):
             )
             await ctx.send(embed=embed)
             
-            # Cancel old timer if exists
             old = self.timers.pop(ctx.guild.id, None)
             if old:
                 old.cancel()
@@ -186,7 +181,6 @@ class WarTracker(commands.Cog):
             name = args.strip().lower()
             
             if subaction == "add":
-                # Prevent duplicates
                 if not any(m["name"].lower() == name for m in missing):
                     missing.append({"name": name})
                     await asyncio.to_thread(
@@ -205,7 +199,6 @@ class WarTracker(commands.Cog):
             await ctx.send(f"❌ Database error: {e}")
 
     async def war_report(self):
-        # Reports missing list and resets it for next war
         try:
             res = await asyncio.to_thread(supabase.table("wars").select("*").eq("guild_id", ctx.guild.id).execute)
             if not res.data:
@@ -221,7 +214,6 @@ class WarTracker(commands.Cog):
             else:
                 embed.description = "✅ **Everyone completed their attacks!**"
             
-            # Clear list for next war
             await asyncio.to_thread(supabase.table("wars").update({"missing_list": []}).eq("guild_id", ctx.guild.id).execute)
             await ctx.send(embed=embed)
 
