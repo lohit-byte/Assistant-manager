@@ -1,7 +1,7 @@
 'use client'
 
 import { use } from 'react'
-import { Swords, Trophy, Map, Settings, ArrowLeft } from 'lucide-react'
+import { Swords, Trophy, Map, Settings, ArrowLeft, Users } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
@@ -22,6 +22,7 @@ export default function DashboardLayout({
     { name: 'War Settings', href: `/dashboard/${guildId}/war`, icon: <Swords className="w-5 h-5" /> },
     { name: 'Race Settings', href: `/dashboard/${guildId}/race`, icon: <Trophy className="w-5 h-5" /> },
     { name: 'Maze Settings', href: `/dashboard/${guildId}/maze`, icon: <Map className="w-5 h-5" /> },
+    { name: 'Alias Manager', href: `/dashboard/${guildId}/aliases`, icon: <Users className="w-5 h=5" /> },
   ]
 
   return (
