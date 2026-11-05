@@ -4,9 +4,8 @@ import { use, useEffect, useState } from 'react'
 import { Save, AlertCircle } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 
-export default function MazeSettingsPage({ params }: { params: Promise<{ guildId: string }> }) {
-  const resolvedParams = use(params)
-  const guildId = resolvedParams.guildId
+export default function MazeSettingsPage({ params }: { params: { guildId: string } }) {
+  const guildId = params.guildId
   const supabase = createClient()
 
   const [loading, setLoading] = useState(true)
