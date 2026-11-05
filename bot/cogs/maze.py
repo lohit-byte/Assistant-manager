@@ -145,6 +145,12 @@ class MazeTracker(commands.Cog):
             except Exception as e:
                 await ctx.send(f"❌ Database error: {e}")
 
+        # --- RELOAD ---
+        elif action == "reload":
+            await ctx.send("🔄 Reloading maze schedules from database...")
+            await self.restore_schedules()
+            return await ctx.send("✅ Maze schedules updated! Pings have been rescheduled.")
+
         # --- START ---
         elif action == "start":
             duration = (arg1 or "").lower()
