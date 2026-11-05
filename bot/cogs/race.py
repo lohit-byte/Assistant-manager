@@ -246,22 +246,46 @@ class RaceTracker(commands.Cog):
 
         try:
             if subaction == "desc":
-                await asyncio.to_thread(supabase.table("race_state").update({"task_description": args}).eq("guild_id", ctx.guild.id).execute)
+                # UPSERT FIX
+                await asyncio.to_thread(
+                    supabase.table("race_state").upsert({
+                        "guild_id": ctx.guild.id, 
+                        "task_description": args
+                    }, on_conflict="guild_id").execute
+                )
                 return await ctx.send(f"✅ Task description set to: `{args}`")
             elif subaction == "dyp" and val.isdigit():
-                await asyncio.to_thread(supabase.table("race_state").update({"dyp_target": int(val)}).eq("guild_id", ctx.guild.id).execute)
+                # UPSERT FIX
+                await asyncio.to_thread(
+                    supabase.table("race_state").upsert({
+                        "guild_id": ctx.guild.id, 
+                        "dyp_target": int(val)
+                    }, on_conflict="guild_id").execute
+                )
                 return await ctx.send(f"✅ DYP target set to {val}.")
             elif subaction == "je":
-                await asyncio.to_thread(supabase.table("race_state").update({"je_target": val}).eq("guild_id", ctx.guild.id).execute)
+                # UPSERT FIX
+                await asyncio.to_thread(
+                    supabase.table("race_state").upsert({
+                        "guild_id": ctx.guild.id, 
+                        "je_target": val
+                    }, on_conflict="guild_id").execute
+                )
                 return await ctx.send(f"✅ JE target set to {val}.")
             elif subaction == "ofa":
-                await asyncio.to_thread(supabase.table("race_state").update({"ofa_target": val}).eq("guild_id", ctx.guild.id).execute)
+                # UPSERT FIX
+                await asyncio.to_thread(
+                    supabase.table("race_state").upsert({
+                        "guild_id": ctx.guild.id, 
+                        "ofa_target": val
+                    }, on_conflict="guild_id").execute
+                )
                 return await ctx.send(f"✅ OFA target set to {val}.")
             else:
                 return await ctx.send("❌ Invalid set command.")
         except Exception as e:
             await ctx.send(f"❌ Database error: {e}")
-
+            
     async def handle_task(self, ctx, action, subaction, args):
         lock = self.get_lock(ctx.guild.id)
         async with lock:
