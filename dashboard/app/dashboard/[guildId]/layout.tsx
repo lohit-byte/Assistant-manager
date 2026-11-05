@@ -5,7 +5,6 @@ import Link from 'next/link'
 import { usePathname, useParams } from 'next/navigation'
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  // Use the useParams hook to safely get the guildId
   const params = useParams()
   const guildId = params.guildId as string
   const pathname = usePathname()
