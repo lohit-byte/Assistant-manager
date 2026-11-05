@@ -1,13 +1,15 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useParams } from 'next/navigation' // <-- ADDED
 import { ShieldCheck, Calendar, ArrowRight, ShieldAlert } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
-import Link from 'next/link'
 
-export default function BillingPage({ params }: { params: { guildId: string } }) {
-  const guildId = params.guildId
-  const supabase = createClient()
+const supabase = createClient() // <-- MOVED OUTSIDE COMPONENT
+
+export default function BillingPage() {
+  const params = useParams() // <-- ADDED
+  const guildId = params.guildId as string // <-- ADDED
 
   const [loading, setLoading] = useState(true)
   const [guildData, setGuildData] = useState<any>(null)
@@ -24,7 +26,7 @@ export default function BillingPage({ params }: { params: { guildId: string } })
       setLoading(false)
     }
     fetchBilling()
-  }, [guildId, supabase])
+  }, [guildId]) // <-- Removed supabase from deps
 
   if (loading) return <div className="text-slate-400">Loading billing info...</div>
   
@@ -40,22 +42,27 @@ export default function BillingPage({ params }: { params: { guildId: string } })
     )
   }
 
-  // Calculate days left in trial
+  // Calculate days left in trial (Fixed the null check bug)
   const isTrial = guildData.premium_status === 'trial'
   const isPremium = guildData.premium_status === 'premium'
   
   let daysLeft = 0
   let isExpired = false
   
-  if (isTrial && guildData.trial_ends_at) {
-    const end = new Date(guildData.trial_ends_at)
-    const now = new Date()
-    const diffTime = end.getTime() - now.getTime()
-    daysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-    if (daysLeft <= 0) isExpired = true
+  if (isTrial) {
+    if (guildData.trial_ends_at) {
+      const end = new Date(guildData.trial_ends_at)
+      const now = new Date()
+      const diffTime = end.getTime() - now.getTime()
+      daysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+      if (daysLeft <= 0) isExpired = true
+    } else {
+      // If trial status but no end date, consider it expired/error state
+      isExpired = true
+    }
   }
 
-  // If status isn't explicitly premium or trial, or trial expired
+  // If status isn't explicitly premium or trial expired
   if (!isPremium && (!isTrial || isExpired)) {
     return (
       <div className="max-w-3xl">
