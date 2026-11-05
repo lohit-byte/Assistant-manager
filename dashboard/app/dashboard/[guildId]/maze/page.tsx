@@ -1,15 +1,16 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useParams } from 'next/navigation'
 import { Save, AlertCircle } from 'lucide-react'
-import { useParams } from '@utils/supabase/client'
 import { createClient } from '@/utils/supabase/client'
 
 const supabase = createClient()
 
-export default function MazeSettingsPage({ params }: { params: { guildId: string } }) {
-  const params = useParams ()
+export default function MazeSettingsPage() {
+  const params = useParams()
   const guildId = params.guildId as string
+
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState({ text: '', type: '' })
@@ -30,7 +31,7 @@ export default function MazeSettingsPage({ params }: { params: { guildId: string
           event_start: new Date(data.event_start).toISOString().split('T')[0],
           event_end: new Date(data.event_end).toISOString().split('T')[0],
           ping_enabled_global: data.ping_enabled_global ?? true,
-          channel_id: data.channel_id || ''
+          channel_id: data.channel_id ? data.channel_id.toString() : ''
         })
       }
       setLoading(false)
@@ -43,12 +44,12 @@ export default function MazeSettingsPage({ params }: { params: { guildId: string
     const startObj = new Date(`${mazeSettings.event_start}T11:00:00Z`)
     const endObj = new Date(`${mazeSettings.event_end}T11:00:00Z`)
     
-    // BIGINT FIX: Just pass the string directly, Supabase handles it.
+    // Sending channel_id as a string prevents BigInt corruption
     const { error } = await supabase.from('maze_schedules').upsert({
       guild_id: guildId, maze_type: mazeSettings.maze_type,
       event_start: startObj.toISOString(), event_end: endObj.toISOString(),
       ping_enabled_global: mazeSettings.ping_enabled_global,
-      channel_id: mazeSettings.channel_id ? mazeSettings.channel_id : null 
+      channel_id: mazeSettings.channel_id || null 
     }, { onConflict: 'guild_id' })
     
     if (error) setMessage({ text: `Failed: ${error.message}`, type: 'error' })
