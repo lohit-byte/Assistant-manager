@@ -1,149 +1,220 @@
 import discord
 from discord.ext import commands
 import re
+import asyncio
 from datetime import datetime, timedelta, timezone
 from database import supabase
-import asyncio
 
-def parse_start_date(date_str: str, days: int) -> datetime:
-    now = datetime.now(timezone.utc)
-    for year in range(now.year, now.year + 5):
-        try:
-            start = datetime.strptime(f"{date_str}/{year}", "%d/%m/%Y").replace(tzinfo=timezone.utc)
-        except ValueError:
-            continue
-        if start + timedelta(days=days) >= now:
-            return start
-    raise ValueError("Invalid date. Use DD/MM (e.g., 05/11).")
+# --- ML GUIDES DISCOUNT SCHEDULES ---
+SCHEDULE_7D = [
+    (6 * 24 + 22, 0, "20%"), (5 * 24 + 19, 0, "10%"), (5 * 24 + 0, 0, "30%"),
+    (4 * 24 + 17, 0, "10%"), (4 * 24 + 1, 0, "10%"), (3 * 24 + 6, 0, "10%"),
+    (1 * 24 + 9, 0, "10%"), (0 * 24 + 1, 0, "20%"),
+]
+SCHEDULE_3D = [
+    (2 * 24 + 23, 0, "30%"), (1 * 24 + 23, 0, "20%"),
+    (1 * 24 + 11, 0, "10%"), (0 * 24 + 11, 0, "10%"),
+]
 
 def to_utc(s: str) -> datetime:
-    """Helper to ensure Supabase dates are timezone-aware, even if they lack a 'Z'."""
-    if not s:
-        return None
+    if not s: return None
     dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 class MazeTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.last_ping = {} # Tracks cooldowns per guild
+        self.timers = {}
+
+    async def cog_load(self):
+        self.bot.loop.create_task(self.restore_schedules())
+
+    def cog_unload(self):
+        for tasks in self.timers.values():
+            for t in tasks: t.cancel()
+
+    async def restore_schedules(self):
+        await self.bot.wait_until_ready()
+        try:
+            res = await asyncio.to_thread(supabase.table("maze_schedules").select("*").execute)
+            now = datetime.now(timezone.utc)
+            
+            for row in res.data:
+                try:
+                    channel = self.bot.get_channel(row.get("channel_id"))
+                    end_time = to_utc(row.get("event_end"))
+                    start_time = to_utc(row.get("event_start"))
+                    
+                    if not channel or not end_time or end_time <= now:
+                        continue
+                        
+                    self.schedule_pings(row["guild_id"], channel, row.get("maze_type", "7d"), end_time, start_time)
+                except Exception as e:
+                    print(f"Error restoring maze schedule for {row.get('guild_id')}: {e}")
+        except Exception as e:
+            print(f"Failed to fetch maze schedules: {e}")
+
+    def schedule_pings(self, guild_id, channel, maze_type, end_time, start_time):
+        if guild_id in self.timers:
+            for t in self.timers[guild_id]: t.cancel()
+        
+        self.timers[guild_id] = []
+        schedule = SCHEDULE_7D if maze_type == "7d" else SCHEDULE_3D
+        now = datetime.now(timezone.utc)
+        
+        for hours, minutes, pct in schedule:
+            discount_time = end_time - timedelta(hours=hours, minutes=minutes)
+            delay = (discount_time - now).total_seconds()
+            
+            # If delay is positive, schedule it in the future.
+            # If delay is negative, but happened in the last 5 mins, send it now (grace period).
+            if delay > 0:
+                self.timers[guild_id].append(
+                    asyncio.create_task(self.ping_discount_at_time(guild_id, channel, pct, delay))
+                )
+            elif -300 < delay <= 0:
+                self.timers[guild_id].append(
+                    asyncio.create_task(self.ping_discount_at_time(guild_id, channel, pct, 0))
+                )
+
+    async def ping_discount_at_time(self, guild_id, channel, pct, delay):
+        if delay > 0: 
+            await asyncio.sleep(delay)
+            
+        # Check if pings are enabled globally for this server
+        try:
+            res = await asyncio.to_thread(supabase.table("maze_schedules").select("ping_enabled_global").eq("guild_id", guild_id).execute)
+            if not res.data or not res.data[0].get("ping_enabled_global", True):
+                return
+        except Exception as e:
+            print(f"Failed to check ping_enabled_global: {e}")
+            return
+
+        embed = discord.Embed(
+            title="🗺️ Maze Island Discount!",
+            description=f"🚨 **{pct} Discount is live right now!**\n\nSpend your Maze Coins!",
+            color=discord.Color.purple()
+        )
+        
+        try:
+            if channel.permissions_for(channel.guild.me).mention_everyone:
+                await channel.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
+            else:
+                await channel.send(embed=embed)
+        except discord.HTTPException as e:
+            print(f"Maze ping failed in {guild_id}: {e}")
 
     @commands.command(name="maze")
     @commands.guild_only()
-    async def maze_group(self, ctx, action: str = None, arg1: str = None, arg2: str = None):
+    async def maze_group(self, ctx, action: str = None, arg1: str = None, *, arg2: str = None):
+        action = (action or "").lower()
         if not action:
-            return await ctx.send("Usage: `!maze start 7d 05/11` or `!maze ping 20%`")
+            return await ctx.send("Usage: `!maze help`, `!maze start`, `!maze status`, or `!maze ping 20%`")
 
-        # --- CONSISTENT PERMISSIONS (Admin OR Manage Server) ---
         perms = ctx.author.guild_permissions
         if not (perms.administrator or perms.manage_guild):
             return await ctx.send("❌ You must be an Admin or Staff to use Maze commands.")
 
-        action = action.lower()
-
-        # --- START EVENT COMMAND ---
-        if action == "start":
-            duration, date_str = arg1, arg2
-                
-            if not duration or not date_str:
-                return await ctx.send("❌ Usage: `!maze start 7d 05/11` (Format: <duration> <DD/MM>)")
-                
-            duration = duration.lower()
-            if duration not in ["3d", "7d"]:
-                return await ctx.send("❌ Duration must be `3d` or `7d`.")
-
-            days = 3 if duration == "3d" else 7
-
+        # --- STATUS ---
+        if action == "status":
             try:
-                start_date = parse_start_date(date_str, days)
-            except ValueError as e:
-                return await ctx.send(f"❌ {e}")
+                res = await asyncio.to_thread(supabase.table("maze_schedules").select("*").eq("guild_id", ctx.guild.id).execute)
+                if not res.data: return await ctx.send("ℹ️ No Maze event scheduled.")
                 
-            end_date = start_date + timedelta(days=days)
+                row = res.data[0]
+                start = to_utc(row["event_start"])
+                end = to_utc(row["event_end"])
+                
+                embed = discord.Embed(title="🗺️ Maze Event Status", color=discord.Color.purple())
+                embed.add_field(name="Type", value=row.get("maze_type", "7d").upper(), inline=True)
+                embed.add_field(name="Starts", value=f"<t:{int(start.timestamp())}:F>", inline=True)
+                embed.add_field(name="Ends", value=f"<t:{int(end.timestamp())}:F>", inline=True)
+                embed.add_field(name="Pings Enabled", value=str(row.get("ping_enabled_global", True)), inline=True)
+                await ctx.send(embed=embed)
+            except Exception as e:
+                await ctx.send(f"❌ Database error: {e}")
 
-            maze_data = {
-                "guild_id": ctx.guild.id,
-                "event_start": start_date.isoformat(),
-                "event_end": end_date.isoformat(),
-            }
+        # --- STOP ---
+        elif action in ("stop", "cancel", "clear"):
+            try:
+                await asyncio.to_thread(supabase.table("maze_schedules").delete().eq("guild_id", ctx.guild.id).execute)
+                if ctx.guild.id in self.timers:
+                    for t in self.timers[ctx.guild.id]: t.cancel()
+                    del self.timers[ctx.guild.id]
+                await ctx.send("🛑 Maze schedule and all pending discount pings have been cancelled.")
+            except Exception as e:
+                await ctx.send(f"❌ Database error: {e}")
+
+        # --- START ---
+        elif action == "start":
+            duration = (arg1 or "").lower()
+            time_input = (arg2 or "").strip()
+
+            if duration not in ("3d", "7d") or not time_input:
+                return await ctx.send("❌ Usage: `!maze start <3d|7d> <time>`\n*Time can be remaining time (`6d12h`) or a date (`05/11`).*")
+
+            now = datetime.now(timezone.utc)
             
+            if "d" in time_input or "h" in time_input:
+                # REMAINING TIME
+                regex = re.compile(r'((?P<days>\d+?)d)?((?P<hours>\d+?)h)?')
+                parts = regex.fullmatch(time_input.lower().replace(" ", ""))
+                if not parts: return await ctx.send("❌ Invalid time format. Use `6d12h`.")
+                
+                td_args = {k: int(v) for k, v in parts.groupdict().items() if v}
+                end_time = now + timedelta(**td_args)
+                days = 3 if duration == "3d" else 7
+                start_time = end_time - timedelta(days=days)
+            else:
+                # ABSOLUTE DATE (11:00 UTC)
+                try:
+                    start_time = datetime.strptime(f"{time_input}/{now.year}", "%d/%m/%Y").replace(hour=11, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
+                    if start_time + timedelta(days=(3 if duration == "3d" else 7)) < now:
+                        start_time = start_time.replace(year=now.year + 1)
+                    days = 3 if duration == "3d" else 7
+                    end_time = start_time + timedelta(days=days)
+                except ValueError:
+                    return await ctx.send("❌ Invalid date format. Use `DD/MM` (e.g., `05/11`).")
+
             try:
                 await asyncio.to_thread(
-                    supabase.table("maze_schedules").upsert(maze_data, on_conflict="guild_id").execute
+                    supabase.table("maze_schedules").upsert({
+                        "guild_id": ctx.guild.id,
+                        "event_start": start_time.isoformat(),
+                        "event_end": end_time.isoformat(),
+                        "maze_type": duration,
+                        "channel_id": ctx.channel.id,
+                        "ping_enabled_global": True
+                    }, on_conflict="guild_id").execute
                 )
             except Exception as e:
                 return await ctx.send(f"❌ Database error: {e}")
 
+            self.schedule_pings(ctx.guild.id, ctx.channel, duration, end_time, start_time)
+
             embed = discord.Embed(title="🗺️ Maze Event Scheduled", color=discord.Color.purple())
             embed.add_field(name="Duration", value=f"{duration.upper()}", inline=True)
-            embed.add_field(name="Starts", value=f"<t:{int(start_date.timestamp())}:F>", inline=True)
-            embed.add_field(name="Ends", value=f"<t:{int(end_date.timestamp())}:F>", inline=True)
-            embed.set_footer(text="Rendered in your local time. Based on 00:00 UTC.")
-            
+            embed.add_field(name="Starts", value=f"<t:{int(start_time.timestamp())}:F>", inline=True)
+            embed.add_field(name="Ends", value=f"<t:{int(end_time.timestamp())}:F>", inline=True)
             await ctx.send(embed=embed)
 
-        # --- PING COMMAND ---
+        # --- PING ---
         elif action == "ping":
-            # 1. Rate Limit Check (5 minutes)
-            now = datetime.now(timezone.utc)
-            last = self.last_ping.get(ctx.guild.id)
-            if last and (now - last).total_seconds() < 300:
-                return await ctx.send("⏳ A ping was already sent in the last 5 minutes.")
-
-            # 2. Parse Percentage
-            raw = (arg1 or "") + (arg2 or "") 
+            raw = (arg1 or "") + (arg2 or "")
             m = re.fullmatch(r"(\d{1,3})%", raw)
             
             if not m or not (1 <= int(m.group(1)) <= 100):
                 return await ctx.send("❌ Use a percentage from 1–100, e.g. `!maze ping 20%`")
-                
-            pct = f"{int(m.group(1))}%"
 
-            # 3. Event Validation
-            try:
-                res = await asyncio.to_thread(
-                    supabase.table("maze_schedules")
-                    .select("event_start,event_end,ping_enabled_global")
-                    .eq("guild_id", ctx.guild.id).execute
-                )
-                
-                if not res.data:
-                    return await ctx.send("❌ No Maze event scheduled. Use `!maze start` first.")
-                    
-                row = res.data[0]
-                start = to_utc(row.get("event_start"))
-                end = to_utc(row.get("event_end"))
-                
-                if not row.get("ping_enabled_global", True):
-                    return await ctx.send("❌ Maze pings are disabled globally via the dashboard.")
-                    
-                if not (start and end and start <= now <= end):
-                    return await ctx.send("❌ No active Maze event right now. The scheduled event has not started or has already ended.")
-
-            except Exception as e:
-                return await ctx.send(f"❌ Database error: {e}")
-
-            # 4. Check @everyone Permission
-            if not ctx.channel.permissions_for(ctx.guild.me).mention_everyone:
-                await ctx.send("⚠️ **Warning:** I lack the 'Mention @everyone' permission in this channel. The message will send, but nobody will be notified.")
-
-            # 5. Send the ping and update cooldown
             embed = discord.Embed(
                 title="🗺️ Maze Island Discount!",
-                description=f"🚨 **{pct} Discount is live right now!**\n\nSpend your Maze Coins!",
+                description=f"🚨 **{m.group(1)}% Discount is live right now!**\n\nSpend your Maze Coins!",
                 color=discord.Color.purple()
             )
+            await ctx.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
             
-            await ctx.send(
-                content="@everyone",
-                embed=embed,
-                allowed_mentions=discord.AllowedMentions(everyone=True)
-            )
-            
-            self.last_ping[ctx.guild.id] = now
-
         else:
-            await ctx.send("❌ Unknown action. Use `!maze start` or `!maze ping`.")
+            await ctx.send("❌ Unknown action. Use `start`, `status`, `stop`, or `ping`.")
 
 async def setup(bot):
     await bot.add_cog(MazeTracker(bot))
