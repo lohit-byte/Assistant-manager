@@ -106,8 +106,9 @@ export function getWarWindow(war: War | null): WarWindow {
           : 'unknown'
 
   let end: Date | null = null
-  if (start && phase === 'defence') end = new Date(start.getTime() + 24 * 3600_000)
-  if (start && phase === 'attack') end = new Date(start.getTime() + 48 * 3600_000)
+    if (start && phase !== 'unknown') {
+    end = new Date(start.getTime() + (phase === 'defence' ? 24 : 48) * 3600_000)
+  }
 
   return { start, end, phase, active: Boolean(war.is_active) && phase !== 'ended' }
 }
