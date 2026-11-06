@@ -187,9 +187,9 @@ export default function OverviewPage() {
                     <Badge tone={warWindow.active ? (warWindow.phase === 'attack' ? 'red' : 'blue') : 'slate'} dot>
                       {warWindow.active ? warPhaseLabel(warWindow.phase) : 'Inactive'}
                     </Badge>
-                    {warWindow.end ? (
+                    {warWindow.phaseEnd ? (
                       <span className="text-xs text-slate-500">
-                        Ends {formatDateTime(warWindow.end)}
+                        Ends {formatDateTime(warWindow.phaseEnd)}
                       </span>
                     ) : null}
                   </div>
