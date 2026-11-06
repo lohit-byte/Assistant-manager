@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Monster Legends Assistant',
+  title: 'Assistant For Monster Legends',
   description: 'Manage alliance wars, races, mazes and aliases from one dashboard.',
 }
 
