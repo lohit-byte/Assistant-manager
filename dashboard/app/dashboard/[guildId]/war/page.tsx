@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import { Save, AlertCircle } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 
-const supabase = createClient()
+const supabase = typeof window !== 'undefined' ? createClient() : (null as any)
 
 export default function WarSettingsPage() {
   const params = useParams()
