@@ -63,7 +63,7 @@ export default function Dashboard() {
           {guilds.map((guild) => (
             <button 
               key={guild.id}
-              onClick={() => router.push(`/dashboard/${guild.id}`)}
+              onClick={() => { window.location.href = `/dashboard/${guild.id}` }}
               className="p-6 bg-slate-900 border border-slate-800 rounded-xl hover:border-purple-500 hover:bg-slate-800 transition-all flex items-center space-x-4 text-left"
             >
               {guild.icon ? (
