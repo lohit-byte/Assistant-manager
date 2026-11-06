@@ -142,8 +142,8 @@ export default function OverviewPage() {
           label="War"
           value={warWindow.active ? warPhaseLabel(warWindow.phase) : 'Idle'}
           hint={
-            warWindow.active && warWindow.warEnd // <--- CHANGED THIS
-              ? formatRelative(warWindow.warEnd, now)
+            warWindow.active && warWindow.warEnd
+              ? `${formatRelative(warWindow.warEnd, now)} left in war`
               : 'No active war'
           }
           icon={<Swords className="h-4 w-4" />}
@@ -189,12 +189,12 @@ export default function OverviewPage() {
                     </Badge>
                     {warWindow.phaseEnd ? (
                       <span className="text-xs text-slate-500">
-                        Ends {formatDateTime(warWindow.phaseEnd)}
+                        Phase Ends {formatDateTime(warWindow.phaseEnd)}
                       </span>
                     ) : null}
                   </div>
 
-                  {warWindow.active && warWindow.start && warWindow.end ? (
+                  {warWindow.active && warWindow.start && warWindow.phaseEnd && warWindow.warEnd ? (
                     <div>
                       <ProgressBar
                         value={
@@ -204,20 +204,26 @@ export default function OverviewPage() {
                             : warWindow.start.getTime())
                         }
                         max={
-                          warWindow.end.getTime() -
+                          warWindow.phaseEnd.getTime() -
                           (warWindow.phase === 'attack'
                             ? warWindow.start.getTime() + 24 * 3600_000
                             : warWindow.start.getTime())
                         }
                         tone="amber"
-                        label="Phase elapsed"
+                        label={`${warPhaseLabel(warWindow.phase)} Phase Elapsed`}
                       />
-                      <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
-                        <Clock className="h-3.5 w-3.5" />
-                        {formatDuration(warWindow.end.getTime() - now.getTime())} remaining
+                      <p className="mt-2 flex justify-between text-xs text-slate-500">
+                        <span>{formatRelative(warWindow.phaseEnd, now)} until next phase</span>
+                        <span>{formatDuration(warWindow.warEnd.getTime() - now.getTime())} remaining in war</span>
                       </p>
                     </div>
-                  ) : null}
+                  ) : (
+                    <p className="text-sm text-slate-500">
+                      {warWindow.phase === 'ended'
+                        ? 'This war has ended. Reset the lists to prepare the next one.'
+                        : 'No phase timer is running for this war.'}
+                    </p>
+                  )}
 
                   <div className="grid grid-cols-3 gap-3">
                     <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
