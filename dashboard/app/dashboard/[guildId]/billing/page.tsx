@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import { ShieldCheck, Calendar, ArrowRight, ShieldAlert, Sparkles, Check, Mail } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
 import { Card, CardBody, CardHeader, Badge, ProgressBar, Alert, Divider, PageHeader } from '@/components/ui'
-import { createClient } from '@/utils/supabase/client'
+import { createClient } from '@/lib/supabase/client' // <--- FIXED PATH
 import { formatDate, toDate } from '@/lib/format'
 import { PRICING_PLANS, PLAN_FEATURES, formatPrice, detectCurrency, Currency } from '@/lib/pricing'
 
