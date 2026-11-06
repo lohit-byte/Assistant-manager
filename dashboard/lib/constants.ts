@@ -7,7 +7,7 @@ export const BOT_INVITE_URL =
 export const SUPPORT_EMAIL = 'warbot.support@gmail.com'
 
 export const DEFAULT_ATTACKS_REQUIRED = 6
-export const MAX_ATTACKS_REQUIRED = 10
+export const MAX_ATTACKS_REQUIRED = 6
 export const NODES_PER_LAP = 5
 
 export const PERMISSION_ADMINISTRATOR = BigInt(0x8)
