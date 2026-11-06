@@ -82,7 +82,7 @@ export default function Dashboard() {
 
           {/* Invite Bot Card */}
           <a 
-            href="YOUR_DISCORD_BOT_INVITE_LINK_HERE" 
+            href="https://discord.com/oauth2/authorize?client_id=1567228271915962499&permissions=257088&integration_type=0&scope=bot" 
             target="_blank" 
             rel="noopener noreferrer"
             className="p-6 bg-slate-900 border border-dashed border-slate-700 rounded-xl hover:border-green-500 hover:bg-slate-800 transition-all flex items-center space-x-4 text-left text-slate-400 hover:text-green-400"
