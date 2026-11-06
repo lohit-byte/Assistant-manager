@@ -1,0 +1,292 @@
+'use client'
+
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import {
+  ArrowRight,
+  ExternalLink,
+  LogOut,
+  Plus,
+  RefreshCw,
+  Search,
+  Server,
+  ShieldAlert,
+} from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
+import { canManageGuild, DiscordApiError, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
+import { BOT_INVITE_URL, DISCORD_GUILD_ICON, PLAN_META } from '@/lib/constants'
+import { getGuild } from '@/lib/data'
+import { toDate } from '@/lib/format'
+import type { Guild } from '@/lib/types'
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  PageHeader,
+  Spinner,
+  TextInput,
+  buttonClass,
+} from '@/components/ui'
+
+interface GuildCard {
+  guild: DiscordGuild
+  row: Guild | null
+}
+
+type LoadError =
+  | { kind: 'auth'; message: string }
+  | { kind: 'discord'; message: string }
+  | { kind: 'unknown'; message: string }
+
+export default function ServerPicker() {
+  const router = useRouter()
+  const [cards, setCards] = useState<GuildCard[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<LoadError | null>(null)
+  const [query, setQuery] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    const supabase = createClient()
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+
+      if (!session) {
+        router.replace('/')
+        return
+      }
+
+      if (!session.provider_token) {
+        setError({
+          kind: 'discord',
+          message: 'Discord access expired. Sign out and sign in again to refresh your server list.',
+        })
+        return
+      }
+
+      const guilds = (await fetchDiscordGuilds(session.provider_token))
+        .filter(canManageGuild)
+        .sort((a, b) => a.name.localeCompare(b.name))
+
+      const rows = await Promise.allSettled(
+        guilds.map(async (guild) => ({ guild, row: await getGuild(supabase, guild.id) })),
+      )
+
+      const resolved: GuildCard[] = rows
+        .filter((item): item is PromiseFulfilledResult<GuildCard> => item.status === 'fulfilled')
+        .map((item) => item.value)
+
+      resolved.sort((a, b) => {
+        if (Boolean(a.row) !== Boolean(b.row)) return a.row ? -1 : 1
+        return a.guild.name.localeCompare(b.guild.name)
+      })
+
+      setCards(resolved)
+    } catch (caught) {
+      if (caught instanceof DiscordApiError) {
+        setError({ kind: 'discord', message: caught.message })
+      } else {
+        setError({
+          kind: 'unknown',
+          message: caught instanceof Error ? caught.message : 'Could not load your servers.',
+        })
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [router])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    if (!needle) return cards
+    return cards.filter(
+      (card) =>
+        card.guild.name.toLowerCase().includes(needle) || card.guild.id.includes(needle),
+    )
+  }, [cards, query])
+
+  const botServers = cards.filter((card) => card.row).length
+
+  const signOut = async () => {
+    await createClient().auth.signOut()
+    router.replace('/')
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-gradient-to-b from-purple-900/20 to-transparent" />
+      <div className="relative mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:py-14">
+        <div className="mb-8 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-600">
+              <ShieldAlert className="h-5 w-5" />
+            </div>
+            <span className="text-sm font-bold tracking-wide text-slate-300">
+              MONSTER LEGENDS ASSISTANT
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={load} loading={loading}>
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </Button>
+            <Button variant="secondary" size="sm" onClick={signOut}>
+              <LogOut className="h-4 w-4" />
+              Sign out
+            </Button>
+          </div>
+        </div>
+
+        <PageHeader
+          eyebrow="Server selection"
+          title="Choose a server"
+          description={`You can manage ${cards.length} ${cards.length === 1 ? 'server' : 'servers'}. ${botServers} ${botServers === 1 ? 'has' : 'have'} the bot installed.`}
+          actions={
+            <a
+              href={BOT_INVITE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={buttonClass('secondary')}
+            >
+              <Plus className="h-4 w-4" />
+              Invite the bot
+            </a>
+          }
+        />
+
+        {error ? (
+          <Alert tone={error.kind === 'discord' ? 'amber' : 'red'} className="mb-6" title="Could not load servers">
+            <div className="flex flex-wrap items-center gap-3">
+              <span>{error.message}</span>
+              {error.kind === 'discord' ? (
+                <Button size="sm" onClick={signOut}>
+                  Sign in again
+                </Button>
+              ) : (
+                <Button size="sm" variant="secondary" onClick={load}>
+                  Try again
+                </Button>
+              )}
+            </div>
+          </Alert>
+        ) : null}
+
+        {loading ? (
+          <Spinner label="Loading your servers…" />
+        ) : (
+          <>
+            <div className="relative mb-5">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              <TextInput
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search by name or ID…"
+                className="pl-9"
+                aria-label="Search servers"
+              />
+            </div>
+
+            {filtered.length === 0 ? (
+              <Card>
+                <CardBody className="py-14 text-center">
+                  <Server className="mx-auto mb-3 h-8 w-8 text-slate-600" />
+                  <p className="font-semibold text-slate-300">
+                    {cards.length === 0 ? 'No servers found' : 'No matching servers'}
+                  </p>
+                  <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">
+                    {cards.length === 0
+                      ? 'You need the Manage Server or Administrator permission in a Discord server to see it here.'
+                      : 'Try a different search term.'}
+                  </p>
+                  {cards.length === 0 ? (
+                    <a
+                      href={BOT_INVITE_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={buttonClass('primary', 'md', 'mt-5')}
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      Add the bot to a server
+                    </a>
+                  ) : null}
+                </CardBody>
+              </Card>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {filtered.map(({ guild, row }) => {
+                  const meta = PLAN_META[row?.premium_status ?? ''] ?? null
+                  const daysLeft =
+                    row?.premium_status === 'trial' && row.trial_ends_at
+                      ? Math.max(
+                          0,
+                          Math.ceil(
+                            ((toDate(row.trial_ends_at)?.getTime() ?? Date.now()) - Date.now()) /
+                              86_400_000,
+                          ),
+                        )
+                      : null
+
+                  return (
+                    <button
+                      key={guild.id}
+                      type="button"
+                      onClick={() => router.push(`/dashboard/${guild.id}`)}
+                      className="group flex flex-col rounded-2xl border border-slate-800 bg-slate-900/60 p-5 text-left transition-all hover:-translate-y-0.5 hover:border-purple-500/60 hover:bg-slate-900 hover:shadow-xl hover:shadow-purple-950/20"
+                    >
+                      <div className="flex items-start gap-3">
+                        {guild.icon ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={DISCORD_GUILD_ICON(guild.id, guild.icon)}
+                            alt=""
+                            className="h-12 w-12 rounded-2xl border border-slate-700 object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-700 bg-slate-800">
+                            <Server className="h-6 w-6 text-slate-400" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-semibold text-white">{guild.name}</p>
+                          <p className="truncate font-mono text-xs text-slate-500">{guild.id}</p>
+                        </div>
+                        <ArrowRight className="h-4 w-4 shrink-0 text-slate-600 transition-transform group-hover:translate-x-0.5 group-hover:text-purple-300" />
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap items-center gap-2">
+                        {!row ? (
+                          <Badge tone="red">Bot not added</Badge>
+                        ) : row.is_blacklisted ? (
+                          <Badge tone="red">Blacklisted</Badge>
+                        ) : meta ? (
+                          <Badge tone={meta.tone} dot>
+                            {meta.label}
+                          </Badge>
+                        ) : (
+                          <Badge tone="slate">Unknown plan</Badge>
+                        )}
+                        {daysLeft !== null ? (
+                          <span className="text-xs text-slate-500">{daysLeft}d left</span>
+                        ) : null}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}

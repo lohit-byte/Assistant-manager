@@ -1,0 +1,436 @@
+'use client'
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
+import Link from 'next/link'
+import { usePathname, useRouter } from 'next/navigation'
+import {
+  ArrowLeft,
+  CreditCard,
+  ExternalLink,
+  LayoutDashboard,
+  LogOut,
+  Map,
+  Menu,
+  RefreshCw,
+  Server,
+  ShieldAlert,
+  Swords,
+  Trophy,
+  Users,
+  X,
+} from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
+import { canManageGuild, DiscordApiError, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
+import { BOT_INVITE_URL, DISCORD_GUILD_ICON, PLAN_META, SUPPORT_EMAIL } from '@/lib/constants'
+import { getGuild } from '@/lib/data'
+import { cn, toDate } from '@/lib/format'
+import type { Guild } from '@/lib/types'
+import { Badge, Button, Card, CardBody, Spinner, buttonClass } from '@/components/ui'
+
+interface GuildContextValue {
+  guildId: string
+  guild: Guild
+  refresh: () => Promise<void>
+}
+
+const GuildContext = createContext<GuildContextValue | null>(null)
+
+export function useGuild(): GuildContextValue {
+  const value = useContext(GuildContext)
+  if (!value) throw new Error('useGuild must be used inside GuildShell')
+  return value
+}
+
+const NAV = [
+  { name: 'Overview', segment: '', icon: LayoutDashboard },
+  { name: 'War', segment: '/war', icon: Swords },
+  { name: 'Race', segment: '/race', icon: Trophy },
+  { name: 'Maze', segment: '/maze', icon: Map },
+  { name: 'Aliases', segment: '/aliases', icon: Users },
+  { name: 'Billing', segment: '/billing', icon: CreditCard },
+]
+
+type AccessError =
+  | { kind: 'discord'; message: string }
+  | { kind: 'forbidden'; message: string }
+  | { kind: 'not-added'; message: string }
+  | { kind: 'unknown'; message: string }
+
+function planMeta(status: string | null | undefined) {
+  return PLAN_META[status ?? ''] ?? PLAN_META.expired
+}
+
+function trialDaysLeft(guild: Guild): number {
+  const end = toDate(guild.trial_ends_at)
+  if (!end) return 0
+  return Math.max(0, Math.ceil((end.getTime() - Date.now()) / 86_400_000))
+}
+
+export default function GuildShell({
+  guildId,
+  children,
+}: {
+  guildId: string
+  children: ReactNode
+}) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const [loading, setLoading] = useState(true)
+  const [guild, setGuild] = useState<Guild | null>(null)
+  const [discordGuild, setDiscordGuild] = useState<DiscordGuild | null>(null)
+  const [error, setError] = useState<AccessError | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [userLabel, setUserLabel] = useState('Account')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    const supabase = createClient()
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+
+      if (!session) {
+        router.replace('/')
+        return
+      }
+
+      setUserLabel(
+        (session.user.user_metadata?.full_name as string | undefined) ||
+          (session.user.user_metadata?.preferred_username as string | undefined) ||
+          session.user.email ||
+          'Account',
+      )
+
+      if (!session.provider_token) {
+        setError({
+          kind: 'discord',
+          message:
+            'Discord access has expired. Sign out and sign in again to refresh your server permissions.',
+        })
+        return
+      }
+
+      const guilds = await fetchDiscordGuilds(session.provider_token)
+      const match = guilds.find((item) => item.id === guildId)
+
+      if (!match || !canManageGuild(match)) {
+        setError({
+          kind: 'forbidden',
+          message:
+            'You need the Manage Server or Administrator permission in this server to open its dashboard.',
+        })
+        return
+      }
+
+      setDiscordGuild(match)
+
+      const row = await getGuild(supabase, guildId)
+      if (!row) {
+        setError({
+          kind: 'not-added',
+          message:
+            'The bot is not in this server yet. Invite it first, then reload this page once it has started.',
+        })
+        return
+      }
+
+      setGuild(row)
+    } catch (caught) {
+      if (caught instanceof DiscordApiError) {
+        setError({ kind: 'discord', message: caught.message })
+      } else {
+        setError({
+          kind: 'unknown',
+          message: caught instanceof Error ? caught.message : 'Could not verify access.',
+        })
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [guildId, router])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  useEffect(() => {
+    setMenuOpen(false)
+  }, [pathname])
+
+  const refresh = useCallback(async () => {
+    try {
+      const row = await getGuild(createClient(), guildId)
+      if (row) setGuild(row)
+    } catch {
+      // Keep the previous snapshot; the page-level error handling reports it.
+    }
+  }, [guildId])
+
+  const context = useMemo<GuildContextValue | null>(
+    () => (guild ? { guildId, guild, refresh } : null),
+    [guild, guildId, refresh],
+  )
+
+  const signOut = async () => {
+    await createClient().auth.signOut()
+    router.replace('/')
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950">
+        <div className="flex flex-col items-center gap-4">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-purple-500/10 text-purple-400">
+            <Server className="h-6 w-6" />
+          </div>
+          <Spinner label="Checking your permissions…" />
+        </div>
+      </div>
+    )
+  }
+
+  if (error || !context) {
+    return <AccessErrorScreen error={error} onRetry={load} />
+  }
+
+  const meta = planMeta(guild?.premium_status)
+  const iconUrl =
+    discordGuild?.icon && discordGuild.id
+      ? DISCORD_GUILD_ICON(discordGuild.id, discordGuild.icon)
+      : null
+
+  return (
+    <GuildContext.Provider value={context}>
+      <div className="min-h-screen bg-slate-950 text-slate-100">
+        <div
+          className={cn(
+            'fixed inset-0 z-30 bg-black/60 backdrop-blur-sm transition-opacity lg:hidden',
+            menuOpen ? 'opacity-100' : 'pointer-events-none opacity-0',
+          )}
+          onClick={() => setMenuOpen(false)}
+          aria-hidden
+        />
+
+        <aside
+          className={cn(
+            'fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-slate-800 bg-slate-950/95 transition-transform duration-200 lg:translate-x-0',
+            menuOpen ? 'translate-x-0' : '-translate-x-full',
+          )}
+        >
+          <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
+            <Link
+              href="/dashboard"
+              className="flex items-center gap-2 text-sm font-medium text-slate-400 transition-colors hover:text-white"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              All servers
+            </Link>
+            <button
+              type="button"
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white lg:hidden"
+              onClick={() => setMenuOpen(false)}
+              aria-label="Close navigation"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="border-b border-slate-800 px-5 py-5">
+            <div className="flex items-center gap-3">
+              {iconUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={iconUrl}
+                  alt=""
+                  className="h-12 w-12 rounded-2xl border border-slate-700 object-cover"
+                />
+              ) : (
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-700 bg-slate-800">
+                  <Server className="h-6 w-6 text-slate-400" />
+                </div>
+              )}
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-white">
+                  {discordGuild?.name ?? 'Discord server'}
+                </p>
+                <p className="font-mono text-xs text-slate-500">{guildId}</p>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Badge tone={meta.tone} dot>
+                {meta.label}
+              </Badge>
+              {guild?.premium_status === 'trial' ? (
+                <span className="text-xs text-slate-500">{trialDaysLeft(guild)} days left</span>
+              ) : null}
+              {guild?.is_blacklisted ? <Badge tone="red">Blacklisted</Badge> : null}
+            </div>
+          </div>
+
+          <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+            {NAV.map((item) => {
+              const href = `/dashboard/${guildId}${item.segment}`
+              const active = pathname === href
+              const Icon = item.icon
+              return (
+                <Link
+                  key={item.name}
+                  href={href}
+                  className={cn(
+                    'flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors',
+                    active
+                      ? 'bg-purple-600 text-white shadow-lg shadow-purple-950/40'
+                      : 'text-slate-400 hover:bg-slate-900 hover:text-white',
+                  )}
+                >
+                  <Icon className="h-5 w-5" />
+                  {item.name}
+                </Link>
+              )
+            })}
+          </nav>
+
+          <div className="border-t border-slate-800 p-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-slate-300">{userLabel}</p>
+                <p className="text-xs text-slate-600">Signed in with Discord</p>
+              </div>
+              <button
+                type="button"
+                onClick={signOut}
+                className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-800 hover:text-white"
+                aria-label="Sign out"
+                title="Sign out"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link
+                href="/dashboard"
+                className={buttonClass('secondary', 'sm', 'flex-1')}
+              >
+                Switch server
+              </Link>
+              <a
+                href={BOT_INVITE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={buttonClass('ghost', 'sm')}
+                title="Invite the bot"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            </div>
+          </div>
+        </aside>
+
+        <div className="lg:pl-72">
+          <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-slate-800 bg-slate-950/80 px-4 py-3 backdrop-blur lg:hidden">
+            <button
+              type="button"
+              onClick={() => setMenuOpen(true)}
+              className="rounded-lg p-2 text-slate-300 hover:bg-slate-800"
+              aria-label="Open navigation"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-white">
+                {discordGuild?.name ?? 'Dashboard'}
+              </p>
+            </div>
+            <Badge tone={meta.tone}>{meta.label}</Badge>
+          </header>
+
+          <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10 lg:py-10">
+            {children}
+          </main>
+        </div>
+      </div>
+    </GuildContext.Provider>
+  )
+}
+
+function AccessErrorScreen({
+  error,
+  onRetry,
+}: {
+  error: AccessError | null
+  onRetry: () => void
+}) {
+  const signOut = async () => {
+    await createClient().auth.signOut()
+    window.location.href = '/'
+  }
+
+  if (!error) return null
+
+  const title =
+    error.kind === 'forbidden'
+      ? 'Access denied'
+      : error.kind === 'not-added'
+        ? 'Bot not added'
+        : error.kind === 'discord'
+          ? 'Reconnect Discord'
+          : 'Something went wrong'
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 p-6">
+      <Card className="w-full max-w-lg">
+        <CardBody className="space-y-5 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-red-500/30 bg-red-500/10 text-red-300">
+            <ShieldAlert className="h-6 w-6" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-white">{title}</h1>
+            <p className="mt-2 text-sm text-slate-400">{error.message}</p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {error.kind === 'not-added' ? (
+              <a
+                href={BOT_INVITE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={buttonClass('primary')}
+              >
+                <ExternalLink className="h-4 w-4" />
+                Invite the bot
+              </a>
+            ) : null}
+            {error.kind === 'discord' ? (
+              <Button onClick={signOut}>
+                <LogOut className="h-4 w-4" />
+                Sign in again
+              </Button>
+            ) : null}
+            {error.kind === 'unknown' ? (
+              <Button onClick={onRetry}>
+                <RefreshCw className="h-4 w-4" />
+                Try again
+              </Button>
+            ) : null}
+            <Link href="/dashboard" className={buttonClass('secondary')}>
+              Back to servers
+            </Link>
+            <a href={`mailto:${SUPPORT_EMAIL}`} className={buttonClass('ghost')}>
+              Contact support
+            </a>
+          </div>
+        </CardBody>
+      </Card>
+    </div>
+  )
+}
