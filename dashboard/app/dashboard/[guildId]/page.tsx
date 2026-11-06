@@ -143,7 +143,7 @@ export default function OverviewPage() {
           value={warWindow.active ? warPhaseLabel(warWindow.phase) : 'Idle'}
           hint={
             warWindow.active && warWindow.warEnd // <--- CHANGED THIS
-              ? `${formatRelative(warWindow.warEnd, now)} left in war` // <--- CHANGED THIS
+              ? formatRelative(warWindow.warEnd, now)
               : 'No active war'
           }
           icon={<Swords className="h-4 w-4" />}
