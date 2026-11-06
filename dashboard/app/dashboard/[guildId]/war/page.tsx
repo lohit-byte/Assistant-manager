@@ -775,15 +775,15 @@ export default function WarPage() {
       <Card className="mt-6">
         <CardHeader
           title="Warnings"
-          placeholder="Player alias"
+          description="Recorded by staff in Discord or from this dashboard"
+          icon={<AlertTriangle className="h-5 w-5" />}
         />
         <CardBody className="space-y-4">
           <div className="grid gap-2 sm:grid-cols-[1fr_1.6fr_auto]">
             <TextInput
               value={warningId}
               onChange={(event) => setWarningId(event.target.value)}
-              placeholder="Discord user ID"
-              inputMode="numeric"
+              placeholder="Player alias"
             />
             <TextInput
               value={warningReason}
