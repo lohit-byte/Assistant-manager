@@ -3,15 +3,15 @@
 import { createClient } from '@/utils/supabase/client'
 import { Shield, Swords, Trophy, Map } from 'lucide-react'
 
-export default function LandingPage() {
-  const supabase = createClient()
+const supabase = createClient()
 
+export default function LandingPage() {
   const handleDiscordLogin = async () => {
     await supabase.auth.signInWithOAuth({
       provider: 'discord',
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
-        scopes: 'identify guilds' // Requests their basic info and server list
+        scopes: 'identify guilds' 
       },
     })
   }
@@ -20,7 +20,7 @@ export default function LandingPage() {
     <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6">
       
       {/* Hero Section */}
-      <div className="max-w-3xl text-center space-y-6">
+      <div className="max-w-3xl text-center space-y-6 mt-12">
         <h1 className="text-5xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-500">
           Monster Legends Assistant
         </h1>
@@ -48,6 +48,14 @@ export default function LandingPage() {
         <FeatureCard icon={<Map />} title="Maze" desc="Auto-ping discounts" />
         <FeatureCard icon={<Shield />} title="Aliases" desc="Manage player names" />
       </div>
+
+      {/* FOOTER - Correctly placed at the bottom of the page */}
+      <footer className="mt-auto pt-16 pb-8 text-center text-sm text-slate-500 w-full max-w-4xl flex justify-center space-x-6">
+        <a href="/contact" className="hover:text-white transition-colors">Contact Us</a>
+        <a href="/contact" className="hover:text-white transition-colors">Terms of Service</a>
+        <a href="/contact" className="hover:text-white transition-colors">Privacy Policy</a>
+      </footer>
+
     </div>
   )
 }
