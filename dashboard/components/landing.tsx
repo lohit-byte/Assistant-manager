@@ -183,8 +183,14 @@ export default function Landing() {
           </div>
         </main>
 
-        <footer className="border-t border-slate-900 py-6 text-xs text-slate-600">
-          Monster Legends Assistant · Community project, not affiliated with Monster Legends.
+        <footer className="border-t border-slate-900 py-8 text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <p>Monster Legends Assistant · Community project, not affiliated with Monster Legends.</p>
+          <div className="flex gap-6">
+            <a href="/legal" className="hover:text-white transition-colors">Terms of Service</a>
+            <a href="/legal#refund" className="hover:text-white transition-colors text-red-400">Refund Policy</a>
+            <a href="/legal" className="hover:text-white transition-colors">Privacy Policy</a>
+            <a href="mailto:warbot.support@gmail.com" className="hover:text-white transition-colors">Contact Us</a>
+          </div>
         </footer>
       </div>
     </div>
