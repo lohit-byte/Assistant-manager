@@ -1,42 +1,76 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
-import { ShieldCheck, Calendar, ArrowRight, ShieldAlert, Sparkles, Check, Mail } from 'lucide-react'
+import { useParams, useSearchParams } from 'next/navigation'
+import { ShieldCheck, ArrowRight, Sparkles, Check, Mail, Loader2 } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
-import { Card, CardBody, CardHeader, Badge, ProgressBar, Alert, Divider, PageHeader } from '@/components/ui'
-import { createClient } from '@/lib/supabase/client' // <--- FIXED PATH
+import { Card, CardBody, CardHeader, Badge, ProgressBar, Alert, PageHeader } from '@/components/ui'
 import { formatDate, toDate } from '@/lib/format'
 import { PRICING_PLANS, PLAN_FEATURES, formatPrice, detectCurrency, Currency } from '@/lib/pricing'
 
-const supabase = createClient()
-
 export default function BillingPage() {
   const params = useParams()
+  const searchParams = useSearchParams()
   const guildId = params.guildId as string
-  const { guild } = useGuild() // Get guild data from the shell to avoid extra fetches
+  
+  // useGuild gives us the data AND the refresh function to update the UI
+  const { guild, refresh } = useGuild() 
 
   const [currency, setCurrency] = useState<Currency>('USD')
+  const [loadingPlan, setLoadingPlan] = useState<string | null>(null)
   
-  // Prevent hydration mismatch by detecting currency after mount
   useEffect(() => {
+    // Detect currency to prevent hydration mismatch
     setCurrency(detectCurrency())
-  }, [])
+
+    // If the URL has 'order_id', the user just returned from Cashfree.
+    // We refresh the guild data to instantly unlock Premium on the dashboard.
+    if (searchParams.get('order_id')) {
+      refresh()
+    }
+  }, [searchParams, refresh])
 
   const status = guild?.premium_status ?? 'expired'
   const isPremium = status === 'premium'
   const trialEnd = toDate(guild?.trial_ends_at)
   
   let daysLeft = 0
-  let trialExpired = false
-  
   if (status === 'trial' && trialEnd) {
     daysLeft = Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / 86_400_000))
-    if (daysLeft <= 0) trialExpired = true
   }
 
   const supportEmail = 'warbot.support@gmail.com'
   const supportHref = `mailto:${supportEmail}?subject=Billing%20Enquiry%20for%20Server%20${guildId}`
+
+  // --- CASHFREE PAYMENT LOGIC ---
+  const handlePayment = async (planId: string, amount: number) => {
+    setLoadingPlan(planId)
+    try {
+      const res = await fetch('/api/cashfree/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ guildId, planId, amount, currency })
+      })
+      
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+
+      const cashfree = await (window as any).Cashfree({
+        mode: "sandbox" // Change to "production" when ready
+      })
+
+      cashfree.checkout({
+        paymentSessionId: data.payment_session_id,
+        redirectTarget: "_modal",
+      })
+      
+    } catch (error) {
+      console.error("Payment failed:", error)
+      alert("Could not initiate payment. Please ensure your Cashfree keys are set in Vercel.")
+    } finally {
+      setLoadingPlan(null)
+    }
+  }
 
   return (
     <div className="max-w-5xl">
@@ -113,8 +147,23 @@ export default function BillingPage() {
                       {formatPrice(plan.price[currency], currency)}
                       <span className="text-sm font-normal text-slate-400"> / {plan.cadence}</span>
                     </p>
-                    <button className="w-full mt-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2">
-                      Select Plan <ArrowRight className="w-4 h-4" />
+                    
+                    <button 
+                      onClick={() => handlePayment(plan.id, plan.price[currency])}
+                      disabled={loadingPlan === plan.id || isPremium}
+                      className="w-full mt-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {loadingPlan === plan.id ? (
+                        <>
+                          <Loader2 className="w-5 h-5 animate-spin" /> Processing...
+                        </>
+                      ) : isPremium ? (
+                        'Current Plan'
+                      ) : (
+                        <>
+                          Select Plan <ArrowRight className="w-4 h-4" />
+                        </>
+                      )}
                     </button>
                   </div>
                 </CardBody>
@@ -122,8 +171,9 @@ export default function BillingPage() {
             ))}
           </div>
 
-          <Alert tone="blue" title="Payment Integration coming soon">
-            We are currently finalizing our payment gateway. If you would like to upgrade right now, please email us at <strong>{supportEmail}</strong> and we will manually activate your premium plan.
+          <Alert tone="amber" title="Test Mode">
+            Payments are currently running in sandbox mode. No real money will be deducted. 
+            If you want to manually activate, email <strong>{supportEmail}</strong>.
           </Alert>
         </div>
 
