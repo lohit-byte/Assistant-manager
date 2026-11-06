@@ -83,7 +83,8 @@ export function percent(current: number, total: number): number {
 
 export interface WarWindow {
   start: Date | null
-  end: Date | null
+  phaseEnd: Date | null // End of current phase (24h)
+  warEnd: Date | null   // End of entire war (48h)
   phase: 'defence' | 'attack' | 'ended' | 'unknown'
   active: boolean
 }
@@ -93,7 +94,8 @@ export interface WarWindow {
  * attack lasts until war_start + 48h.
  */
 export function getWarWindow(war: War | null): WarWindow {
-  if (!war) return { start: null, end: null, phase: 'unknown', active: false }
+  if (!war) return { start: null, phaseEnd: null, warEnd: null, phase: 'unknown', active: false }
+  
   const start = toDate(war.war_start)
   const rawPhase = (war.phase || '').toLowerCase()
   const phase =
@@ -105,12 +107,16 @@ export function getWarWindow(war: War | null): WarWindow {
           ? 'ended'
           : 'unknown'
 
-  let end: Date | null = null
-    if (start && phase !== 'unknown') {
-    end = new Date(start.getTime() + (phase === 'defence' ? 24 : 48) * 3600_000)
+  let phaseEnd: Date | null = null
+  let warEnd: Date | null = null
+
+  if (start) {
+    warEnd = new Date(start.getTime() + 48 * 3600_000)
+    if (phase === 'defence') phaseEnd = new Date(start.getTime() + 24 * 3600_000)
+    if (phase === 'attack') phaseEnd = warEnd
   }
 
-  return { start, end, phase, active: Boolean(war.is_active) && phase !== 'ended' }
+  return { start, phaseEnd, warEnd, phase, active: Boolean(war.is_active) && phase !== 'ended' }
 }
 
 export function warPhaseLabel(phase: WarWindow['phase']): string {
