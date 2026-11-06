@@ -71,7 +71,7 @@ export default function Landing() {
               <Shield className="h-5 w-5" />
             </div>
             <span className="text-sm font-bold tracking-wide text-slate-200">
-              MONSTER LEGENDS ASSISTANT
+              ASSISTANT FOR MONSTER LEGENDS
             </span>
           </div>
           <Badge tone="purple" dot>
