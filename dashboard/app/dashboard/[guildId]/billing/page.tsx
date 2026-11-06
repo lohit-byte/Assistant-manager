@@ -178,7 +178,7 @@ export default function BillingPage() {
         </div>
 
         {/* Features List */}
-        <div>
+        <div className="space-y-4">
           <Card>
             <CardHeader title="What's included" icon={<ShieldCheck className="w-5 h-5" />} />
             <CardBody>
@@ -192,6 +192,11 @@ export default function BillingPage() {
               </ul>
             </CardBody>
           </Card>
+          
+          {/* CASHFREE LEGAL WARNING */}
+          <p className="text-xs text-slate-500 px-2 text-center">
+            By selecting a plan, you agree to our <a href="/legal" target="_blank" className="text-purple-400 hover:underline">Terms of Service</a>. All payments are strictly non-refundable.
+          </p>
         </div>
       </div>
     </div>
