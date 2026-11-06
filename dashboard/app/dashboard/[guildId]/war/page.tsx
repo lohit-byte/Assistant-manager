@@ -513,12 +513,12 @@ export default function WarPage() {
                     <p className="mt-0.5 text-slate-200">{formatDateTime(warWindow.start)}</p>
                   </div>
                   <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3">
-                    <p className="text-xs text-slate-500">Ends</p>
-                    <p className="mt-0.5 text-slate-200">{formatDateTime(warWindow.end)}</p>
+                    <p className="text-xs text-slate-500">War Ends (48h)</p>
+                    <p className="mt-0.5 text-slate-200">{formatDateTime(warWindow.warEnd)}</p>
                   </div>
                 </div>
 
-                {warWindow.active && warWindow.start && warWindow.end ? (
+                {warWindow.active && warWindow.start && warWindow.phaseEnd && warWindow.warEnd ? (
                   <div>
                     <ProgressBar
                       value={
@@ -528,17 +528,17 @@ export default function WarPage() {
                           : warWindow.start.getTime())
                       }
                       max={
-                        warWindow.end.getTime() -
+                        warWindow.phaseEnd.getTime() -
                         (warWindow.phase === 'attack'
                           ? warWindow.start.getTime() + 24 * 3600_000
                           : warWindow.start.getTime())
                       }
                       tone="amber"
-                      label="Phase elapsed"
+                      label={`${warPhaseLabel(warWindow.phase)} Phase Elapsed`}
                     />
-                    <p className="mt-2 text-xs text-slate-500">
-                      {formatRelative(warWindow.end, now)} ·{' '}
-                      {formatDuration(warWindow.end.getTime() - now.getTime())} remaining
+                    <p className="mt-2 flex justify-between text-xs text-slate-500">
+                      <span>{formatRelative(warWindow.phaseEnd, now)} until next phase</span>
+                      <span>{formatDuration(warWindow.warEnd.getTime() - now.getTime())} until war ends</span>
                     </p>
                   </div>
                 ) : (
