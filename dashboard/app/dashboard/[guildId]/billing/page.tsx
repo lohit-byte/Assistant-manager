@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation' // <-- ADDED
 import { ShieldCheck, Calendar, ArrowRight, ShieldAlert } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 
-const supabase = createClient() // <-- MOVED OUTSIDE COMPONENT
+const supabase = typeof window !== 'undefined' ? createClient() : (null as any)
 
 export default function BillingPage() {
   const params = useParams() // <-- ADDED
