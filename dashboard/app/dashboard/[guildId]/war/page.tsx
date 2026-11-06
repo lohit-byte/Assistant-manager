@@ -36,6 +36,7 @@ import {
   endWar,
   getWar,
   getWarSettings,
+  listAliases,
   listWarnings,
   resetWarLists,
   saveWarSettings,
@@ -333,15 +334,22 @@ export default function WarPage() {
     }
   }
 
-  const submitWarning = async () => {
-    if (!isSnowflake(warningId)) {
-      setFeedback({ tone: 'red', text: 'Enter a valid Discord user ID (17–20 digits).' })
-      return
-    }
+    const submitWarning = async () => {
+    const input = warningId.trim()
     setBusy('warning-add')
     setFeedback(null)
     try {
-      await addWarning(createClient(), guildId, warningId, warningReason, null)
+      const aliases = await listAliases(createClient(), guildId)
+      const match = aliases.find((a) => a.alias_name.toLowerCase() === input.toLowerCase())
+      const discordId = match ? String(match.discord_id) : isSnowflake(input) ? input : null
+      if (!discordId) {
+        setFeedback({
+          tone: 'red',
+          text: `No alias "${input}" found. Add it on the Aliases page first.`,
+        })
+        return
+      }
+      await addWarning(createClient(), guildId, discordId, warningReason, null)
       setWarningId('')
       setWarningReason('')
       setWarnings(await listWarnings(createClient(), guildId))
@@ -767,8 +775,7 @@ export default function WarPage() {
       <Card className="mt-6">
         <CardHeader
           title="Warnings"
-          description="Recorded by staff in Discord or from this dashboard"
-          icon={<AlertTriangle className="h-5 w-5" />}
+          placeholder="Player alias"
         />
         <CardBody className="space-y-4">
           <div className="grid gap-2 sm:grid-cols-[1fr_1.6fr_auto]">
