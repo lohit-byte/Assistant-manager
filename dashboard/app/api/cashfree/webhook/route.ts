@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
-// Use the service role key here to bypass RLS and update the guild
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY! 
@@ -11,19 +10,28 @@ export async function POST(request: Request) {
   try {
     const body = await request.json()
     
-    // Check if payment was successful
     if (body.data.order.order_status === "PAID") {
-      const customerId = body.data.customer_details.customer_id // This is the guildId
+      const orderId = body.data.order.order_id // e.g. guild_12345_pro_monthly_169...
       
-      // Upgrade the server to premium
+      // We passed the guildId and planId in the orderId. Let's parse it.
+      // Format: guild_{guildId}_{planId}_{timestamp}
+      const parts = orderId.split('_')
+      const customerId = parts[1] // The guild ID
+      
+      // Find the plan in our pricing data (or just hardcode the logic here)
+      let teams = 1;
+      if (orderId.includes('pro')) teams = 3;
+      if (orderId.includes('elite')) teams = 999;
+      
       const { error } = await supabaseAdmin
         .from('guilds')
-        .update({ premium_status: 'premium' })
+        .update({ 
+          premium_status: 'premium',
+          max_teams: teams // <--- Upgrades their limit
+        })
         .eq('guild_id', customerId)
 
       if (error) throw error
-      
-      console.log(`Successfully upgraded guild ${customerId} to Premium!`)
     }
 
     return NextResponse.json({ status: "ok" })
