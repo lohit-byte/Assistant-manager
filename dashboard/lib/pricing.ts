@@ -40,7 +40,7 @@ export const PRICING_PLANS: PricingPlan[] = [
     cadence: 'year',
     description: 'Full access for a full year at the best rate, with Unlimited teams and Priority support.',
     price: { USD: 84, INR: 7999 },
-    max_teams: 99
+    max_teams: 99,
     badge: 'Save 30%',
     highlight: true,
   },
