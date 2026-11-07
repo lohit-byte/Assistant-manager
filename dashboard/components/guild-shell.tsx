@@ -1,13 +1,9 @@
 'use client'
 
-import {
-  createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode,
-} from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import {
-  ArrowLeft, CreditCard, ExternalLink, LayoutDashboard, LogOut, Map, Menu, RefreshCw, Server, Settings, ShieldAlert, Swords, Trophy, Users, X,
-} from 'lucide-react'
+import { ArrowLeft, CreditCard, ExternalLink, LayoutDashboard, LogOut, Map, Menu, RefreshCw, Server, Settings, ShieldAlert, Swords, Trophy, Users, X, ChevronRight } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { canManageGuild, DiscordApiError, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
 import { BOT_CLIENT_ID, BOT_INVITE_URL, DISCORD_GUILD_ICON, PLAN_META, SUPPORT_EMAIL } from '@/lib/constants'
@@ -36,7 +32,7 @@ const NAV = [
   { name: 'Race', segment: '/race', icon: Trophy },
   { name: 'Maze', segment: '/maze', icon: Map },
   { name: 'Aliases', segment: '/aliases', icon: Users },
-  { name: 'Settings', segment: '/settings', icon: Settings }, // NEW TAB
+  { name: 'Settings', segment: '/settings', icon: Settings },
   { name: 'Billing', segment: '/billing', icon: CreditCard },
 ]
 
@@ -82,21 +78,21 @@ export default function GuildShell({ guildId, children }: { guildId: string; chi
       )
 
       if (!session.provider_token) {
-        return setError({ kind: 'discord', message: 'Discord access has expired. Sign out and sign in again.' })
+        return setError({ kind: 'discord', message: 'Discord access expired. Sign out and in again.' })
       }
 
       const guilds = await fetchDiscordGuilds(session.provider_token)
       const match = guilds.find((item) => item.id === guildId)
 
       if (!match || !canManageGuild(match)) {
-        return setError({ kind: 'forbidden', message: 'You need the Manage Server permission in this server to open its dashboard.' })
+        return setError({ kind: 'forbidden', message: 'You need Manage Server permission.' })
       }
 
       setDiscordGuild(match)
       const row = await getGuild(supabase, guildId)
       
       if (!row) {
-        return setError({ kind: 'not-added', message: 'The bot is not in this server yet. Invite it first to unlock the dashboard.' })
+        return setError({ kind: 'not-added', message: 'The bot is not in this server yet.' })
       }
 
       setGuild(row)
@@ -150,7 +146,6 @@ export default function GuildShell({ guildId, children }: { guildId: string; chi
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <Badge tone={meta.tone} dot>{meta.label}</Badge>
               {guild?.premium_status === 'trial' ? <span className="text-xs text-slate-500">{trialDaysLeft(guild)} days left</span> : null}
-              {guild?.is_blacklisted ? <Badge tone="red">Blacklisted</Badge> : null}
             </div>
           </div>
 
@@ -172,10 +167,6 @@ export default function GuildShell({ guildId, children }: { guildId: string; chi
               <div className="min-w-0"><p className="truncate text-sm font-medium text-slate-300">{userLabel}</p><p className="text-xs text-slate-600">Signed in</p></div>
               <button onClick={signOut} className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white"><LogOut className="h-4 w-4" /></button>
             </div>
-            <div className="flex items-center gap-2">
-              <Link href="/dashboard" className={buttonClass('secondary', 'sm', 'flex-1')}>Switch server</Link>
-              <a href={BOT_INVITE_URL} target="_blank" rel="noopener noreferrer" className={buttonClass('ghost', 'sm')} title="Invite the bot"><ExternalLink className="h-4 w-4" /></a>
-            </div>
           </div>
         </aside>
 
@@ -188,6 +179,9 @@ export default function GuildShell({ guildId, children }: { guildId: string; chi
           <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10 lg:py-10">{children}</main>
         </div>
       </div>
+      
+      {/* ONBOARDING TOUR */}
+      <OnboardingTour />
     </GuildContext.Provider>
   )
 }
@@ -197,8 +191,6 @@ function AccessErrorScreen({ error, onRetry, guildId, discordGuild }: { error: A
   if (!error) return null
 
   const title = error.kind === 'forbidden' ? 'Access denied' : error.kind === 'not-added' ? 'Bot not added' : error.kind === 'discord' ? 'Reconnect Discord' : 'Something went wrong'
-  
-  // Generate a specific invite URL that pre-selects this server!
   const specificInviteUrl = `https://discord.com/oauth2/authorize?client_id=${BOT_CLIENT_ID}&permissions=257088&scope=bot&guild_id=${guildId}&disable_guild_select=true`
 
   return (
@@ -213,23 +205,52 @@ function AccessErrorScreen({ error, onRetry, guildId, discordGuild }: { error: A
             <p className="mt-2 text-sm text-slate-400">{error.message}</p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2">
-            
-            {/* THE FIX: Add an invite button if the bot isn't there */}
             {error.kind === 'not-added' && (
               <a href={specificInviteUrl} target="_blank" rel="noopener noreferrer" className={buttonClass('primary', 'lg', 'w-full')}>
                 <ExternalLink className="h-5 w-5 mr-2" /> Add Bot to {discordGuild?.name || 'Server'}
               </a>
             )}
-
             {error.kind === 'discord' && <Button onClick={signOut}><LogOut className="h-4 w-4 mr-2" /> Sign in again</Button>}
             {error.kind === 'unknown' && <Button onClick={onRetry}><RefreshCw className="h-4 w-4 mr-2" /> Try again</Button>}
-            
-            {error.kind !== 'not-added' && (
-              <Link href="/dashboard" className={buttonClass('secondary')}>Back to servers</Link>
-            )}
+            {error.kind !== 'not-added' && <Link href="/dashboard" className={buttonClass('secondary')}>Back to servers</Link>}
           </div>
         </CardBody>
       </Card>
+    </div>
+  )
+}
+
+function OnboardingTour() {
+  const [step, setStep] = useState(0)
+  const [isVisible, setIsVisible] = useState(false)
+
+  useEffect(() => {
+    if (!localStorage.getItem('ml_tour_seen')) setIsVisible(true)
+  }, [])
+
+  if (!isVisible) return null
+
+  const steps = [
+    { title: "Welcome to your Dashboard!", text: "This is your command center. The bot does the heavy lifting in Discord, and this website gives you a live view of your server." },
+    { title: "Live War Tracking", text: "Click 'War' on the left to see your 48-hour timers, who missed attacks, and attack logs updated in real-time." },
+    { title: "Race & Maze Automation", text: "Upload community JSON sheets for the Race, or schedule Maze events so the bot auto-pings your team." }
+  ]
+
+  const handleNext = () => {
+    if (step < steps.length - 1) setStep(step + 1)
+    else { localStorage.setItem('ml_tour_seen', 'true'); setIsVisible(false) }
+  }
+
+  return (
+    <div className="fixed bottom-8 right-8 z-50 w-80 bg-slate-900 border border-purple-500/50 shadow-2xl rounded-2xl p-6">
+      <button onClick={() => { localStorage.setItem('ml_tour_seen', 'true'); setIsVisible(false) }} className="absolute top-4 right-4 text-slate-500 hover:text-white"><X className="w-4 h-4" /></button>
+      <Badge tone="purple" className="mb-3">Step {step + 1} of {steps.length}</Badge>
+      <h3 className="text-lg font-bold text-white mb-2">{steps[step].title}</h3>
+      <p className="text-sm text-slate-400 mb-6">{steps[step].text}</p>
+      <div className="flex justify-between items-center">
+        <button onClick={() => { localStorage.setItem('ml_tour_seen', 'true'); setIsVisible(false) }} className="text-xs text-slate-500 hover:text-white">Skip Tour</button>
+        <Button size="sm" onClick={handleNext}>{step === steps.length - 1 ? 'Finish' : 'Next'} <ChevronRight className="w-4 h-4 ml-1" /></Button>
+      </div>
     </div>
   )
 }
