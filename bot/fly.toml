@@ -1,0 +1,14 @@
+app = "assistant-manager"
+primary_region = "ams"
+
+[build]
+
+[env]
+ PYTHONBUFFERED = "1"
+
+[http_service]
+ internal_port = 8080
+ force_https = true
+ auto_stop_machine = false
+ auto_start_machine = false
+ min_machines_running = 1
