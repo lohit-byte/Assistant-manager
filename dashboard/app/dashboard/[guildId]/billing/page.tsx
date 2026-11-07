@@ -26,6 +26,7 @@ export default function BillingPage() {
 
   const status = guild?.premium_status ?? 'expired'
   const isPremium = status === 'premium'
+  const isTrial = status === 'trial'
   const trialEnd = toDate(guild?.trial_ends_at)
   
   let daysLeft = 0
