@@ -69,11 +69,11 @@ export async function saveWarSettings(
 
 /* -------------------------------------------------------------------- war */
 
-export async function getWar(supabase: SupabaseClient, guildId: string): Promise<War | null> {
+export async function getWar(supabase: SupabaseClient, channelId: string): Promise<War | null> {
   const { data, error } = await supabase
     .from('wars')
     .select('*')
-    .eq('guild_id', guildId)
+    .eq('channel_id', channelId)
     .limit(1)
     .maybeSingle()
 
@@ -83,27 +83,26 @@ export async function getWar(supabase: SupabaseClient, guildId: string): Promise
 
 export async function updateWar(
   supabase: SupabaseClient,
-  guildId: string,
-  patch: Partial<Omit<War, 'guild_id'>>,
+  channelId: string,
+  patch: Partial<Omit<War, 'channel_id'>>,
 ): Promise<void> {
-  const { error } = await supabase.from('wars').update(patch).eq('guild_id', guildId)
+  const { error } = await supabase.from('wars').update(patch).eq('channel_id', channelId)
   throwIfError(error, 'Could not update the war')
 }
 
-export async function resetWarLists(supabase: SupabaseClient, guildId: string): Promise<void> {
-  await updateWar(supabase, guildId, {
+export async function resetWarLists(supabase: SupabaseClient, channelId: string): Promise<void> {
+  await updateWar(supabase, channelId, {
     missing_list: [],
     absent_list: [],
     attack_counts: {},
   })
 }
 
-export async function endWar(supabase: SupabaseClient, guildId: string): Promise<void> {
-  await updateWar(supabase, guildId, {
+export async function endWar(supabase: SupabaseClient, channelId: string): Promise<void> {
+  await updateWar(supabase, channelId, {
     is_active: false,
     phase: 'ended',
     status_message_id: null,
-    status_channel_id: null,
   })
 }
 
@@ -111,12 +110,12 @@ export async function endWar(supabase: SupabaseClient, guildId: string): Promise
 
 export async function getRaceState(
   supabase: SupabaseClient,
-  guildId: string,
+  channelId: string,
 ): Promise<RaceState | null> {
   const { data, error } = await supabase
     .from('race_state')
     .select('*')
-    .eq('guild_id', guildId)
+    .eq('channel_id', channelId)
     .limit(1)
     .maybeSingle()
 
@@ -126,12 +125,13 @@ export async function getRaceState(
 
 export async function saveRaceState(
   supabase: SupabaseClient,
+  channelId: string,
   guildId: string,
-  patch: Partial<Omit<RaceState, 'guild_id'>>,
+  patch: Partial<Omit<RaceState, 'guild_id' | 'channel_id'>>,
 ): Promise<void> {
   const { error } = await supabase.from('race_state').upsert(
-    { guild_id: guildId, ...patch },
-    { onConflict: 'guild_id' },
+    { channel_id: channelId, guild_id: guildId, ...patch },
+    { onConflict: 'channel_id' },
   )
   throwIfError(error, 'Could not save race state')
 }
@@ -208,8 +208,6 @@ export async function addAlias(
   const cleanId = discordId.replace(/\D/g, '')
   const cleanAlias = aliasName.trim().toLowerCase()
 
-  // The aliases table references users(discord_id); make sure the parent row
-  // exists. RLS or a legacy schema may reject this, so it is best-effort.
   await supabase
     .from('users')
     .upsert({ discord_id: cleanId }, { onConflict: 'discord_id', ignoreDuplicates: true })
@@ -285,10 +283,20 @@ export interface GuildSummary {
 export async function getGuildSummary(
   supabase: SupabaseClient,
   guildId: string,
+  channelId?: string | null
 ): Promise<GuildSummary> {
+  // If a channel is selected, fetch its specific war and race. Otherwise, fetch the first available.
+  const warPromise = channelId 
+    ? getWar(supabase, channelId)
+    : supabase.from('wars').select('*').eq('guild_id', guildId).eq('is_active', true).limit(1).maybeSingle().then(res => res.data as War);
+
+  const racePromise = channelId
+    ? getRaceState(supabase, channelId)
+    : supabase.from('race_state').select('*').eq('guild_id', guildId).limit(1).maybeSingle().then(res => res.data as RaceState);
+
   const [war, race, maze, aliases, warnings] = await Promise.allSettled([
-    getWar(supabase, guildId),
-    getRaceState(supabase, guildId),
+    warPromise,
+    racePromise,
     getMazeSchedule(supabase, guildId),
     supabase.from('aliases').select('id', { count: 'exact', head: true }).eq('guild_id', guildId),
     supabase.from('warnings').select('id', { count: 'exact', head: true }).eq('guild_id', guildId),
