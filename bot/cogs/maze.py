@@ -75,21 +75,25 @@ class MazeTracker(commands.Cog):
                 )
 
     async def ping_discount_at_time(self, guild_id, channel, pct, delay):
-        if delay > 0: 
-            await asyncio.sleep(delay)
-            
-        try:
-            res = await asyncio.to_thread(supabase.table("maze_schedules").select("ping_enabled_global").eq("guild_id", guild_id).execute)
-            if not res.data or not res.data[0].get("ping_enabled_global", True):
-                return
-        except Exception:
-            return
+        # ... (keep the sleep and database check here) ...
 
         embed = discord.Embed(
             title="🗺️ Maze Island Discount!",
             description=f"🚨 **{pct} Discount is live right now!**\n\nSpend your Maze Coins!",
             color=discord.Color.purple()
         )
+        
+        # --- NEW CODE: Check for configured channel ---
+        try:
+            res = await asyncio.to_thread(supabase.table("guilds").select("maze_channel_id").eq("guild_id", guild_id).execute)
+            configured_id = res.data[0].get("maze_channel_id") if res.data else None
+            if configured_id:
+                target_channel = self.bot.get_channel(configured_id)
+                if target_channel:
+                    channel = target_channel
+        except Exception:
+            pass
+        # ----------------------------------------------
         
         try:
             if channel.permissions_for(channel.guild.me).mention_everyone:
