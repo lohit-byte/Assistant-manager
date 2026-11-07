@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
+// Use the service role key to bypass RLS and update the guild securely
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY! 
@@ -10,31 +11,41 @@ export async function POST(request: Request) {
   try {
     const body = await request.json()
     
+    // Check if the payment was successful
     if (body.data.order.order_status === "PAID") {
-      const orderId = body.data.order.order_id // e.g. guild_12345_pro_monthly_169...
-      
-      // We passed the guildId and planId in the orderId. Let's parse it.
-      // Format: guild_{guildId}_{planId}_{timestamp}
+      // The order_id format we generate in create-order is: 
+      // guild_{guildId}_{planId}_{timestamp}
+      const orderId = body.data.order.order_id 
       const parts = orderId.split('_')
-      const customerId = parts[1] // The guild ID
       
-      // Find the plan in our pricing data (or just hardcode the logic here)
-      let teams = 1;
-      if (orderId.includes('pro')) teams = 3;
-      if (orderId.includes('elite')) teams = 999;
+      const guildId = parts[1] // The Guild ID
+      const planId = parts[2]  // e.g., 'starter_monthly', 'pro_monthly', 'elite_yearly'
       
+      // Determine the max teams based on the plan they bought
+      let maxTeams = 1
+      if (planId.includes('pro')) maxTeams = 3
+      if (planId.includes('elite')) maxTeams = 99
+      
+      // Upgrade the server in the database
       const { error } = await supabaseAdmin
         .from('guilds')
         .update({ 
           premium_status: 'premium',
-          max_teams: teams // <--- Upgrades their limit
+          max_teams: maxTeams 
         })
-        .eq('guild_id', customerId)
+        .eq('guild_id', guildId)
 
-      if (error) throw error
+      if (error) {
+        console.error("Database update failed:", error)
+        throw error
+      }
+      
+      console.log(`✅ Successfully upgraded guild ${guildId} to Premium (${planId}) with ${maxTeams} teams.`)
     }
 
+    // Always return a 200 OK so Cashfree knows we received it
     return NextResponse.json({ status: "ok" })
+    
   } catch (error) {
     console.error("Webhook Error:", error)
     return NextResponse.json({ status: "error" }, { status: 500 })
