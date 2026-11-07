@@ -2,82 +2,73 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  ChevronRight,
-  Flag,
-  Hand,
-  RefreshCw,
-  RotateCcw,
-  Save,
-  Sparkles,
-  Target,
-  Trophy,
-  Users,
+  Activity, ChevronRight, Flag, Hand, RefreshCw, Sparkles, Target, Trophy, Users
 } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
 import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
-  Field,
-  PageHeader,
-  ProgressBar,
-  Spinner,
-  Stat,
-  TextArea,
-  TextInput,
-  Toggle,
+  Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState,
+  Field, PageHeader, ProgressBar, Spinner, Stat, TextInput, Divider
 } from '@/components/ui'
-import { getRaceState, saveRaceState } from '@/lib/data'
+import { getRaceState, saveRaceState, listAliases } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
 import { NODES_PER_LAP } from '@/lib/constants'
-import { clamp, isSnowflake, percent } from '@/lib/format'
-import type { RaceState } from '@/lib/types'
+import { percent, formatRelative } from '@/lib/format'
+import type { RaceState, Alias } from '@/lib/types'
+import { useNow } from '@/lib/hooks'
+
+interface RaceLog {
+  id: number;
+  player_name: string;
+  action_type: string;
+  created_at: string;
+}
 
 function emptyRace(guildId: string): RaceState {
   return {
-    guild_id: guildId,
-    target_laps: 0,
-    current_lap: 0,
-    current_node: 0,
-    task_description: 'No Active Node',
-    ofa_holder_id: null,
-    ofa_target: null,
-    ofa_done: false,
-    dyp_progress: 0,
-    dyp_target: 0,
-    dyp_contributors: [],
-    je_progress: '0',
-    je_target: '0',
-    je_done: false,
-    pending_ofa_message_id: null,
-    pending_ofa_user_id: null,
-    is_event_active: false,
+    guild_id: guildId, target_laps: 0, current_lap: 0, current_node: 0,
+    task_description: 'No Active Node', ofa_holder_id: null, ofa_target: null,
+    ofa_done: false, dyp_progress: 0, dyp_target: 0, dyp_contributors: [],
+    je_progress: '0', je_target: '0', je_done: false,
+    pending_ofa_message_id: null, pending_ofa_user_id: null, is_event_active: false,
   }
-}
-
-function num(value: string, fallback = 0): number {
-  const parsed = Number.parseInt(value, 10)
-  return Number.isNaN(parsed) ? fallback : parsed
 }
 
 export default function RacePage() {
   const { guildId } = useGuild()
+  const now = useNow(15000) // Updates every 15 seconds
+  
   const [draft, setDraft] = useState<RaceState>(() => emptyRace(guildId))
-  const [contributorsText, setContributorsText] = useState('')
+  const [aliases, setAliases] = useState<Alias[]>([])
+  const [logs, setLogs] = useState<RaceLog[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<{ tone: 'green' | 'red'; text: string } | null>(null)
+
+  // Sheet states
+  const [sheets, setSheets] = useState<any[]>([])
+  const [activeSheet, setActiveSheet] = useState<string | null>(null)
+  const [jsonInput, setJsonInput] = useState('')
+  const [sheetName, setSheetName] = useState('')
 
   const load = useCallback(
     async (mode: 'initial' | 'refresh' = 'initial') => {
       if (mode === 'initial') setLoading(true)
       try {
-        const row = (await getRaceState(createClient(), guildId)) ?? emptyRace(guildId)
-        setDraft(row)
-        setContributorsText((row.dyp_contributors ?? []).join(', '))
+        const supabase = createClient()
+        const [row, aliasData, sheetData, logData] = await Promise.all([
+          getRaceState(supabase, guildId),
+          listAliases(supabase, guildId),
+          supabase.from('race_sheets').select('name').eq('guild_id', guildId),
+          supabase.from('race_logs').select('*').eq('guild_id', guildId).order('created_at', { ascending: false }).limit(15)
+        ])
+        
+        setAliases(aliasData)
+        setSheets(sheetData.data || [])
+        setLogs(logData.data || [])
+        
+        const state = row ?? emptyRace(guildId)
+        setDraft(state)
+        setActiveSheet(state.active_race_sheet || null)
       } catch (caught) {
         setFeedback({
           tone: 'red',
@@ -90,12 +81,13 @@ export default function RacePage() {
     [guildId],
   )
 
+  useEffect(() => { void load() }, [load])
+  
+  // Auto-refresh every 15s
   useEffect(() => {
-    void load()
+    const interval = setInterval(() => { void load('refresh') }, 15000)
+    return () => clearInterval(interval)
   }, [load])
-
-  const update = <K extends keyof RaceState>(key: K, value: RaceState[K]) =>
-    setDraft((current) => ({ ...current, [key]: value }))
 
   const lap = draft.current_lap ?? 0
   const node = draft.current_node ?? 0
@@ -105,153 +97,61 @@ export default function RacePage() {
   const jeProgress = draft.je_progress ?? '0'
   const jeTarget = draft.je_target ?? '0'
 
-  const nodeIsActive = useMemo(() => {
-    const task = draft.task_description ?? ''
-    return task.length > 0 && task !== 'No Active Node'
-  }, [draft.task_description])
+  const contributorNames = useMemo(() => {
+    if (!draft.dyp_contributors) return []
+    return draft.dyp_contributors.map(id => {
+      const found = aliases.find(a => String(a.discord_id) === String(id))
+      return found ? found.alias_name : `User ${id}`
+    })
+  }, [draft.dyp_contributors, aliases])
 
-  const patchFromDraft = () => ({
-    target_laps: draft.target_laps ?? 0,
-    current_lap: draft.current_lap ?? 0,
-    current_node: draft.current_node ?? 0,
-    task_description: draft.task_description ?? 'No Active Node',
-    ofa_holder_id: draft.ofa_holder_id ? String(draft.ofa_holder_id) : null,
-    ofa_target: draft.ofa_target ?? null,
-    ofa_done: Boolean(draft.ofa_done),
-    dyp_progress: draft.dyp_progress ?? 0,
-    dyp_target: draft.dyp_target ?? 0,
-    dyp_contributors: contributorsText
-      .split(',')
-      .map((name) => name.trim())
-      .filter(Boolean),
-    je_progress: draft.je_progress ?? '0',
-    je_target: draft.je_target ?? '0',
-    je_done: Boolean(draft.je_done),
-    pending_ofa_message_id: draft.pending_ofa_message_id,
-    pending_ofa_user_id: draft.pending_ofa_user_id,
-    is_event_active: Boolean(draft.is_event_active),
-  })
+  const ofaName = useMemo(() => {
+    if (!draft.ofa_holder_id) return null
+    const found = aliases.find(a => String(a.discord_id) === String(draft.ofa_holder_id))
+    return found ? found.alias_name : `User ${draft.ofa_holder_id}`
+  }, [draft.ofa_holder_id, aliases])
 
-  const saveAll = async () => {
-    if (draft.ofa_holder_id && !isSnowflake(String(draft.ofa_holder_id))) {
-      setFeedback({ tone: 'red', text: 'OFA holder must be a valid Discord user ID (17–20 digits).' })
-      return
-    }
-    setBusy('save')
-    setFeedback(null)
+  const updateTargetLaps = async () => {
+    setBusy('target')
     try {
-      await saveRaceState(createClient(), guildId, patchFromDraft())
-      setFeedback({ tone: 'green', text: 'Race state saved.' })
-    } catch (caught) {
-      setFeedback({
-        tone: 'red',
-        text: caught instanceof Error ? caught.message : 'Could not save race state.',
-      })
-    } finally {
-      setBusy(null)
-    }
+      await saveRaceState(createClient(), guildId, { target_laps: draft.target_laps })
+      setFeedback({ tone: 'green', text: 'Lap target updated.' })
+    } catch (e) {
+      setFeedback({ tone: 'red', text: 'Could not save target.' })
+    } finally { setBusy(null) }
   }
 
-  const resetTasks = () => ({
-    task_description: 'No Active Node',
-    ofa_holder_id: null,
-    ofa_target: null,
-    ofa_done: false,
-    dyp_progress: 0,
-    dyp_target: 0,
-    dyp_contributors: [] as string[],
-    je_progress: '0',
-    je_target: '0',
-    je_done: false,
-    pending_ofa_message_id: null,
-    pending_ofa_user_id: null,
-  })
-
-  const advanceNode = async () => {
-    const nextNode = node + 1
-    const nextLap = nextNode > NODES_PER_LAP ? lap + 1 : lap
-    const normalisedNode = nextNode > NODES_PER_LAP ? 1 : nextNode
-    setBusy('advance')
-    setFeedback(null)
+  const uploadSheet = async () => {
+    if (!sheetName || !jsonInput) return
+    setBusy('sheet')
     try {
-      await saveRaceState(createClient(), guildId, {
-        current_lap: nextLap,
-        current_node: normalisedNode,
-        ...resetTasks(),
-      })
-      setDraft((current) => ({
-        ...current,
-        current_lap: nextLap,
-        current_node: normalisedNode,
-        ...resetTasks(),
-      }))
-      setContributorsText('')
-      setFeedback({
-        tone: 'green',
-        text: `Advanced to lap ${nextLap}.${normalisedNode}. Fill in the new tasks.`,
-      })
-    } catch (caught) {
-      setFeedback({
-        tone: 'red',
-        text: caught instanceof Error ? caught.message : 'Could not advance the node.',
-      })
-    } finally {
-      setBusy(null)
-    }
+      const parsed = JSON.parse(jsonInput)
+      const supabase = createClient()
+      const { error } = await supabase.from('race_sheets').upsert({
+        guild_id: guildId, name: sheetName, data: parsed
+      }, { onConflict: 'guild_id,name' })
+      
+      if (error) throw error
+      setFeedback({ tone: 'green', text: `Sheet "${sheetName}" uploaded!` })
+      setJsonInput(''); setSheetName(''); load('refresh')
+    } catch (e) {
+      setFeedback({ tone: 'red', text: 'Invalid JSON or database error.' })
+    } finally { setBusy(null) }
   }
 
-  const clearNode = async () => {
-    if (!window.confirm('Clear the current node tasks without changing the lap or node?')) return
-    setBusy('clear')
-    setFeedback(null)
-    try {
-      await saveRaceState(createClient(), guildId, resetTasks())
-      setDraft((current) => ({ ...current, ...resetTasks() }))
-      setContributorsText('')
-      setFeedback({ tone: 'green', text: 'Current node cleared.' })
-    } catch (caught) {
-      setFeedback({
-        tone: 'red',
-        text: caught instanceof Error ? caught.message : 'Could not clear the node.',
-      })
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const resetRace = async () => {
-    if (
-      !window.confirm(
-        'Reset the race to lap 0, node 0 and clear every task? The lap target is kept.',
-      )
-    ) {
-      return
-    }
-    setBusy('reset')
-    setFeedback(null)
-    try {
-      await saveRaceState(createClient(), guildId, {
-        current_lap: 0,
-        current_node: 0,
-        ...resetTasks(),
-      })
-      setDraft((current) => ({ ...current, current_lap: 0, current_node: 0, ...resetTasks() }))
-      setContributorsText('')
-      setFeedback({ tone: 'green', text: 'Race progress reset.' })
-    } catch (caught) {
-      setFeedback({
-        tone: 'red',
-        text: caught instanceof Error ? caught.message : 'Could not reset the race.',
-      })
-    } finally {
-      setBusy(null)
-    }
+  const selectSheet = async (name: string) => {
+    setBusy('select')
+    const supabase = createClient()
+    await supabase.from('race_state').upsert({ guild_id: guildId, active_race_sheet: name }, { onConflict: 'guild_id' })
+    setActiveSheet(name)
+    setFeedback({ tone: 'green', text: `Now using sheet: ${name}` })
+    setBusy(null)
   }
 
   if (loading) {
     return (
       <div>
-        <PageHeader title="Race" description="Node progress and task tracking." />
+        <PageHeader title="Race Tracker" description="Live team progress." />
         <Spinner label="Loading race state…" />
       </div>
     )
@@ -260,263 +160,193 @@ export default function RacePage() {
   return (
     <div>
       <PageHeader
-        eyebrow="Race tracker"
+        eyebrow="Race Live Tracker"
         title="Race"
-        description="Mirror of the race state the bot reads from the database. Advancing a node resets its tasks, exactly like !race newnode."
+        description="This page updates automatically every 15 seconds. All data comes directly from player commands in Discord."
         actions={
-          <>
-            <Button variant="secondary" onClick={() => load('refresh')}>
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </Button>
-            <Button variant="secondary" onClick={clearNode} loading={busy === 'clear'}>
-              <RotateCcw className="h-4 w-4" />
-              Clear node
-            </Button>
-            <Button onClick={advanceNode} loading={busy === 'advance'}>
-              <ChevronRight className="h-4 w-4" />
-              Advance node
-            </Button>
-          </>
+          <Button variant="secondary" onClick={() => load('refresh')}>
+            <RefreshCw className="h-4 w-4" /> Refresh Now
+          </Button>
         }
       />
 
-      {feedback ? (
+      {feedback && (
         <Alert tone={feedback.tone} className="mb-6" onDismiss={() => setFeedback(null)}>
           {feedback.text}
         </Alert>
-      ) : null}
+      )}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <Stat
-          label="Current node"
+          label="Current Node"
           value={`Lap ${lap}.${node}`}
-          hint={`${NODES_PER_LAP} nodes per lap`}
+          hint={activeSheet ? `Reading from: ${activeSheet}` : 'No active sheet'}
           icon={<Flag className="h-4 w-4" />}
           tone="purple"
         />
         <Stat
-          label="Lap target"
+          label="Lap Target"
           value={targetLaps > 0 ? targetLaps : 'Not set'}
           hint={targetLaps > 0 ? `${percent(lap, targetLaps).toFixed(0)}% of target` : 'Set a target below'}
           icon={<Target className="h-4 w-4" />}
           tone="green"
         />
         <Stat
-          label="Event"
-          value={draft.is_event_active ? 'Active' : 'Inactive'}
-          hint={nodeIsActive ? 'Node has tasks' : 'No active node tasks'}
-          icon={<Sparkles className="h-4 w-4" />}
-          tone={draft.is_event_active ? 'amber' : 'slate'}
+          label="Recent Activity"
+          value={logs.length > 0 ? `${logs.length} actions` : 'Quiet'}
+          hint="See the feed below"
+          icon={<Activity className="h-4 w-4" />}
+          tone="amber"
         />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
-        <Card>
-          <CardHeader
-            title="Progress"
-            description="Lap, node and event state"
-            icon={<Trophy className="h-5 w-5" />}
-          />
-          <CardBody className="space-y-5">
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Current lap">
-                <TextInput
-                  type="number"
-                  min={0}
-                  value={String(lap)}
-                  onChange={(event) => update('current_lap', Math.max(0, num(event.target.value)))}
-                />
-              </Field>
-              <Field label="Current node">
-                <TextInput
-                  type="number"
-                  min={0}
-                  max={NODES_PER_LAP}
-                  value={String(node)}
-                  onChange={(event) =>
-                    update(
-                      'current_node',
-                      clamp(num(event.target.value), 0, NODES_PER_LAP),
-                    )
-                  }
-                />
-              </Field>
-            </div>
-
-            <Field label="Lap target" hint="0 means no target.">
-              <TextInput
-                type="number"
-                min={0}
-                value={String(targetLaps)}
-                onChange={(event) => update('target_laps', Math.max(0, num(event.target.value)))}
-              />
-            </Field>
-
-            {targetLaps > 0 ? (
-              <ProgressBar value={lap} max={targetLaps} tone="green" label="Laps completed" />
-            ) : null}
-
-            <div className="border-t border-slate-800 pt-5">
-              <Toggle
-                checked={Boolean(draft.is_event_active)}
-                onChange={(value) => update('is_event_active', value)}
-                label="Race event active"
-                description="Shown in the bot status embed."
-              />
-            </div>
-
-            <div className="flex flex-wrap gap-2 border-t border-slate-800 pt-5">
-              <Button onClick={saveAll} loading={busy === 'save'} className="flex-1">
-                <Save className="h-4 w-4" />
-                Save state
-              </Button>
-              <Button variant="danger" onClick={resetRace} loading={busy === 'reset'}>
-                Reset progress
-              </Button>
-            </div>
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardHeader
-            title="Current node tasks"
-            description="OFA, DYP and JE targets"
-            icon={<Flag className="h-5 w-5" />}
-            action={
-              <Badge tone={nodeIsActive ? 'green' : 'slate'}>
-                {nodeIsActive ? 'Node active' : 'No active node'}
-              </Badge>
-            }
-          />
-          <CardBody className="space-y-6">
-            <Field
-              label="Task description"
-              hint="Use the same format as the bot: OFA: … | DYP: … | JE: …"
-            >
-              <TextArea
-                value={draft.task_description ?? ''}
-                onChange={(event) => update('task_description', event.target.value)}
-                placeholder="OFA: hatch 50 eggs | DYP: breed 10 pets | JE: craft 5 items"
-              />
-            </Field>
-
-            <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-              <div className="flex items-center justify-between">
-                <p className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <Hand className="h-4 w-4 text-purple-300" /> One For All (OFA)
-                </p>
-                <Badge tone={draft.ofa_done ? 'green' : draft.ofa_holder_id ? 'amber' : 'slate'}>
-                  {draft.ofa_done ? 'Done' : draft.ofa_holder_id ? 'Claimed' : 'Open'}
-                </Badge>
+      <div className="grid gap-6 xl:grid-cols-[1fr_350px]">
+        {/* MAIN PROGRESS COLUMN */}
+        <div className="space-y-6">
+          <Card>
+            <CardHeader title="Current Node Tasks" description="Live view of what players are working on." icon={<Trophy className="h-5 w-5" />} />
+            <CardBody className="space-y-6">
+              <div className="p-4 bg-slate-950/60 rounded-xl border border-slate-800">
+                <p className="text-xs uppercase text-slate-500 mb-2">Task Description</p>
+                <p className="text-sm text-slate-200">{draft.task_description || 'No active node.'}</p>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Holder Discord ID">
-                  <TextInput
-                    value={draft.ofa_holder_id ? String(draft.ofa_holder_id) : ''}
-                    onChange={(event) =>
-                      update('ofa_holder_id', event.target.value.trim() || null)
-                    }
-                    placeholder="e.g. 123456789012345678"
-                    inputMode="numeric"
-                  />
-                </Field>
-                <Field label="Target">
-                  <TextInput
-                    value={draft.ofa_target ?? ''}
-                    onChange={(event) => update('ofa_target', event.target.value)}
-                    placeholder="e.g. 50"
-                  />
-                </Field>
-              </div>
-              <Toggle
-                checked={Boolean(draft.ofa_done)}
-                onChange={(value) => update('ofa_done', value)}
-                label="OFA completed"
-              />
-            </div>
 
-            <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-              <div className="flex items-center justify-between">
-                <p className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <Users className="h-4 w-4 text-emerald-300" /> Do Your Part (DYP)
-                </p>
-                <Badge tone={dypTarget > 0 && dypProgress >= dypTarget ? 'green' : 'slate'}>
-                  {dypProgress}/{dypTarget}
-                </Badge>
+              {/* OFA */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="flex items-center gap-2 text-sm font-semibold text-white"><Hand className="h-4 w-4 text-purple-300" /> One For All (OFA)</p>
+                  <Badge tone={draft.ofa_done ? 'green' : ofaName ? 'amber' : 'slate'}>
+                    {draft.ofa_done ? 'Done' : ofaName ? 'Claimed' : 'Open'}
+                  </Badge>
+                </div>
+                <div className="p-3 bg-slate-900 rounded-lg border border-slate-800 text-sm">
+                  {ofaName ? (
+                    <span>Player <strong className="text-purple-300">{ofaName}</strong> {draft.ofa_done ? 'has completed this.' : 'is working on this.'}</span>
+                  ) : (
+                    <span className="text-slate-500">Nobody has claimed this yet. Type <code className="text-purple-300">!race ofa</code> in Discord.</span>
+                  )}
+                </div>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Progress">
-                  <TextInput
-                    type="number"
-                    min={0}
-                    value={String(dypProgress)}
-                    onChange={(event) =>
-                      update('dyp_progress', Math.max(0, num(event.target.value)))
-                    }
-                  />
-                </Field>
-                <Field label="Target">
-                  <TextInput
-                    type="number"
-                    min={0}
-                    value={String(dypTarget)}
-                    onChange={(event) =>
-                      update('dyp_target', Math.max(0, num(event.target.value)))
-                    }
-                  />
-                </Field>
-              </div>
-              <Field label="Contributors" hint="Comma separated. Matches the names the bot records.">
-                <TextInput
-                  value={contributorsText}
-                  onChange={(event) => setContributorsText(event.target.value)}
-                  placeholder="player one, player two"
-                />
-              </Field>
-              {dypTarget > 0 ? (
+
+              {/* DYP */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="flex items-center gap-2 text-sm font-semibold text-white"><Users className="h-4 w-4 text-emerald-300" /> Do Your Part (DYP)</p>
+                  <span className="text-sm font-bold">{dypProgress} / {dypTarget}</span>
+                </div>
                 <ProgressBar value={dypProgress} max={dypTarget} tone="green" />
-              ) : null}
-            </div>
-
-            <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-              <div className="flex items-center justify-between">
-                <p className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <Sparkles className="h-4 w-4 text-amber-300" /> Joint Effort (JE)
-                </p>
-                <Badge tone={draft.je_done ? 'green' : 'slate'}>
-                  {draft.je_done ? 'Done' : `${jeProgress}/${jeTarget}`}
-                </Badge>
+                <div className="flex flex-wrap gap-2 pt-2">
+                  {contributorNames.length > 0 ? (
+                    contributorNames.map((name, i) => <Badge key={i} tone="green">{name}</Badge>)
+                  ) : (
+                    <span className="text-xs text-slate-500">No contributions logged yet.</span>
+                  )}
+                </div>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Progress">
-                  <TextInput
-                    value={jeProgress}
-                    onChange={(event) => update('je_progress', event.target.value)}
-                    placeholder="e.g. 500K or 0"
-                  />
-                </Field>
-                <Field label="Target">
-                  <TextInput
-                    value={jeTarget}
-                    onChange={(event) => update('je_target', event.target.value)}
-                    placeholder="e.g. 2M"
-                  />
-                </Field>
-              </div>
-              <Toggle
-                checked={Boolean(draft.je_done)}
-                onChange={(value) => update('je_done', value)}
-                label="JE completed"
-              />
-            </div>
 
-            <Button onClick={saveAll} loading={busy === 'save'} className="w-full">
-              <Save className="h-4 w-4" />
-              Save node & tasks
-            </Button>
-          </CardBody>
-        </Card>
+              {/* JE */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="flex items-center gap-2 text-sm font-semibold text-white"><Sparkles className="h-4 w-4 text-amber-300" /> Joint Effort (JE)</p>
+                  <Badge tone={draft.je_done ? 'green' : 'slate'}>{draft.je_done ? 'Done' : 'In Progress'}</Badge>
+                </div>
+                <div className="flex justify-between text-sm font-bold">
+                  <span>{jeProgress}</span>
+                  <span className="text-slate-500">/ {jeTarget}</span>
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+
+          {/* AUTOMATION CARD */}
+          <Card>
+            <CardHeader title="Race Automation" description="Set lap targets or upload a community JSON sheet." icon={<ChevronRight className="h-5 w-5" />} />
+            <CardBody className="space-y-6">
+              
+              <div className="flex items-end gap-3">
+                <Field label="Team Lap Target" className="flex-1">
+                  <TextInput type="number" value={String(targetLaps)} onChange={(e) => setDraft({...draft, target_laps: parseInt(e.target.value) || 0})} />
+                </Field>
+                <Button onClick={updateTargetLaps} loading={busy === 'target'} className="mb-0.5">Save Target</Button>
+              </div>
+
+              <Divider />
+
+              <div className="space-y-4">
+                <Field label="Active Node Sheet">
+                  <select 
+                    value={activeSheet || ''} 
+                    onChange={(e) => selectSheet(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white"
+                  >
+                    <option value="" disabled>Select a sheet...</option>
+                    {sheets.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+                  </select>
+                </Field>
+
+                <div className="grid gap-4 sm:grid-cols-[1fr_2fr]">
+                  <Field label="Sheet Name">
+                    <TextInput value={sheetName} onChange={e => setSheetName(e.target.value)} placeholder="e.g. Godzilla" />
+                  </Field>
+                  <Field label="Paste JSON Data">
+                    <textarea 
+                      value={jsonInput} 
+                      onChange={e => setJsonInput(e.target.value)}
+                      placeholder='{ "0.1": { "ofa": "...", "dyp": "...", "je": "..." } }'
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm font-mono text-slate-300 h-[42px]"
+                    />
+                  </Field>
+                </div>
+                <Button onClick={uploadSheet} loading={busy === 'sheet'} disabled={!sheetName || !jsonInput} className="w-full">
+                  Upload Sheet to Server
+                </Button>
+              </div>
+            </CardBody>
+          </Card>
+        </div>
+
+        {/* ACTIVITY LOG COLUMN */}
+        <div>
+          <Card className="h-full">
+            <CardHeader title="Live Activity" description="Recent commands used in Discord." icon={<Activity className="h-5 w-5" />} />
+            <CardBody className="p-0">
+              {logs.length === 0 ? (
+                <div className="p-8 text-center text-sm text-slate-500">
+                  No activity yet. When players use <code className="text-purple-300">!race</code> commands in Discord, they will show up here instantly.
+                </div>
+              ) : (
+                <ul className="divide-y divide-slate-800/50">
+                  {logs.map((log) => {
+                    const actionMap: Record<string, { label: string, color: string }> = {
+                      ofa_claim: { label: 'Claimed OFA', color: 'text-purple-300' },
+                      ofa_done: { label: 'Completed OFA', color: 'text-emerald-300' },
+                      dyp_done: { label: 'Logged DYP', color: 'text-blue-300' },
+                      je_done: { label: 'Logged JE', color: 'text-amber-300' },
+                    }
+                    const action = actionMap[log.action_type] || { label: log.action_type, color: 'text-slate-300' }
+                    
+                    return (
+                      <li key={log.id} className="p-4 flex items-start gap-3 hover:bg-slate-800/20 transition-colors">
+                        <div className={`mt-0.5 p-1.5 rounded-full bg-slate-800 ${action.color}`}>
+                          <Check className="w-3 h-3" />
+                        </div>
+                        <div>
+                          <p className="text-sm">
+                            <strong className="text-white">{log.player_name}</strong> 
+                            <span className="text-slate-400"> {action.label}</span>
+                          </p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </CardBody>
+          </Card>
+        </div>
       </div>
     </div>
   )
