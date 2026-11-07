@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import crypto from 'crypto'
 
-// Use the service role key to bypass RLS and update the guild securely
+// Initialize Supabase with the Service Role Key to bypass RLS
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY! 
@@ -9,19 +10,43 @@ const supabaseAdmin = createClient(
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    // 1. Get the raw body and headers for security verification
+    const rawBody = await request.text()
+    const signature = request.headers.get('x-webhook-signature')
+    const timestamp = request.headers.get('x-webhook-timestamp')
     
-    // Check if the payment was successful
-    if (body.data.order.order_status === "PAID") {
-      // The order_id format we generate in create-order is: 
-      // guild_{guildId}_{planId}_{timestamp}
+    // 2. VERIFY THE SECRET (Security Check)
+    const secret = process.env.CASHFREE_WEBHOOK_SECRET!
+    if (!signature || !timestamp || !secret) {
+      console.error("Missing signature, timestamp, or secret.")
+      return NextResponse.json({ status: "unauthorized" }, { status: 401 })
+    }
+
+    // Cashfree signature verification logic
+    const payload = timestamp + rawBody
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(payload)
+      .digest('base64')
+
+    if (expectedSignature !== signature) {
+      console.error("Invalid webhook signature. Blocking request.")
+      return NextResponse.json({ status: "unauthorized" }, { status: 401 })
+    }
+
+    // 3. PROCESS THE PAYMENT (Only if the signature is valid)
+    const body = JSON.parse(rawBody)
+    
+    // Use optional chaining (?.) to prevent crashes on Cashfree's test pings
+    if (body?.data?.order?.order_status === "PAID") {
+      // The order_id format is: guild_{guildId}_{planId}_{timestamp}
       const orderId = body.data.order.order_id 
       const parts = orderId.split('_')
       
-      const guildId = parts[1] // The Guild ID
-      const planId = parts[2]  // e.g., 'starter_monthly', 'pro_monthly', 'elite_yearly'
+      const guildId = parts[1] 
+      const planId = parts[2]  
       
-      // Determine the max teams based on the plan they bought
+      // Determine the team limit based on the plan
       let maxTeams = 1
       if (planId.includes('pro')) maxTeams = 3
       if (planId.includes('elite')) maxTeams = 99
@@ -43,7 +68,7 @@ export async function POST(request: Request) {
       console.log(`✅ Successfully upgraded guild ${guildId} to Premium (${planId}) with ${maxTeams} teams.`)
     }
 
-    // Always return a 200 OK so Cashfree knows we received it
+    // Always return 200 so Cashfree knows we received it
     return NextResponse.json({ status: "ok" })
     
   } catch (error) {
