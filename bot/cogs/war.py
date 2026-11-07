@@ -198,7 +198,12 @@ class WarTracker(commands.Cog):
                 for t in self.ping_tasks[ctx.guild.id]: t.cancel()
             
             # Send the initial status message
-            status_msg = await ctx.send(embed=await self.build_status_embed(ctx.guild.id))
+            # Check if a specific channel is set in the dashboard
+            res = await asyncio.to_thread(supabase.table("guilds").select("war_channel_id").eq("guild_id", ctx.guild.id).execute)
+            channel_id = res.data[0].get("war_channel_id") if res.data else None
+            target_channel = self.bot.get_channel(channel_id) if channel_id else ctx.channel
+
+            status_msg = await target_channel.send(embed=await self.build_status_embed(ctx.guild.id))
             await asyncio.to_thread(
                 supabase.table("wars").update({"status_message_id": status_msg.id, "status_channel_id": ctx.channel.id}).eq("guild_id", ctx.guild.id).execute
             )
