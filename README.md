@@ -24,7 +24,7 @@ A unified Discord bot and web dashboard designed for Monster Legends alliances t
 
 ### 📊 Web Dashboard
 * **Discord OAuth2:** Secure login and server selection.
-* **Paywall & Trials:** 7-Day Free Trial system integrated with Stripe subscriptions.
+* **Paywall & Trials:** 7-Day Free Trial system integrated with Cashfree subscriptions.
 * **Server Setup:** Intuitive dropdowns to map Discord channels and roles.
 * **Alias Management:** Player self-service alias creation with Staff override tables.
 * **Local Timezones:** Automatic conversion of Maze discount times to the user's local time.
@@ -34,7 +34,7 @@ A unified Discord bot and web dashboard designed for Monster Legends alliances t
 * **Dashboard Frontend:** Next.js (React) + Tailwind CSS
 * **Backend & Database:** Supabase (PostgreSQL, Auth, Realtime)
 * **Hosting:** Wispbyte (Bot) / Vercel (Dashboard)
-* **Billing:** Stripe (under process)
+* **Billing:** Cashfree
 
 ## 💼 Subscription & Support
 * **This platform operates on a Server Premium model. The first 7 days are free (Trial)
