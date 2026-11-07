@@ -2,13 +2,11 @@ import discord
 from discord.ext import commands
 import asyncio
 import re
-import os
 import json
-from datetime import datetime, timezone
 from database import supabase
 from ocr_engine import process_race_image
 
-NODES_PER_LAP = 5 
+NODES_PER_LAP = 5
 UNITS = {'K': 1e3, 'M': 1e6, 'B': 1e9}
 
 def parse_amount(s):
@@ -48,10 +46,24 @@ async def get_race(guild_id):
     return res.data[0] if res.data else None
 
 async def get_alias(guild_id, user_id, default_name):
+    if not user_id: return default_name
     res = await asyncio.to_thread(
         supabase.table("aliases").select("alias_name").eq("guild_id", guild_id).eq("discord_id", user_id).limit(1).execute
     )
     return res.data[0]["alias_name"] if res.data else default_name
+
+async def log_race_action(guild_id, user_id, player_name, action_type):
+    try:
+        await asyncio.to_thread(
+            supabase.table("race_logs").insert({
+                "guild_id": guild_id,
+                "discord_id": user_id,
+                "player_name": player_name,
+                "action_type": action_type
+            }).execute()
+        )
+    except Exception as e:
+        print(f"Failed to log race action: {e}")
 
 class RaceTracker(commands.Cog):
     def __init__(self, bot):
@@ -297,8 +309,6 @@ class RaceTracker(commands.Cog):
         await ctx.send(f"✅ Node initialized: **Lap {lap}.{node}**\n*Tasks:* {desc}")
         await self.show_status(ctx)
 
-    # ... [Keep manual_set, handle_task, and on_raw_reaction_add exactly the same as the previous version] ...
-    
     async def manual_set(self, ctx, subaction, args):
         if not subaction or not args:
             return await ctx.send("Usage: `!race set <desc|dyp|je|ofa> <value>`")
@@ -345,7 +355,9 @@ class RaceTracker(commands.Cog):
                 if subaction == "done":
                     if not state.get('ofa_holder_id') or (ctx.author.id != state['ofa_holder_id'] and not is_staff_member(ctx.author)):
                         return await ctx.send("❌ You don't hold OFA.")
+                    
                     await asyncio.to_thread(supabase.table("race_state").update({"ofa_done": True}).eq("guild_id", ctx.guild.id).execute)
+                    await log_race_action(ctx.guild.id, ctx.author.id, display_name, "ofa_done")
                     return await ctx.send(f"🎉 **OFA marked as COMPLETED** by {display_name}!")
 
                 if state.get('ofa_holder_id') or state.get('pending_ofa_message_id'):
@@ -372,6 +384,8 @@ class RaceTracker(commands.Cog):
                     "dyp_contributors": contribs
                 }).eq("guild_id", ctx.guild.id).execute)
                 
+                await log_race_action(ctx.guild.id, ctx.author.id, display_name, "dyp_done")
+                
                 if new_prog >= state.get('dyp_target', 0):
                     await ctx.send(f"🎉 **DYP Target Reached!** ({new_prog}/{state['dyp_target']})")
                 else:
@@ -383,6 +397,7 @@ class RaceTracker(commands.Cog):
                 
                 if args.lower() == "done":
                     await asyncio.to_thread(supabase.table("race_state").update({"je_done": True, "je_progress": state.get('je_target')}).eq("guild_id", ctx.guild.id).execute)
+                    await log_race_action(ctx.guild.id, ctx.author.id, display_name, "je_done")
                     return await ctx.send(f"🎉 **JE completed** by {display_name}!")
 
                 if args.startswith("+"):
@@ -397,6 +412,8 @@ class RaceTracker(commands.Cog):
                             "je_progress": format_amount(new_val),
                             "je_done": done
                         }).eq("guild_id", ctx.guild.id).execute)
+                        
+                        await log_race_action(ctx.guild.id, ctx.author.id, display_name, "je_done")
                         
                         await ctx.send(f"✅ JE logged for **{display_name}**. Progress: `{format_amount(new_val)}/{state['je_target']}`")
                         if done: await ctx.send("🎉 **JE Target Reached!**")
@@ -430,6 +447,10 @@ class RaceTracker(commands.Cog):
                         "ofa_holder_id": user_id, "ofa_done": False,
                         "pending_ofa_message_id": None, "pending_ofa_user_id": None
                     }).eq("guild_id", payload.guild_id).execute)
+                    
+                    # Log the claim when it's approved
+                    await log_race_action(payload.guild_id, user_id, display_name, "ofa_claim")
+                    
                     await channel.send(f"✅ OFA locked for **{display_name}**!")
             else:
                 await asyncio.to_thread(supabase.table("race_state").update({
