@@ -30,24 +30,32 @@ def get_or_create_guild(guild_id: int) -> dict:
 
 def check_premium_status(guild_id: int) -> bool:
     guild = get_or_create_guild(guild_id)
-    if guild.get("is_blacklisted"):
+    if guild.get("is_blacklisted"): 
         return False
         
     status = guild.get("premium_status")
+    
     if status == "premium":
-        return True
-        
-    if status == "trial":
-        ends = guild.get("trial_ends_at")
-        if not ends:
-            return False
-            
+        ends = guild.get("premium_ends_at")
+        if not ends: 
+            return True # Manual premium with no expiry
         try:
             clean_date = ends.replace("Z", "+00:00")
             end_date = datetime.fromisoformat(clean_date)
             return end_date > datetime.now(timezone.utc)
         except Exception as e:
-            print(f"Error parsing trial date '{ends}': {e}")
+            print(f"Error parsing premium date {ends}: {e}")
             return False
+            
+    if status == "trial":
+        ends = guild.get("trial_ends_at")
+        if not ends: 
+            return False 
+        try:
+            clean_date = ends.replace("Z", "+00:00")
+            end_date = datetime.fromisoformat(clean_date)
+            return end_date > datetime.now(timezone.utc)
+        except Exception:
+            return False 
             
     return False
