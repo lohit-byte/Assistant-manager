@@ -11,7 +11,7 @@ import {
   Field, PageHeader, ProgressBar, Spinner, Stat, TextInput, Toggle,
 } from '@/components/ui'
 import {
-  endWar, getWar, getWarSettings, saveWarSettings, updateWar, listWarnings, deleteWarning, addWarning
+  endWar, getWar, getWarSettings, saveWarSettings, updateWar, listWarnings, deleteWarning, addWarning, listAliases
 } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
 import { DEFAULT_ATTACKS_REQUIRED, MAX_ATTACKS_REQUIRED } from '@/lib/constants'
@@ -19,7 +19,7 @@ import {
   formatDateTime, formatDuration, formatRelative, getWarWindow, isSnowflake, warPhaseLabel,
 } from '@/lib/format'
 import { useNow } from '@/lib/hooks'
-import type { War, WarSettings, Warning } from '@/lib/types'
+import type { War, WarSettings, Warning, Alias } from '@/lib/types'
 
 type Feedback = { tone: 'green' | 'red'; text: string } | null
 
@@ -65,12 +65,12 @@ export default function WarPage() {
 
   const [settings, setSettings] = useState<WarSettings>({ guild_id: guildId, attacks_required: 6, exempt_absent: true })
   const [warnings, setWarnings] = useState<Warning[]>([])
+  const [aliases, setAliases] = useState<Alias[]>([])
   const [counts, setCounts] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<Feedback>(null)
 
   const [missingInput, setMissingInput] = useState('')
-  const [excusedInput, setExcusedInput] = useState('')
   const [warningId, setWarningId] = useState('')
   const [warningReason, setWarningReason] = useState('')
 
@@ -94,13 +94,17 @@ export default function WarPage() {
       if (mode === 'initial') setLoading(true)
       const supabase = createClient()
       try {
-        const [nextSettings, nextWarnings] = await Promise.all([
+        // Fetch Global Settings, Warnings, and Aliases
+        const [nextSettings, nextWarnings, nextAliases] = await Promise.all([
           getWarSettings(supabase, guildId),
-          listWarnings(supabase, guildId)
+          listWarnings(supabase, guildId),
+          listAliases(supabase, guildId)
         ])
         setSettings(nextSettings)
         setWarnings(nextWarnings)
+        setAliases(nextAliases)
 
+        // Fetch Channel-specific War Data
         if (channelId) {
           const nextWar = await getWar(supabase, channelId)
           setWar(nextWar)
@@ -141,13 +145,13 @@ export default function WarPage() {
   }
 
   const submitWarning = async () => {
-    if (!isSnowflake(warningId)) return setFeedback({ tone: 'red', text: 'Enter a valid Discord ID.' })
+    if (!warningId) return setFeedback({ tone: 'red', text: 'Please select a player to warn.' })
     setBusy('warning')
     try {
       await addWarning(createClient(), guildId, warningId, warningReason, null)
       setWarnings(await listWarnings(createClient(), guildId))
       setWarningId(''); setWarningReason('')
-      setFeedback({ tone: 'green', text: 'Warning recorded.' })
+      setFeedback({ tone: 'green', text: 'Warning recorded successfully.' })
     } catch (e) { setFeedback({ tone: 'red', text: 'Could not record warning.' }) } finally { setBusy(null) }
   }
 
@@ -269,7 +273,7 @@ export default function WarPage() {
           )}
         </div>
 
-        {/* RIGHT COLUMN: GLOBAL SETTINGS & WARNINGS (Always visible) */}
+        {/* RIGHT COLUMN: GLOBAL SETTINGS & WARNINGS */}
         <div className="space-y-6">
            <Card>
             <CardHeader title="War Settings (Global)" icon={<Save className="h-5 w-5" />} />
@@ -287,23 +291,49 @@ export default function WarPage() {
           <Card>
             <CardHeader title="Warnings (Global)" description="Manage player warnings" icon={<AlertTriangle className="h-5 w-5" />} />
             <CardBody className="space-y-4">
-              <div className="flex gap-2">
-                <TextInput placeholder="Discord ID" value={warningId} onChange={e => setWarningId(e.target.value)} />
-                <Button onClick={submitWarning} loading={busy === 'warning'}><Plus className="h-4 w-4" /></Button>
-              </div>
-              <TextInput placeholder="Reason for warning..." value={warningReason} onChange={e => setWarningReason(e.target.value)} />
               
-              <ul className="space-y-2 mt-4">
-                {warnings.map(w => (
-                  <li key={w.id} className="flex justify-between items-center bg-slate-950/60 px-3 py-2 rounded-lg border border-slate-800">
-                    <div>
-                      <p className="text-sm font-mono text-slate-300">{String(w.discord_id)}</p>
-                      <p className="text-xs text-slate-500">{w.reason}</p>
-                    </div>
-                    <button onClick={() => removeWarning(w.id)} className="text-slate-500 hover:text-red-400"><Trash2 className="h-4 w-4" /></button>
-                  </li>
-                ))}
-              </ul>
+              {/* NEW ALIAS DROPDOWN */}
+              <div className="space-y-3">
+                <select 
+                  value={warningId} 
+                  onChange={(e) => setWarningId(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-white focus:border-purple-500"
+                >
+                  <option value="" disabled>Select a player (alias)...</option>
+                  {aliases.map(a => (
+                    <option key={a.id} value={String(a.discord_id)}>
+                      {a.alias_name} ({a.discord_id})
+                    </option>
+                  ))}
+                </select>
+                
+                <TextInput placeholder="Reason for warning..." value={warningReason} onChange={e => setWarningReason(e.target.value)} />
+                
+                <Button onClick={submitWarning} loading={busy === 'warning'} className="w-full">
+                  <Plus className="h-4 w-4 mr-2" /> Add Warning
+                </Button>
+              </div>
+
+              <div className="mt-6 space-y-2">
+                <h4 className="text-sm font-semibold text-slate-300 mb-2">Recorded Warnings</h4>
+                {warnings.length === 0 ? (
+                  <p className="text-sm text-slate-500">No warnings recorded yet.</p>
+                ) : (
+                  warnings.map(w => {
+                    const player = aliases.find(a => String(a.discord_id) === String(w.discord_id))
+                    const displayName = player ? player.alias_name : `User ${w.discord_id}`
+                    return (
+                      <li key={w.id} className="flex justify-between items-center bg-slate-950/60 px-3 py-2 rounded-lg border border-slate-800">
+                        <div>
+                          <p className="text-sm font-semibold text-white">{displayName}</p>
+                          <p className="text-xs text-slate-500">{w.reason}</p>
+                        </div>
+                        <button onClick={() => removeWarning(w.id)} className="text-slate-500 hover:text-red-400"><Trash2 className="h-4 w-4" /></button>
+                      </li>
+                    )
+                  })
+                )}
+              </div>
             </CardBody>
           </Card>
         </div>
