@@ -7,6 +7,7 @@ export interface PricingPlan {
   cadence: string
   description: string
   price: Record<Currency, number>
+  max_teams: number
   badge?: string
   highlight?: boolean
 }
@@ -18,18 +19,28 @@ export const CURRENCY_META: Record<Currency, { symbol: string; label: string; lo
 
 export const PRICING_PLANS: PricingPlan[] = [
   {
-    id: 'monthly',
-    name: 'Monthly',
+    id: 'starter_monthly',
+    name: 'Starter Monthly',
     cadence: 'month',
-    description: 'Full access with a simple month-to-month plan.',
-    price: { USD: 10, INR: 899 },
+    description: 'Full access with a simple month-to-month plan, Perfect for single-team alliances.',
+    price: { USD: 10, INR: 999 },
+    max_teams: 1,
   },
   {
-    id: 'yearly',
-    name: 'Yearly',
+    id: 'pro_monthly',
+    name: 'Pro Monthly',
+    cadence: 'month',
+    description: 'Track up to 3 team individually.',
+    price: {USD:12, INR: 1299 },
+    max_teams: 3,
+  },
+  {
+    id: 'elite_yearly',
+    name: 'Elite Yearly',
     cadence: 'year',
-    description: 'The same full access for a full year at the best rate.',
-    price: { USD: 84, INR: 7549 },
+    description: 'Full access for a full year at the best rate, with Unlimited teams and Priority support.',
+    price: { USD: 84, INR: 7999 },
+    max_teams: 99
     badge: 'Save 30%',
     highlight: true,
   },
