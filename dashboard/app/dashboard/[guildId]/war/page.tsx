@@ -23,14 +23,47 @@ import type { War, WarSettings, Warning } from '@/lib/types'
 
 type Feedback = { tone: 'green' | 'red'; text: string } | null
 
+// --- NEW: Dedicated Live Timer Component ---
+function LiveTimer({ endTime }: { endTime: Date | null }) {
+  const [timeLeft, setTimeLeft] = useState<number>(0)
+
+  useEffect(() => {
+    if (!endTime) return
+    const updateTimer = () => {
+      setTimeLeft(Math.max(0, endTime.getTime() - Date.now()))
+    }
+    updateTimer()
+    const interval = setInterval(updateTimer, 1000)
+    return () => clearInterval(interval)
+  }, [endTime])
+
+  if (!endTime) return null
+
+  const isUrgent = timeLeft < 3600_000 && timeLeft > 0 // 1 hour
+  const isCritical = timeLeft < 600_000 && timeLeft > 0 // 10 mins
+  
+  const totalSec = Math.floor(timeLeft / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+
+  return (
+    <div className={`p-6 rounded-2xl border flex flex-col items-center justify-center transition-colors ${isCritical ? 'bg-red-500/10 border-red-500/50 animate-pulse' : isUrgent ? 'bg-amber-500/10 border-amber-500/50' : 'bg-slate-950/60 border-slate-800'}`}>
+      <p className="text-xs text-slate-400 uppercase tracking-widest mb-1">Time Remaining</p>
+      <p className={`text-5xl font-black font-mono tracking-tighter ${isCritical ? 'text-red-500' : isUrgent ? 'text-amber-400' : 'text-white'}`}>
+        {String(h).padStart(2, '0')}:{String(m).padStart(2, '0')}:{String(s).padStart(2, '0')}
+      </p>
+    </div>
+  )
+}
+// ------------------------------------------
+
 export default function WarPage() {
   const { guildId } = useGuild()
-  const now = useNow(15000) // Auto-refresh every 15s
+  const now = useNow(15000) // Refresh data every 15s
 
   const [settings, setSettings] = useState<WarSettings>({
-    guild_id: guildId,
-    attacks_required: DEFAULT_ATTACKS_REQUIRED,
-    exempt_absent: true,
+    guild_id: guildId, attacks_required: DEFAULT_ATTACKS_REQUIRED, exempt_absent: true,
   })
   const [war, setWar] = useState<War | null>(null)
   const [warnings, setWarnings] = useState<Warning[]>([])
@@ -61,7 +94,6 @@ export default function WarPage() {
         setWar(nextWar)
         setWarnings(nextWarnings)
         
-        // Only update the counts state if the user isn't actively typing in the input
         setCounts((prev) => {
           if (mode === 'refresh' && Object.keys(prev).some(k => prev[k] !== '')) return prev
           return Object.fromEntries(
@@ -71,10 +103,7 @@ export default function WarPage() {
           )
         })
       } catch (caught) {
-        setFeedback({
-          tone: 'red',
-          text: caught instanceof Error ? caught.message : 'Could not load war data.',
-        })
+        setFeedback({ tone: 'red', text: caught instanceof Error ? caught.message : 'Could not load war data.' })
       } finally {
         setLoading(false)
       }
@@ -110,9 +139,6 @@ export default function WarPage() {
       setFeedback({ tone: 'red', text: 'Could not save war settings.' })
     } finally { setBusy(null) }
   }
-
-  // ... [Keep the rest of the action functions: addToList, removeFromList, logAttacks, etc.] ...
-  // *Note: For brevity in this response, the remaining logic functions are the same as your previous version, just ensure you copy them over.*
 
   if (loading) {
     return (
@@ -174,36 +200,8 @@ export default function WarPage() {
                     <Badge tone="green">Tracking</Badge>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                      <p className="text-xs text-slate-500 mb-1">War Started</p>
-                      <p className="font-semibold text-slate-200">{formatDateTime(warWindow.start)}</p>
-                    </div>
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                      <p className="text-xs text-slate-500 mb-1">War Ends</p>
-                      <p className="font-semibold text-slate-200">{formatDateTime(warWindow.warEnd)}</p>
-                    </div>
-                  </div>
-
-                  {/* LIVE DIGITAL TIMER */}
-                  {warWindow.warEnd && (() => {
-                    const msLeft = warWindow.warEnd.getTime() - Date.now();
-                    const isUrgent = msLeft < 3600_000; // 1 hour
-                    const isCritical = msLeft < 600_000; // 10 mins
-                    const totalSec = Math.max(0, Math.floor(msLeft / 1000));
-                    const h = Math.floor(totalSec / 3600);
-                    const m = Math.floor((totalSec % 3600) / 60);
-                    const s = totalSec % 60;
-                    
-                    return (
-                      <div className={`p-6 rounded-2xl border flex flex-col items-center justify-center transition-colors ${isCritical ? 'bg-red-500/10 border-red-500/50' : isUrgent ? 'bg-amber-500/10 border-amber-500/50' : 'bg-slate-950/60 border-slate-800'}`}>
-                        <p className="text-xs text-slate-400 uppercase tracking-widest mb-2">Time Remaining</p>
-                        <p className={`text-5xl font-black font-mono tracking-tighter ${isCritical ? 'text-red-500 animate-pulse' : isUrgent ? 'text-amber-400' : 'text-white'}`}>
-                          {String(h).padStart(2, '0')}:{String(m).padStart(2, '0')}:{String(s).padStart(2, '0')}
-                        </p>
-                      </div>
-                    );
-                  })()}
+                  {/* THE LIVE DIGITAL TIMER IS HERE */}
+                  <LiveTimer endTime={warWindow.warEnd} />
 
                   {/* 48-HOUR PROGRESS BAR */}
                   {warWindow.start && warWindow.warEnd ? (
@@ -212,11 +210,12 @@ export default function WarPage() {
                         value={now.getTime() - warWindow.start.getTime()}
                         max={48 * 3600_000}
                         tone={warWindow.phase === 'attack' ? 'red' : 'blue'}
-                        label={`Total War Progress (${Math.floor((now.getTime() - warWindow.start.getTime()) / 3600_000)}h / 48h)`}
+                        label={`Total War Progress`}
                       />
-                      <p className="mt-2 text-xs text-slate-500 text-right">
-                        {formatDuration(warWindow.warEnd.getTime() - now.getTime())} remaining
-                      </p>
+                      <div className="flex justify-between mt-2 text-xs text-slate-500">
+                        <span>Started: {formatDateTime(warWindow.start)}</span>
+                        <span>Ends: {formatDateTime(warWindow.warEnd)}</span>
+                      </div>
                     </div>
                   ) : null}
 
