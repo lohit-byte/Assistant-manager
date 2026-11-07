@@ -60,6 +60,7 @@ export interface RaceState {
   pending_ofa_message_id: Id | null
   pending_ofa_user_id: Id | null
   is_event_active: boolean | null
+  active_race_sheet: string | null
 }
 
 export interface MazeSchedule {
