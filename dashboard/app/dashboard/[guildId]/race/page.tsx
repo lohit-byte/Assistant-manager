@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Activity, ChevronRight, Flag, Hand, RefreshCw, Sparkles, Target, Trophy, Users
+  Activity, ChevronRight, Flag, Hand, RefreshCw, Sparkles, Target, Trophy, Users, Check
 } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
 import {
@@ -12,7 +12,7 @@ import {
 import { getRaceState, saveRaceState, listAliases } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
 import { NODES_PER_LAP } from '@/lib/constants'
-import { percent, formatRelative } from '@/lib/format'
+import { percent } from '@/lib/format'
 import type { RaceState, Alias } from '@/lib/types'
 import { useNow } from '@/lib/hooks'
 
@@ -30,6 +30,7 @@ function emptyRace(guildId: string): RaceState {
     ofa_done: false, dyp_progress: 0, dyp_target: 0, dyp_contributors: [],
     je_progress: '0', je_target: '0', je_done: false,
     pending_ofa_message_id: null, pending_ofa_user_id: null, is_event_active: false,
+    active_race_sheet: null, // <--- ADDED HERE
   }
 }
 
@@ -99,7 +100,7 @@ export default function RacePage() {
 
   const contributorNames = useMemo(() => {
     if (!draft.dyp_contributors) return []
-    return draft.dyp_contributors.map(id => {
+    return draft.dyp_contributors.map((id: string) => {
       const found = aliases.find(a => String(a.discord_id) === String(id))
       return found ? found.alias_name : `User ${id}`
     })
@@ -237,7 +238,7 @@ export default function RacePage() {
                 <ProgressBar value={dypProgress} max={dypTarget} tone="green" />
                 <div className="flex flex-wrap gap-2 pt-2">
                   {contributorNames.length > 0 ? (
-                    contributorNames.map((name, i) => <Badge key={i} tone="green">{name}</Badge>)
+                    contributorNames.map((name: string, i: number) => <Badge key={i} tone="green">{name}</Badge>)
                   ) : (
                     <span className="text-xs text-slate-500">No contributions logged yet.</span>
                   )}
