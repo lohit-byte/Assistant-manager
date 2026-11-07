@@ -297,17 +297,27 @@ class RaceTracker(commands.Cog):
     async def _save_new_node(self, ctx, lap, node, ofa_t, dyp_t, je_t, desc, dyp_p=0, je_p="0"):
         await asyncio.to_thread(
             supabase.table("race_state").upsert({
-                "guild_id": ctx.guild.id,
-                "current_lap": lap, "current_node": node,
-                "task_description": desc,
-                "ofa_holder_id": None, "ofa_target": ofa_t, "ofa_done": False,
-                "dyp_progress": dyp_p, "dyp_target": dyp_t, "dyp_contributors": [],
-                "je_progress": je_p, "je_target": je_t, "je_done": False,
-                "pending_ofa_message_id": None, "pending_ofa_user_id": None
+                # ... (keep all your existing data here) ...
             }, on_conflict="guild_id").execute
         )
-        await ctx.send(f"✅ Node initialized: **Lap {lap}.{node}**\n*Tasks:* {desc}")
-        await self.show_status(ctx)
+        
+        # --- NEW CODE: Check for configured channel ---
+        target_channel = ctx.channel
+        try:
+            res = await asyncio.to_thread(supabase.table("guilds").select("race_channel_id").eq("guild_id", ctx.guild.id).execute)
+            configured_id = res.data[0].get("race_channel_id") if res.data else None
+            if configured_id:
+                configured_chan = self.bot.get_channel(configured_id)
+                if configured_chan:
+                    target_channel = configured_chan
+        except Exception:
+            pass
+        # ----------------------------------------------
+
+        await target_channel.send(f"✅ Node initialized: **Lap {lap}.{node}**\n*Tasks:* {desc}")
+        
+        # We pass target_channel to show_status so it replies in the right place
+        await self.show_status(ctx, channel=target_channel)
 
     async def manual_set(self, ctx, subaction, args):
         if not subaction or not args:
