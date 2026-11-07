@@ -1,14 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import {
-  Activity, ChevronRight, Flag, Hand, RefreshCw, Sparkles, Target, Trophy, Users, Check
-} from 'lucide-react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Activity, ChevronRight, ChevronDown, Flag, Hand, RefreshCw, Sparkles, Target, Trophy, Users, Check } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
-import {
-  Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState,
-  Field, PageHeader, ProgressBar, Spinner, Stat, TextInput, Divider
-} from '@/components/ui'
+import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, PageHeader, ProgressBar, Spinner, Stat, TextInput, Divider } from '@/components/ui'
 import { getRaceState, saveRaceState, listAliases } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
 import { NODES_PER_LAP } from '@/lib/constants'
@@ -23,9 +19,9 @@ interface RaceLog {
   created_at: string;
 }
 
-function emptyRace(guildId: string): RaceState {
+function emptyRace(guildId: string, channelId: string): RaceState {
   return {
-    guild_id: guildId, target_laps: 0, current_lap: 0, current_node: 0,
+    guild_id: guildId, channel_id: channelId, target_laps: 0, current_lap: 0, current_node: 0,
     task_description: 'No Active Node', ofa_holder_id: null, ofa_target: null,
     ofa_done: false, dyp_progress: 0, dyp_target: 0, dyp_contributors: [],
     je_progress: '0', je_target: '0', je_done: false,
@@ -36,34 +32,48 @@ function emptyRace(guildId: string): RaceState {
 
 export default function RacePage() {
   const { guildId } = useGuild()
-  const now = useNow(15000) 
+  const router = useRouter()
+  const searchParams = useSearchParams()
   
-  const [draft, setDraft] = useState<RaceState>(() => emptyRace(guildId))
+  const channelId = searchParams.get('channel')
+  const [availableChannels, setAvailableChannels] = useState<string[]>([])
+  
+  const now = useNow(15000) 
+  const [draft, setDraft] = useState<RaceState | null>(null)
   const [aliases, setAliases] = useState<Alias[]>([])
   const [logs, setLogs] = useState<RaceLog[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<{ tone: 'green' | 'red'; text: string } | null>(null)
 
-  // Sheet states
   const [sheets, setSheets] = useState<any[]>([])
   const [activeSheet, setActiveSheet] = useState<string | null>(null)
-  
-  // PRE-FILLED JSON TEMPLATE
-  const [jsonInput, setJsonInput] = useState(`{
-  "0.1": { "ofa": "Hatch 19", "dyp": "15 Collect 20k food", "je": "Breed 36 C" },
-  "0.2": { "ofa": "Breed 13 R", "dyp": "15 Collect 530k gold", "je": "Craft 3 S-relics" },
-  "0.3": { "ofa": "Hatch 22 fire", "dyp": "3 Craft 1 L2 rune", "je": "Collect 760k food" }
-}`)
+  const [jsonInput, setJsonInput] = useState(`{\n  "0.1": { "ofa": "Hatch 19", "dyp": "15 Collect 20k food", "je": "Breed 36 C" }\n}`)
   const [sheetName, setSheetName] = useState('')
+
+  // Load channels
+  useEffect(() => {
+    const fetchChannels = async () => {
+      const supabase = createClient()
+      const { data } = await supabase.from('race_state').select('channel_id').eq('guild_id', guildId)
+      if (data) {
+        const uniqueIds = Array.from(new Set(data.map(d => String(d.channel_id))))
+        setAvailableChannels(uniqueIds)
+        if (!channelId && uniqueIds.length > 0) router.replace(`?channel=${uniqueIds[0]}`)
+      }
+      setLoading(false)
+    }
+    fetchChannels()
+  }, [guildId, channelId, router])
 
   const load = useCallback(
     async (mode: 'initial' | 'refresh' = 'initial') => {
+      if (!channelId) return
       if (mode === 'initial') setLoading(true)
       try {
         const supabase = createClient()
         const [row, aliasData, sheetData, logData] = await Promise.all([
-          getRaceState(supabase, guildId),
+          getRaceState(supabase, channelId),
           listAliases(supabase, guildId),
           supabase.from('race_sheets').select('name').eq('guild_id', guildId),
           supabase.from('race_logs').select('*').eq('guild_id', guildId).order('created_at', { ascending: false }).limit(15)
@@ -73,27 +83,72 @@ export default function RacePage() {
         setSheets(sheetData.data || [])
         setLogs(logData.data || [])
         
-        const state = row ?? emptyRace(guildId)
+        const state = row ?? emptyRace(guildId, channelId)
         setDraft(state)
         setActiveSheet(state.active_race_sheet || null)
       } catch (caught) {
-        setFeedback({
-          tone: 'red',
-          text: caught instanceof Error ? caught.message : 'Could not load race state.',
-        })
+        setFeedback({ tone: 'red', text: 'Could not load race state.' })
       } finally {
         setLoading(false)
       }
     },
-    [guildId],
+    [guildId, channelId],
   )
 
   useEffect(() => { void load() }, [load])
-  
   useEffect(() => {
     const interval = setInterval(() => { void load('refresh') }, 15000)
     return () => clearInterval(interval)
   }, [load])
+
+  const contributorNames = useMemo(() => {
+    if (!draft?.dyp_contributors) return []
+    return draft.dyp_contributors.map((id: string) => {
+      const found = aliases.find(a => String(a.discord_id) === String(id))
+      return found ? found.alias_name : `User ${id}`
+    })
+  }, [draft?.dyp_contributors, aliases])
+
+  const ofaName = useMemo(() => {
+    if (!draft?.ofa_holder_id) return null
+    const found = aliases.find(a => String(a.discord_id) === String(draft.ofa_holder_id))
+    return found ? found.alias_name : `User ${draft.ofa_holder_id}`
+  }, [draft?.ofa_holder_id, aliases])
+
+  const updateTargetLaps = async () => {
+    if (!channelId || !draft) return
+    setBusy('target')
+    try {
+      await saveRaceState(createClient(), channelId, guildId, { target_laps: draft.target_laps })
+      setFeedback({ tone: 'green', text: 'Lap target updated.' })
+    } catch (e) { setFeedback({ tone: 'red', text: 'Could not save target.' }) } finally { setBusy(null) }
+  }
+
+  const uploadSheet = async () => {
+    if (!sheetName || !jsonInput) return
+    setBusy('sheet')
+    try {
+      const parsed = JSON.parse(jsonInput)
+      const supabase = createClient()
+      const { error } = await supabase.from('race_sheets').upsert({ guild_id: guildId, name: sheetName, data: parsed }, { onConflict: 'guild_id,name' })
+      if (error) throw error
+      setFeedback({ tone: 'green', text: `Sheet "${sheetName}" uploaded!` })
+      setSheetName(''); load('refresh')
+    } catch (e) { setFeedback({ tone: 'red', text: 'Invalid JSON.' }) } finally { setBusy(null) }
+  }
+
+  const selectSheet = async (name: string) => {
+    if (!channelId) return
+    setBusy('select')
+    const supabase = createClient()
+    await supabase.from('race_state').upsert({ channel_id: channelId, guild_id: guildId, active_race_sheet: name }, { onConflict: 'channel_id' })
+    setActiveSheet(name)
+    setFeedback({ tone: 'green', text: `Now using sheet: ${name}` })
+    setBusy(null)
+  }
+
+  if (loading) return <div><PageHeader title="Race Tracker" /><Spinner label="Loading…" /></div>
+  if (!channelId || !draft) return <div><PageHeader title="Race" /><EmptyState title="No active race" description="Start tracking in Discord with `!race target 20`." icon={<Trophy className="h-7 w-7" />} /></div>
 
   const lap = draft.current_lap ?? 0
   const node = draft.current_node ?? 0
@@ -103,84 +158,27 @@ export default function RacePage() {
   const jeProgress = draft.je_progress ?? '0'
   const jeTarget = draft.je_target ?? '0'
 
-  const contributorNames = useMemo(() => {
-    if (!draft.dyp_contributors) return []
-    return draft.dyp_contributors.map((id: string) => {
-      const found = aliases.find(a => String(a.discord_id) === String(id))
-      return found ? found.alias_name : `User ${id}`
-    })
-  }, [draft.dyp_contributors, aliases])
-
-  const ofaName = useMemo(() => {
-    if (!draft.ofa_holder_id) return null
-    const found = aliases.find(a => String(a.discord_id) === String(draft.ofa_holder_id))
-    return found ? found.alias_name : `User ${draft.ofa_holder_id}`
-  }, [draft.ofa_holder_id, aliases])
-
-  const updateTargetLaps = async () => {
-    setBusy('target')
-    try {
-      await saveRaceState(createClient(), guildId, { target_laps: draft.target_laps })
-      setFeedback({ tone: 'green', text: 'Lap target updated.' })
-    } catch (e) {
-      setFeedback({ tone: 'red', text: 'Could not save target.' })
-    } finally { setBusy(null) }
-  }
-
-  const uploadSheet = async () => {
-    if (!sheetName || !jsonInput) return
-    setBusy('sheet')
-    try {
-      const parsed = JSON.parse(jsonInput)
-      const supabase = createClient()
-      const { error } = await supabase.from('race_sheets').upsert({
-        guild_id: guildId, name: sheetName, data: parsed
-      }, { onConflict: 'guild_id,name' })
-      
-      if (error) throw error
-      setFeedback({ tone: 'green', text: `Sheet "${sheetName}" uploaded!` })
-      setSheetName(''); load('refresh')
-    } catch (e) {
-      setFeedback({ tone: 'red', text: 'Invalid JSON or database error.' })
-    } finally { setBusy(null) }
-  }
-
-  const selectSheet = async (name: string) => {
-    setBusy('select')
-    const supabase = createClient()
-    await supabase.from('race_state').upsert({ guild_id: guildId, active_race_sheet: name }, { onConflict: 'guild_id' })
-    setActiveSheet(name)
-    setFeedback({ tone: 'green', text: `Now using sheet: ${name}` })
-    setBusy(null)
-  }
-
-  if (loading) {
-    return (
-      <div>
-        <PageHeader title="Race Tracker" description="Live team progress." />
-        <Spinner label="Loading race state…" />
-      </div>
-    )
-  }
-
   return (
     <div>
       <PageHeader
         eyebrow="Race Live Tracker"
         title="Race"
-        description="This page updates automatically every 15 seconds."
         actions={
-          <Button variant="secondary" onClick={() => load('refresh')}>
-            <RefreshCw className="h-4 w-4" /> Refresh Now
-          </Button>
+          <div className="flex items-center gap-2">
+            {availableChannels.length > 0 && (
+              <div className="relative">
+                <select value={channelId} onChange={(e) => router.push(`?channel=${e.target.value}`)} className="appearance-none bg-slate-900 border border-slate-700 text-white text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:border-purple-500">
+                  {availableChannels.map(id => <option key={id} value={id}>Team Channel ({id})</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+              </div>
+            )}
+            <Button variant="secondary" onClick={() => load('refresh')}><RefreshCw className="h-4 w-4" /></Button>
+          </div>
         }
       />
 
-      {feedback && (
-        <Alert tone={feedback.tone} className="mb-6" onDismiss={() => setFeedback(null)}>
-          {feedback.text}
-        </Alert>
-      )}
+      {feedback && <Alert tone={feedback.tone} className="mb-6" onDismiss={() => setFeedback(null)}>{feedback.text}</Alert>}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <Stat label="Current Node" value={`Lap ${lap}.${node}`} hint={activeSheet ? `Sheet: ${activeSheet}` : 'No active sheet'} icon={<Flag className="h-4 w-4" />} tone="purple" />
