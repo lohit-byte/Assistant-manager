@@ -45,10 +45,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           })}
         </nav>
       </aside>
-      <main className="flex-1 p-12 overflow-y-auto">
+      <main key={guildId} className="flex-1 p-12 overflow-y-auto">
         {children}
       </main>
-      
       <OnboardingTour />
     </div>
   )
