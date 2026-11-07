@@ -23,7 +23,7 @@ export async function POST(request: Request) {
       },
       order_meta: {
         // Where Cashfree sends the user after payment
-        return_url: `https://assistant-manager-tau.vercel.app/dashboard/${guildId}/billing?order_id={order_id}`,
+        return_url: `https://drlohithealth.com/dashboard/${guildId}/billing?order_id={order_id}`,
       }
     }
 
