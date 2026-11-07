@@ -67,6 +67,12 @@ async def log_race_action(guild_id, user_id, player_name, action_type):
     except Exception as e:
         print(f"Failed to log race action: {e}")
 
+async def check_team_limit(guild_id):
+    res = await asyncio.to_thread(supabase.table("guilds").select("max_teams").eq("guild_id", guild_id).execute)
+    max_teams = res.data[0].get("max_teams", 1) if res.data else 1
+    active = await asyncio.to_thread(supabase.table("race_state").select("channel_id").eq("guild_id", guild_id).execute)
+    return len(active.data) < max_teams
+
 class RaceTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -99,13 +105,26 @@ class RaceTracker(commands.Cog):
         if action == "use": return await self.use_sheet(ctx, args)
         if action == "next": return await self.advance_node_auto(ctx)
         
+        # TEAM LIMIT CHECK (For starting new tracking)
+        if action in ("target", "newnode"):
+            existing = await get_race(ctx.channel.id)
+            if not existing or existing.get("task_description") == "No Active Node":
+                if not await check_team_limit(ctx.guild.id):
+                    return await ctx.send("❌ **Team limit reached!** Your server's plan only allows a certain number of active teams. Upgrade on the dashboard to add more.")
+
         if action == "target":
             if not args or not args.isdigit(): return await ctx.send("Usage: `!race target 20`")
             await asyncio.to_thread(supabase.table("race_state").upsert({"guild_id": ctx.guild.id, "channel_id": ctx.channel.id, "target_laps": int(args)}, on_conflict="channel_id").execute)
             return await ctx.send(f"✅ Race target updated to **{args}** laps.")
             
         if action == "clear":
-            await asyncio.to_thread(supabase.table("race_state").upsert({"channel_id": ctx.channel.id, "task_description": "No Active Node", "ofa_holder_id": None, "ofa_target": None, "ofa_done": False, "dyp_progress": 0, "dyp_target": 0, "dyp_contributors": [], "je_progress": "0", "je_target": "0", "je_done": False, "pending_ofa_message_id": None, "pending_ofa_user_id": None}, on_conflict="channel_id").execute)
+            await asyncio.to_thread(supabase.table("race_state").upsert({
+                "channel_id": ctx.channel.id, "task_description": "No Active Node", 
+                "ofa_holder_id": None, "ofa_target": None, "ofa_done": False, 
+                "dyp_progress": 0, "dyp_target": 0, "dyp_contributors": [], 
+                "je_progress": "0", "je_target": "0", "je_done": False, 
+                "pending_ofa_message_id": None, "pending_ofa_user_id": None
+            }, on_conflict="channel_id").execute)
             return await ctx.send("🧹 Current node cleared.")
             
         if action == "newnode": return await self.advance_node_manual(ctx, args)
@@ -149,7 +168,7 @@ class RaceTracker(commands.Cog):
         node_info = sheet_data[node_key]
         ofa_t, dyp_t, je_t = node_info['ofa'], node_info['dyp'], node_info['je']
         
-        # SMARTER DYP PARSING
+        # SMARTER DYP PARSING (Looks for "10 members" first)
         dyp_target = 0
         match_members = re.search(r'(\d+)\s*(?:members?|players?)', dyp_t, re.IGNORECASE)
         if match_members:
@@ -357,7 +376,6 @@ class RaceTracker(commands.Cog):
         reactor = guild.get_member(payload.user_id) if guild else None
         if not reactor or not is_staff_member(reactor): return
 
-        # Bug Fix: Check premium status for passive listener
         is_premium = await asyncio.to_thread(check_premium_status, guild.id)
         if not is_premium: return
 
