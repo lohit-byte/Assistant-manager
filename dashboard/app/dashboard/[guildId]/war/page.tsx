@@ -185,6 +185,26 @@ export default function WarPage() {
                     </div>
                   </div>
 
+                  {/* LIVE DIGITAL TIMER */}
+                  {warWindow.warEnd && (() => {
+                    const msLeft = warWindow.warEnd.getTime() - Date.now();
+                    const isUrgent = msLeft < 3600_000; // 1 hour
+                    const isCritical = msLeft < 600_000; // 10 mins
+                    const totalSec = Math.max(0, Math.floor(msLeft / 1000));
+                    const h = Math.floor(totalSec / 3600);
+                    const m = Math.floor((totalSec % 3600) / 60);
+                    const s = totalSec % 60;
+                    
+                    return (
+                      <div className={`p-6 rounded-2xl border flex flex-col items-center justify-center transition-colors ${isCritical ? 'bg-red-500/10 border-red-500/50' : isUrgent ? 'bg-amber-500/10 border-amber-500/50' : 'bg-slate-950/60 border-slate-800'}`}>
+                        <p className="text-xs text-slate-400 uppercase tracking-widest mb-2">Time Remaining</p>
+                        <p className={`text-5xl font-black font-mono tracking-tighter ${isCritical ? 'text-red-500 animate-pulse' : isUrgent ? 'text-amber-400' : 'text-white'}`}>
+                          {String(h).padStart(2, '0')}:{String(m).padStart(2, '0')}:{String(s).padStart(2, '0')}
+                        </p>
+                      </div>
+                    );
+                  })()}
+
                   {/* 48-HOUR PROGRESS BAR */}
                   {warWindow.start && warWindow.warEnd ? (
                     <div>
