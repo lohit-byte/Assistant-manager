@@ -2,12 +2,26 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
-import { ShieldCheck, ArrowRight, Sparkles, Check, Mail, Loader2, ShieldAlert, X } from 'lucide-react'
+import { ShieldCheck, ArrowRight, Sparkles, Check, Mail, Loader2, ShieldAlert, X, Clock } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
 import { Card, CardBody, CardHeader, Badge, ProgressBar, Alert, PageHeader } from '@/components/ui'
 import { formatDate, toDate } from '@/lib/format'
 import { PRICING_PLANS, PLAN_FEATURES, formatPrice, detectCurrency, Currency } from '@/lib/pricing'
-import { load } from '@cashfreepayments/cashfree-js' // <--- Fixed line here
+import { load } from '@cashfreepayments/cashfree-js'
+
+// Helper to format the remaining time beautifully
+function formatRemainingTime(endDate: Date | null) {
+  if (!endDate) return 'Unknown'
+  const diff = endDate.getTime() - Date.now()
+  if (diff <= 0) return 'Expired'
+  
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+  if (days > 30) {
+    const months = Math.floor(days / 30)
+    return `${months} Month${months > 1 ? 's' : ''}`
+  }
+  return `${days} Day${days !== 1 ? 's' : ''}`
+}
 
 export default function BillingPage() {
   const params = useParams()
@@ -26,10 +40,33 @@ export default function BillingPage() {
   }, [searchParams, refresh])
 
   const status = guild?.premium_status ?? 'expired'
-  const isPremium = status === 'premium'
+  const premiumEnd = toDate(guild?.premium_ends_at)
+  
+  // Checks if premium is active AND the date hasn't passed yet
+  const isPremium = status === 'premium' && premiumEnd !== null && premiumEnd.getTime() > Date.now()
   const isTrial = status === 'trial'
   const trialEnd = toDate(guild?.trial_ends_at)
   
+  // --- NEW: AUTO-POLLING EFFECT ---
+  // Polls the database every 3s for 30s after returning from Cashfree
+  useEffect(() => {
+    if (!searchParams.get('order_id') || isPremium) return
+
+    const id = setInterval(() => {
+      void refresh()
+    }, 3000)
+
+    const stop = setTimeout(() => {
+      clearInterval(id)
+    }, 30000)
+
+    return () => {
+      clearInterval(id)
+      clearTimeout(stop)
+    }
+  }, [searchParams, isPremium, refresh])
+  // --------------------------------
+
   let daysLeft = 0
   let trialExpired = false
   
@@ -41,7 +78,7 @@ export default function BillingPage() {
   const supportEmail = 'warbot.support@gmail.com'
   const supportHref = `mailto:${supportEmail}?subject=Billing%20Enquiry%20for%20Server%20${guildId}`
 
-  const handlePayment = async (planId: string, amount: number) => {
+  const handlePayment = async (planId: string) => {
     setLoadingPlan(planId)
     try {
       const res = await fetch('/api/cashfree/create-order', {
@@ -70,7 +107,7 @@ export default function BillingPage() {
     }
   }
 
-  // --- LOSS AVERSION UI (TRIAL EXPIRED) ---
+  // --- LOSS AVERSION UI (EXPIRED) ---
   if (!isPremium && (!isTrial || trialExpired)) {
     return (
       <div className="max-w-3xl">
@@ -84,7 +121,7 @@ export default function BillingPage() {
             <div>
               <h2 className="text-2xl font-bold text-white">Your Team is Flying Blind</h2>
               <p className="text-slate-400 mt-1">
-                Your 7-day trial has ended. The bot is now paused for this server. 
+                Your subscription has ended. The bot is now paused for this server. 
                 <strong className="text-red-300 ml-1">Your alliance is currently missing war timers, race tracking, and maze pings.</strong>
               </p>
             </div>
@@ -94,7 +131,7 @@ export default function BillingPage() {
             <ul className="space-y-2 text-slate-300 text-sm">
               <li className="flex items-center gap-2"><X className="w-4 h-4 text-red-400" /> No War phase timers or missing attack lists</li>
               <li className="flex items-center gap-2"><X className="w-4 h-4 text-red-400" /> No automated Race node tracking</li>
-              <li className="flex items-center gap-2"><X className="w-4 h-4 text-red-400" /> No Maze discount pings (your team will miss the 30% off)</li>
+              <li className="flex items-center gap-2"><X className="w-4 h-4 text-red-400" /> No Maze discount pings</li>
               <li className="flex items-center gap-2"><X className="w-4 h-4 text-red-400" /> Alias and warning data becomes inaccessible</li>
             </ul>
           </div>
@@ -102,9 +139,6 @@ export default function BillingPage() {
             <button onClick={() => document.getElementById('pricing-plans')?.scrollIntoView({ behavior: 'smooth' })} className="flex-1 py-4 bg-purple-600 hover:bg-purple-500 rounded-lg font-bold text-lg flex items-center justify-center space-x-2 transition-colors">
               <span>Reactivate Bot & Save Team</span>
               <ArrowRight className="w-5 h-5" />
-            </button>
-            <button onClick={() => alert("Your team will continue to miss attacks.")} className="px-6 py-4 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg font-bold transition-colors">
-              I'll risk it
             </button>
           </div>
         </div>
@@ -128,7 +162,7 @@ export default function BillingPage() {
                     <span className="text-sm font-normal text-slate-400"> / {plan.cadence}</span>
                   </p>
                   <button 
-                    onClick={() => handlePayment(plan.id, plan.price[currency])}
+                    onClick={() => handlePayment(plan.id)}
                     disabled={loadingPlan === plan.id}
                     className="w-full mt-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2"
                   >
@@ -170,6 +204,14 @@ export default function BillingPage() {
                   ? 'Thank you for supporting the bot! Your server has full access.' 
                   : `You have ${daysLeft} days left in your trial. (Ends ${formatDate(trialEnd)})`}
               </p>
+              
+              {/* THE EXPIRY BAR */}
+              {isPremium && premiumEnd && (
+                <div className="mt-3 inline-flex items-center gap-2 bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold text-purple-300">
+                  <Clock className="w-3.5 h-3.5" />
+                  Premium expires in {formatRemainingTime(premiumEnd)}
+                </div>
+              )}
             </div>
           </div>
           {!isPremium && (
@@ -183,7 +225,7 @@ export default function BillingPage() {
       <div className="grid gap-8 lg:grid-cols-[1fr_300px]">
         <div className="space-y-6">
           <h3 className="text-lg font-bold text-white flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-purple-400" /> Upgrade to Premium
+            <Sparkles className="w-5 h-5 text-purple-400" /> Upgrade / Renew
           </h3>
           
           <div className="grid gap-4 sm:grid-cols-2">
@@ -204,14 +246,14 @@ export default function BillingPage() {
                       <span className="text-sm font-normal text-slate-400"> / {plan.cadence}</span>
                     </p>
                     <button 
-                      onClick={() => handlePayment(plan.id, plan.price[currency])}
-                      disabled={loadingPlan === plan.id || isPremium}
+                      onClick={() => handlePayment(plan.id)}
+                      disabled={loadingPlan === plan.id} // Removed !isPremium so they can renew early
                       className="w-full mt-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {loadingPlan === plan.id ? (
                         <><Loader2 className="w-5 h-5 animate-spin" /> Processing...</>
-                      ) : isPremium ? 'Current Plan' : (
-                        <>Select Plan <ArrowRight className="w-4 h-4" /></>
+                      ) : (
+                        <>{isPremium ? 'Extend Plan' : 'Select Plan'} <ArrowRight className="w-4 h-4" /></>
                       )}
                     </button>
                   </div>
