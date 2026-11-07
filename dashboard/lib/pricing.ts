@@ -1,5 +1,5 @@
 export type Currency = 'USD' | 'INR'
-export type PlanId = 'monthly' | 'yearly'
+export type PlanId = 'starter_monthly' | 'pro_monthly' | 'elite_yearly'
 
 export interface PricingPlan {
   id: PlanId
@@ -22,7 +22,7 @@ export const PRICING_PLANS: PricingPlan[] = [
     id: 'starter_monthly',
     name: 'Starter Monthly',
     cadence: 'month',
-    description: 'Full access with a simple month-to-month plan, Perfect for single-team alliances.',
+    description: 'Full access with a simple month-to-month plan. Perfect for single-team alliances.',
     price: { USD: 10, INR: 999 },
     max_teams: 1,
   },
@@ -30,9 +30,11 @@ export const PRICING_PLANS: PricingPlan[] = [
     id: 'pro_monthly',
     name: 'Pro Monthly',
     cadence: 'month',
-    description: 'Track up to 3 team individually.',
-    price: {USD:12, INR: 1299 },
+    description: 'Track up to 3 teams individually.',
+    price: { USD: 12, INR: 1299 },
     max_teams: 3,
+    badge: 'Best Value',
+    highlight: true,
   },
   {
     id: 'elite_yearly',
@@ -40,9 +42,8 @@ export const PRICING_PLANS: PricingPlan[] = [
     cadence: 'year',
     description: 'Full access for a full year at the best rate, with Unlimited teams and Priority support.',
     price: { USD: 84, INR: 7999 },
-    max_teams: 99,
+    max_teams: 99, // <--- FIXED COMMA
     badge: 'Save 30%',
-    highlight: true,
   },
 ]
 
@@ -62,14 +63,16 @@ export function formatPrice(amount: number, currency: Currency): string {
   })}`
 }
 
+// FIXED: Now properly checks for the yearly plan
 export function perMonthPrice(plan: PricingPlan, currency: Currency): number {
-  const value = plan.id === 'yearly' ? plan.price[currency] / 12 : plan.price[currency]
+  const value = plan.cadence === 'year' ? plan.price[currency] / 12 : plan.price[currency]
   return Math.round(value * 100) / 100
 }
 
+// FIXED: Now compares your yearly plan against the Pro Monthly plan
 export function yearlySavings(currency: Currency): number {
-  const monthly = PRICING_PLANS.find((plan) => plan.id === 'monthly')
-  const yearly = PRICING_PLANS.find((plan) => plan.id === 'yearly')
+  const monthly = PRICING_PLANS.find((plan) => plan.id === 'pro_monthly') // Comparing against Pro
+  const yearly = PRICING_PLANS.find((plan) => plan.id === 'elite_yearly')
   if (!monthly || !yearly) return 0
   const fullPrice = monthly.price[currency] * 12
   if (!fullPrice) return 0
