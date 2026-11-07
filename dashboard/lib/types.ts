@@ -16,6 +16,7 @@ export interface Guild {
   colead_role_id: Id | null
   staff_role_id: Id | null
   member_role_id: Id | null
+  max_teams: number | null // Added for Multi-Team limits
   created_at: string | null
 }
 
@@ -32,6 +33,7 @@ export interface WarEntry {
 
 export interface War {
   guild_id: Id
+  channel_id: Id // <--- ADDED FOR MULTI-TEAM
   war_start: string | null
   phase: 'defence' | 'defense' | 'attack' | 'ended' | string | null
   missing_list: WarEntry[] | null
@@ -39,11 +41,11 @@ export interface War {
   attack_counts: Record<string, number> | null
   is_active: boolean | null
   status_message_id: Id | null
-  status_channel_id: Id | null
 }
 
 export interface RaceState {
   guild_id: Id
+  channel_id: Id // <--- ADDED FOR MULTI-TEAM
   target_laps: number | null
   current_lap: number | null
   current_node: number | null
