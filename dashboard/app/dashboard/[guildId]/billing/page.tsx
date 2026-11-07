@@ -7,7 +7,8 @@ import { useGuild } from '@/components/guild-shell'
 import { Card, CardBody, CardHeader, Badge, ProgressBar, Alert, PageHeader } from '@/components/ui'
 import { formatDate, toDate } from '@/lib/format'
 import { PRICING_PLANS, PLAN_FEATURES, formatPrice, detectCurrency, Currency } from '@/lib/pricing'
-import { load } from '@cashfreepayments/cashfree-js'ƒ
+import { load } from '@cashfreepayments/cashfree-js' // <--- Fixed line here
+
 export default function BillingPage() {
   const params = useParams()
   const searchParams = useSearchParams()
@@ -32,7 +33,7 @@ export default function BillingPage() {
   let daysLeft = 0
   let trialExpired = false
   
-  if (status === 'trial' && trialEnd) {
+  if (isTrial && trialEnd) {
     daysLeft = Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / 86_400_000))
     if (daysLeft <= 0) trialExpired = true
   }
@@ -46,16 +47,14 @@ export default function BillingPage() {
       const res = await fetch('/api/cashfree/create-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // We don't need to send the amount anymore! The server calculates it securely.
-        body: JSON.stringify({ guildId, planId, currency }) 
+        body: JSON.stringify({ guildId, planId, currency })
       })
       
       const data = await res.json()
       if (data.error) throw new Error(data.error)
 
-      // Load the SDK properly
       const cashfree = await load({
-        mode: "sandbox" // Change to production when ready
+        mode: "sandbox" // Change to "production" when ready
       })
 
       cashfree.checkout({
@@ -65,7 +64,6 @@ export default function BillingPage() {
       
     } catch (error) {
       console.error("Payment failed:", error)
-      // This will now show the actual error instead of a generic message
       alert(error instanceof Error ? error.message : "Could not initiate payment.")
     } finally {
       setLoadingPlan(null)
