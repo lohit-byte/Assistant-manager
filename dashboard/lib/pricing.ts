@@ -22,15 +22,15 @@ export const PRICING_PLANS: PricingPlan[] = [
     name: 'Monthly',
     cadence: 'month',
     description: 'Full access with a simple month-to-month plan.',
-    price: { USD: 9.99, INR: 899 },
+    price: { USD: 10, INR: 899 },
   },
   {
     id: 'yearly',
     name: 'Yearly',
     cadence: 'year',
     description: 'The same full access for a full year at the best rate.',
-    price: { USD: 99, INR: 8999 },
-    badge: 'Best value',
+    price: { USD: 84, INR: 7549 },
+    badge: 'Save 30%',
     highlight: true,
   },
 ]
