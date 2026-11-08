@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
+import { safeFetch } from './safe-fetch'
 
 export function createClient(): SupabaseClient {
   const cookieStore = cookies()
