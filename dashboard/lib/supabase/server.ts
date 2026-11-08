@@ -24,6 +24,7 @@ export function createClient(): SupabaseClient {
           }
         },
       },
+      global: { fetch: safeFetch },
     },
   )
 }
