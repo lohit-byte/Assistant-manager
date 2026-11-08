@@ -45,6 +45,14 @@ export const PRICING_PLANS: PricingPlan[] = [
     max_teams: 99, // <--- FIXED COMMA
     badge: 'Save 30%',
   },
+  {
+    id: 'dev_test',
+    name: 'Developer Test (₹1)',
+    cadence: 'month',
+    description: 'Do not buy. Internal testing only.',
+    price: { USD: 1, INR: 1 },
+    max_teams: 1,
+  },
 ]
 
 export const PLAN_FEATURES = [
