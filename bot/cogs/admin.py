@@ -11,7 +11,7 @@ class Admin(commands.Cog):
     @commands.guild_only()
     async def alias_group(self, ctx, action: str = None, *, args: str = None):
         """Manage player aliases. Usage: !alias add @user Sam or !alias remove Sam"""
-        if not ctx.author.guild_permissions.administrator:
+        if not is_staff_member(ctx.author):
             return await ctx.send("❌ Only Admins can manage aliases.")
 
         if not action or not args:
