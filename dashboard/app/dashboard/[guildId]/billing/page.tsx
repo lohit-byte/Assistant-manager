@@ -10,10 +10,12 @@ import { PRICING_PLANS, PLAN_FEATURES, formatPrice, detectCurrency, Currency } f
 import { load as loadCashfree } from '@cashfreepayments/cashfree-js'
 import { initializePaddle, Paddle } from '@paddle/paddle-js'
 
+// Helper to format the remaining time beautifully
 function formatRemainingTime(endDate: Date | null) {
   if (!endDate) return 'Unknown'
   const diff = endDate.getTime() - Date.now()
   if (diff <= 0) return 'Expired'
+  
   const days = Math.floor(diff / (1000 * 60 * 60 * 24))
   if (days > 30) {
     const months = Math.floor(days / 30)
@@ -35,10 +37,12 @@ export default function BillingPage() {
   // Initialize Paddle for USD payments
   useEffect(() => {
     initializePaddle({
-      environment: process.env.NEXT_PUBLIC_PADDLE_ENV as 'sandbox' | 'production' || 'sandbox',
-      token: process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN!,
+      environment: (process.env.NEXT_PUBLIC_PADDLE_ENV as 'sandbox' | 'production') || 'sandbox',
+      token: process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN || '',
     }).then((paddleInstance) => {
       if (paddleInstance) setPaddle(paddleInstance)
+    }).catch((err) => {
+      console.error("Paddle failed to initialize:", err)
     })
   }, [])
 
@@ -55,7 +59,7 @@ export default function BillingPage() {
   const isTrial = status === 'trial'
   const trialEnd = toDate(guild?.trial_ends_at)
   
-  // Auto-polling for Cashfree
+  // Auto-polling for Cashfree webhook delay (only if returning from checkout)
   useEffect(() => {
     if (!searchParams.get('order_id') || isPremium) return
     const id = setInterval(() => { void refresh() }, 3000)
@@ -87,7 +91,7 @@ export default function BillingPage() {
         const data = await res.json()
         if (data.error) throw new Error(data.error)
 
-        const cashfree = await loadCashfree({ mode: "production" }) // Ensure production
+        const cashfree = await loadCashfree({ mode: "production" })
 
         cashfree.checkout({
           paymentSessionId: data.payment_session_id,
@@ -95,11 +99,11 @@ export default function BillingPage() {
         })
       } else {
         // --- PADDLE FLOW (GLOBAL) ---
-        if (!paddle) throw new Error("Paddle not initialized yet. Please wait a second and try again.")
+        if (!paddle) throw new Error("Paddle is still loading. Please wait a moment and try again.")
         
         paddle.Checkout.open({
           items: [{ priceId: plan.paddlePriceId, quantity: 1 }],
-          customData: { guildId: guildId } // This passes to the webhook!
+          customData: { guildId: guildId } // Passes the server ID to the webhook
         })
       }
     } catch (error) {
@@ -110,6 +114,7 @@ export default function BillingPage() {
     }
   }
 
+  // --- LOSS AVERSION UI (EXPIRED) ---
   if (!isPremium && (!isTrial || trialExpired)) {
     return (
       <div className="max-w-3xl">
@@ -178,6 +183,7 @@ export default function BillingPage() {
     )
   }
 
+  // --- ACTIVE TRIAL / PREMIUM UI ---
   return (
     <div className="max-w-5xl">
       <PageHeader
@@ -204,6 +210,8 @@ export default function BillingPage() {
                   ? 'Thank you for supporting the bot! Your server has full access.' 
                   : `You have ${daysLeft} days left in your trial. (Ends ${formatDate(trialEnd)})`}
               </p>
+              
+              {/* EXPIRY BAR */}
               {isPremium && premiumEnd && (
                 <div className="mt-3 inline-flex items-center gap-2 bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold text-purple-300">
                   <Clock className="w-3.5 h-3.5" />
