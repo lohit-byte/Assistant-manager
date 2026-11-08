@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import datetime, timezone
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -58,4 +59,30 @@ def check_premium_status(guild_id: int) -> bool:
         except Exception:
             return False 
             
+_role_cache = {}
+
+def get_staff_role_ids(guild_id: int) -> set:
+    now = time.time()
+    cached = _role_cache.get(guild_id)
+    if cached and now - cached[0] < 60:
+        return cached[1]
+    ids = set()
+    try:
+        res = supabase.table("guilds").select("staff_role_id,leader_role_id,colead_role_id").eq("guild_id", guild_id).limit(1).execute()
+        if res.data:
+            for v in res.data[0].values():
+                if v:
+                    ids.add(int(v))
+    except Exception as e:
+        print(f"Role lookup failed: {e}")
+    _role_cache[guild_id] = (now, ids)
+    return ids
+
+def is_staff_member(m) -> bool:
+    p = m.guild_permissions
+    if p.administrator or p.manage_guild:
+        return True
+    role_ids = get_staff_role_ids(m.guild.id)
+    return any(r.id in role_ids for r in m.roles)
+
     return False
