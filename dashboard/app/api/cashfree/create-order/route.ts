@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     
     Cashfree.XClientId = appId
     Cashfree.XClientSecret = secret
-    Cashfree.XEnvironment = Cashfree.Environment.SANDBOX
+    Cashfree.XEnvironment = Cashfree.Environment.PRODUCTION
 
     const { guildId, planId, currency } = await request.json()
     const plan = PRICING_PLANS.find((p) => p.id === planId)
