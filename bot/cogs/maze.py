@@ -109,6 +109,9 @@ class MazeTracker(commands.Cog):
         action = (action or "").lower()
         if not action:
             return await ctx.send("Usage: `!maze help`, `!maze start`, `!maze status`, or `!maze ping 20%`")
+        
+        if action == "help":
+            return await ctx.invoke(self.bot.get_command("help"), topic="maze")
 
         if not is_staff_member(ctx.author):
             return await ctx.send("❌ You must be an Admin or Staff to use Maze commands.")
