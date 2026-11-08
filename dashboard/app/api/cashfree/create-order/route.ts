@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { Cashfree } from 'cashfree-pg'
 import { PRICING_PLANS } from '@/lib/pricing'
 
-const PLAN_CODES: Record<string, string> = { starter_monthly: 's', pro_monthly: 'p', elite_yearly: 'e' }
+const PLAN_CODES: Record<string, string> = { starter_monthly: 's', pro_monthly: 'p', elite_yearly: 'e', dev_test: 't' }
 
 export async function POST(request: Request) {
   try {
