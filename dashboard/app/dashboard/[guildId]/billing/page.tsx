@@ -9,12 +9,10 @@ import { formatDate, toDate } from '@/lib/format'
 import { PRICING_PLANS, PLAN_FEATURES, formatPrice, detectCurrency, Currency } from '@/lib/pricing'
 import { load } from '@cashfreepayments/cashfree-js'
 
-// Helper to format the remaining time beautifully
 function formatRemainingTime(endDate: Date | null) {
   if (!endDate) return 'Unknown'
   const diff = endDate.getTime() - Date.now()
   if (diff <= 0) return 'Expired'
-  
   const days = Math.floor(diff / (1000 * 60 * 60 * 24))
   if (days > 30) {
     const months = Math.floor(days / 30)
@@ -41,35 +39,19 @@ export default function BillingPage() {
 
   const status = guild?.premium_status ?? 'expired'
   const premiumEnd = toDate(guild?.premium_ends_at)
-  
-  // Checks if premium is active AND the date hasn't passed yet
   const isPremium = status === 'premium' && premiumEnd !== null && premiumEnd.getTime() > Date.now()
   const isTrial = status === 'trial'
   const trialEnd = toDate(guild?.trial_ends_at)
   
-  // --- NEW: AUTO-POLLING EFFECT ---
-  // Polls the database every 3s for 30s after returning from Cashfree
   useEffect(() => {
     if (!searchParams.get('order_id') || isPremium) return
-
-    const id = setInterval(() => {
-      void refresh()
-    }, 3000)
-
-    const stop = setTimeout(() => {
-      clearInterval(id)
-    }, 30000)
-
-    return () => {
-      clearInterval(id)
-      clearTimeout(stop)
-    }
+    const id = setInterval(() => { void refresh() }, 3000)
+    const stop = setTimeout(() => { clearInterval(id) }, 30000)
+    return () => { clearInterval(id); clearTimeout(stop) }
   }, [searchParams, isPremium, refresh])
-  // --------------------------------
 
   let daysLeft = 0
   let trialExpired = false
-  
   if (isTrial && trialEnd) {
     daysLeft = Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / 86_400_000))
     if (daysLeft <= 0) trialExpired = true
@@ -91,7 +73,7 @@ export default function BillingPage() {
       if (data.error) throw new Error(data.error)
 
       const cashfree = await load({
-        mode: "production" // Change to "production" when ready
+        mode: "production" // LIVE MODE!
       })
 
       cashfree.checkout({
@@ -107,7 +89,6 @@ export default function BillingPage() {
     }
   }
 
-  // --- LOSS AVERSION UI (EXPIRED) ---
   if (!isPremium && (!isTrial || trialExpired)) {
     return (
       <div className="max-w-3xl">
@@ -143,7 +124,6 @@ export default function BillingPage() {
           </div>
         </div>
 
-        {/* Show the pricing cards below so they can actually pay */}
         <div id="pricing-plans" className="mt-8 grid gap-4 sm:grid-cols-2">
           {PRICING_PLANS.map((plan) => (
             <Card key={plan.id} className={`relative overflow-hidden ${plan.highlight ? 'border-purple-500/50 shadow-lg shadow-purple-900/20' : ''}`}>
@@ -177,7 +157,6 @@ export default function BillingPage() {
     )
   }
 
-  // --- ACTIVE TRIAL / PREMIUM UI ---
   return (
     <div className="max-w-5xl">
       <PageHeader
@@ -204,8 +183,6 @@ export default function BillingPage() {
                   ? 'Thank you for supporting the bot! Your server has full access.' 
                   : `You have ${daysLeft} days left in your trial. (Ends ${formatDate(trialEnd)})`}
               </p>
-              
-              {/* THE EXPIRY BAR */}
               {isPremium && premiumEnd && (
                 <div className="mt-3 inline-flex items-center gap-2 bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold text-purple-300">
                   <Clock className="w-3.5 h-3.5" />
@@ -247,7 +224,7 @@ export default function BillingPage() {
                     </p>
                     <button 
                       onClick={() => handlePayment(plan.id)}
-                      disabled={loadingPlan === plan.id} // Removed !isPremium so they can renew early
+                      disabled={loadingPlan === plan.id}
                       className="w-full mt-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {loadingPlan === plan.id ? (
@@ -261,10 +238,9 @@ export default function BillingPage() {
               </Card>
             ))}
           </div>
+          
+          {/* 🚨 TEST MODE ALERT IS DELETED 🚨 */}
 
-          <Alert tone="amber" title="Test Mode">
-            Payments are currently running in sandbox mode. If you want to manually activate, email <strong>{supportEmail}</strong>.
-          </Alert>
         </div>
 
         <div className="space-y-4">
