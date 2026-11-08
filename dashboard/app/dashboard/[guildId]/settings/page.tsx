@@ -21,12 +21,19 @@ export default function ServerSettingsPage() {
     setSaving(true); setSuccess(false)
     const supabase = createClient()
     
-    await supabase.from('guilds').update({
-      war_channel_id: warChannel || null,
-      race_channel_id: raceChannel || null,
-      maze_channel_id: mazeChannel || null,
-      staff_role_id: staffRole || null,
-    }).eq('guild_id', guildId)
+  const { error } = await supabase.from('guilds').update({
+    war_channel_id: warChannel || null,
+    race_channel_id: raceChannel || null,
+    maze_channel_id: mazeChannel || null,
+    staff_role_id: staffRole || null,
+  }).eq('guild_id', guildId)
+
+  if (error) {
+    console.error(error)
+    alert('Save failed: ' + error.message)
+    setSaving(false)
+    return
+  }
 
     await refresh()
     setSaving(false)
