@@ -1,5 +1,5 @@
 export type Currency = 'USD' | 'INR'
-export type PlanId = 'starter_monthly' | 'pro_monthly' | 'elite_yearly'
+export type PlanId = 'starter_monthly' | 'pro_monthly' | 'elite_yearly' | 'dev_test'
 
 export interface PricingPlan {
   id: PlanId
