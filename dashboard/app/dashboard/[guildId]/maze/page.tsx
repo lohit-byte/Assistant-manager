@@ -158,12 +158,12 @@ export default function MazePage() {
               </div>
             </Field>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Event start" hint="Your local timezone.">
-                <TextInput type="datetime-local" value={draft.event_start} onChange={(event) => setStartAndDuration(event.target.value)} />
+            <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
+              <Field label="Event start" hint="Your local timezone." className="min-w-0">
+                <TextInput className="w-full min-w-0 appearance-none" type="datetime-local" value={draft.event_start} onChange={(event) => setStartAndDuration(event.target.value)} />
               </Field>
-              <Field label="Event end" hint={`Suggested: start + ${meta.days} days.`}>
-                <TextInput type="datetime-local" value={draft.event_end} onChange={(event) => setDraft((current) => ({ ...current, event_end: event.target.value }))} />
+              <Field label="Event end" hint={`Suggested: start + ${meta.days} days.`} className="min-w-0">
+                <TextInput className="w-full min-w-0 appearance-none" type="datetime-local" value={draft.event_end} onChange={(event) => setDraft((current) => ({ ...current, event_end: event.target.value }))} />
               </Field>
             </div>
 
