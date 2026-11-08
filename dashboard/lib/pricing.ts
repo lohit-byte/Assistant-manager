@@ -26,7 +26,7 @@ export const PRICING_PLANS: PricingPlan[] = [
     description: 'Full access with a simple month-to-month plan. Perfect for single-team alliances.',
     price: { USD: 10, INR: 999 },
     max_teams: 1,
-    paddlePriceId: 'pro_01m6wr0mbtt3vn5x0xrng7rxff',
+    paddlePriceId: 'pri_01m6wr2qs34s1r8tftw0jtkz2y',
   },
   {
     id: 'pro_monthly',
@@ -37,7 +37,7 @@ export const PRICING_PLANS: PricingPlan[] = [
     max_teams: 3,
     badge: 'Best Value',
     highlight: true,
-    paddlePriceId: 'pro_01m6wrrap2mgewk3qjp6v0ms09',
+    paddlePriceId: 'pri_01m6wrs9awstt8801cz1rjbb1k',
   },
   {
     id: 'elite_yearly',
@@ -47,7 +47,7 @@ export const PRICING_PLANS: PricingPlan[] = [
     price: { USD: 84, INR: 7999 },
     max_teams: 99,
     badge: 'Save 30%',
-    paddlePriceId: 'pro_01m6wr0mc0hfkgv62na03hffrc',
+    paddlePriceId: 'pri_01m6wr7rwwwfatdrwb7jfvsthx',
   },
 ]
 
