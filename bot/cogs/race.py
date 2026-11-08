@@ -3,7 +3,7 @@ from discord.ext import commands
 import asyncio
 import re
 import json
-from database import supabase, check_premium_status
+from database import supabase, check_premium_status, is_staff_member
 from ocr_engine import process_race_image
 
 NODES_PER_LAP = 5
@@ -45,10 +45,6 @@ def parse_node_args(args):
         val = f"{m.group(1).replace(',', '.')} {(m.group(2) or '').upper()}".strip()
         out.append((val, m.group(3).strip()))
     return out
-
-def is_staff_member(m):
-    p = m.guild_permissions
-    return p.administrator or p.manage_guild
 
 async def get_race(channel_id):
     res = await asyncio.to_thread(supabase.table("race_state").select("*").eq("channel_id", channel_id).limit(1).execute)
