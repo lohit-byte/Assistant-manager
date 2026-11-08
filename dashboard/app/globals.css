@@ -44,4 +44,8 @@
     filter: invert(0.7);
     cursor: pointer;
   }
+  input[type="datetime-local"] {
+    min-height: 2.75rem;
+    text-align: left;
+  }
 }
