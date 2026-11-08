@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 import re
 import asyncio
 from collections import defaultdict
-from database import supabase, check_premium_status
+from database import supabase, check_premium_status, is_staff_member
 
 DEFENCE = ("defence", "defense")
 PHASE = timedelta(hours=24)
@@ -41,10 +41,6 @@ def fmt_td(td):
     hours, remainder = divmod(total_seconds, 3600)
     minutes, _ = divmod(remainder, 60)
     return f"{hours}h {minutes}m"
-
-def is_staff_member(m):
-    p = m.guild_permissions
-    return p.administrator or p.manage_guild
 
 async def get_war(channel_id):
     res = await asyncio.to_thread(supabase.table("wars").select("*").eq("channel_id", channel_id).limit(1).execute)
