@@ -82,6 +82,7 @@ export function yearlySavings(currency: Currency): number {
 }
 
 export function detectCurrency(): Currency {
+  return 'USD';// <--- TEMPORARY
   if (typeof navigator === 'undefined') return 'USD'
 
   const languages = [navigator.language, ...(navigator.languages ?? [])]
