@@ -103,7 +103,7 @@ export default function BillingPage() {
         
         paddle.Checkout.open({
           items: [{ priceId: plan.paddlePriceId, quantity: 1 }],
-          customData: { guildId: guildId, planId: planId } // Passes the server ID to the webhook
+          customData: { guildId: guildId, planId: plan.id } // Passes the server ID to the webhook
         })
       }
     } catch (error) {
