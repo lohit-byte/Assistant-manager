@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { Paddle, Envirenment, EventName } from '@paddle/paddle-node-sdk'
+import { Paddle, Environment, EventName } from '@paddle/paddle-node-sdk' // <--- TYPO FIXED HERE
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -12,10 +12,11 @@ export async function POST(request: Request) {
     const signature = request.headers.get('paddle-signature') || ''
     const rawBody = await request.text()
 
+    // Initialize Paddle with the correct environment
     const paddle = new Paddle(process.env.PADDLE_API_KEY!, {
-      envirenment: process.env.PADDLE_ENV === 'production' ?
-    Environment.production : Environment.sandbox
+      environment: process.env.PADDLE_ENV === 'production' ? Environment.production : Environment.sandbox
     })
+
     const event = await paddle.webhooks.unmarshal(
       rawBody,
       process.env.PADDLE_WEBHOOK_SECRET!,
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
     if (event && event.eventType === EventName.TransactionCompleted) {
       const transaction = event.data
       
-      // Read both guildId AND planId from customData
+      // Cast customData so TypeScript allows accessing guildId
       const customData = transaction.customData as { guildId?: string, planId?: string };
       const guildId = customData?.guildId;
       const planId = customData?.planId;
@@ -34,7 +35,6 @@ export async function POST(request: Request) {
         let maxTeams = 1
         let planDays = 30 
         
-        // Use the planId to determine the exact days
         if (planId === 'pro_monthly') {
           maxTeams = 3
         } else if (planId === 'elite_yearly') {
@@ -42,6 +42,7 @@ export async function POST(request: Request) {
           planDays = 365
         }
 
+        // Fetch existing guild to stack renewals
         const { data: existing } = await supabaseAdmin
           .from('guilds')
           .select('premium_ends_at')
