@@ -91,7 +91,7 @@ export default function BillingPage() {
       if (data.error) throw new Error(data.error)
 
       const cashfree = await load({
-        mode: "sandbox" // Change to "production" when ready
+        mode: "production" // Change to "production" when ready
       })
 
       cashfree.checkout({
