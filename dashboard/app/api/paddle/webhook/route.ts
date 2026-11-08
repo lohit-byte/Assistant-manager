@@ -22,11 +22,10 @@ export async function POST(request: Request) {
     if (event && event.eventType === EventName.TransactionCompleted) {
       const transaction = event.data
       
-      // We pass the guild ID from the frontend when opening Paddle checkout
-      const guildId = transaction.customData?.guildId 
+      // FIXED: Casting customData so TypeScript allows accessing guildId
+      const guildId = (transaction.customData as { guildId?: string })?.guildId;
       
       if (guildId) {
-        // Determine max teams based on what they bought
         let maxTeams = 1
         const items = transaction.items
         if (items && items[0] && items[0].price && items[0].price.id) {
@@ -40,8 +39,6 @@ export async function POST(request: Request) {
           .update({ 
             premium_status: 'premium',
             max_teams: maxTeams,
-            // Paddle handles auto-renewals, so we don't set premium_ends_at here.
-            // The webhook will fire again next month if they renew.
           })
           .eq('guild_id', guildId)
           
