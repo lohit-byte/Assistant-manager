@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { Cashfree } from 'cashfree-pg'
 import { PRICING_PLANS } from '@/lib/pricing'
 
-const PLAN_CODES: Record<string, string> = { starter_monthly: 's', pro_monthly: 'p', elite_yearly: 'e', dev_test: 't' }
+const PLAN_CODES: Record<string, string> = { starter_monthly: 's', pro_monthly: 'p', elite_yearly: 'e' }
 
 export async function POST(request: Request) {
   try {
@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     
     Cashfree.XClientId = appId
     Cashfree.XClientSecret = secret
-    Cashfree.XEnvironment = Cashfree.Environment.PRODUCTION
+    Cashfree.XEnvironment = Cashfree.Environment.PRODUCTION // Ensures live mode
 
     const { guildId, planId, currency } = await request.json()
     const plan = PRICING_PLANS.find((p) => p.id === planId)
