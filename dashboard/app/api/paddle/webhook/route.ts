@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { Paddle, EventName } from '@paddle/paddle-node-sdk'
+import { Paddle, Envirenment, EventName } from '@paddle/paddle-node-sdk'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -12,7 +12,10 @@ export async function POST(request: Request) {
     const signature = request.headers.get('paddle-signature') || ''
     const rawBody = await request.text()
 
-    const paddle = new Paddle(process.env.PADDLE_API_KEY!)
+    const paddle = new Paddle(process.env.PADDLE_API_KEY!, {
+      envirenment: process.env.PADDLE_ENV === 'production' ?
+    Environment.production : Environment.sandbox
+    })
     const event = await paddle.webhooks.unmarshal(
       rawBody,
       process.env.PADDLE_WEBHOOK_SECRET!,
