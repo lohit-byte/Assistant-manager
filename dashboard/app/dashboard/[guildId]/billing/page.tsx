@@ -7,7 +7,8 @@ import { useGuild } from '@/components/guild-shell'
 import { Card, CardBody, CardHeader, Badge, ProgressBar, Alert, PageHeader } from '@/components/ui'
 import { formatDate, toDate } from '@/lib/format'
 import { PRICING_PLANS, PLAN_FEATURES, formatPrice, detectCurrency, Currency } from '@/lib/pricing'
-import { load } from '@cashfreepayments/cashfree-js'
+import { load as loadCashfree } from '@cashfreepayments/cashfree-js'
+import { initializePaddle, Paddle } from '@paddle/paddle-js'
 
 function formatRemainingTime(endDate: Date | null) {
   if (!endDate) return 'Unknown'
@@ -29,7 +30,18 @@ export default function BillingPage() {
 
   const [currency, setCurrency] = useState<Currency>('USD')
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null)
+  const [paddle, setPaddle] = useState<Paddle | null>(null)
   
+  // Initialize Paddle for USD payments
+  useEffect(() => {
+    initializePaddle({
+      environment: process.env.NEXT_PUBLIC_PADDLE_ENV as 'sandbox' | 'production' || 'sandbox',
+      token: process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN!,
+    }).then((paddleInstance) => {
+      if (paddleInstance) setPaddle(paddleInstance)
+    })
+  }, [])
+
   useEffect(() => {
     setCurrency(detectCurrency())
     if (searchParams.get('order_id')) {
@@ -43,6 +55,7 @@ export default function BillingPage() {
   const isTrial = status === 'trial'
   const trialEnd = toDate(guild?.trial_ends_at)
   
+  // Auto-polling for Cashfree
   useEffect(() => {
     if (!searchParams.get('order_id') || isPremium) return
     const id = setInterval(() => { void refresh() }, 3000)
@@ -60,27 +73,35 @@ export default function BillingPage() {
   const supportEmail = 'warbot.support@gmail.com'
   const supportHref = `mailto:${supportEmail}?subject=Billing%20Enquiry%20for%20Server%20${guildId}`
 
-  const handlePayment = async (planId: string) => {
-    setLoadingPlan(planId)
+  const handlePayment = async (plan: typeof PRICING_PLANS[0]) => {
+    setLoadingPlan(plan.id)
     try {
-      const res = await fetch('/api/cashfree/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ guildId, planId, currency })
-      })
-      
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
+      if (currency === 'INR') {
+        // --- CASHFREE FLOW (INDIA) ---
+        const res = await fetch('/api/cashfree/create-order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ guildId, planId: plan.id, currency })
+        })
+        
+        const data = await res.json()
+        if (data.error) throw new Error(data.error)
 
-      const cashfree = await load({
-        mode: "production" // LIVE MODE!
-      })
+        const cashfree = await loadCashfree({ mode: "production" }) // Ensure production
 
-      cashfree.checkout({
-        paymentSessionId: data.payment_session_id,
-        redirectTarget: "_modal",
-      })
-      
+        cashfree.checkout({
+          paymentSessionId: data.payment_session_id,
+          redirectTarget: "_modal",
+        })
+      } else {
+        // --- PADDLE FLOW (GLOBAL) ---
+        if (!paddle) throw new Error("Paddle not initialized yet. Please wait a second and try again.")
+        
+        paddle.Checkout.open({
+          items: [{ priceId: plan.paddlePriceId, quantity: 1 }],
+          customData: { guildId: guildId } // This passes to the webhook!
+        })
+      }
     } catch (error) {
       console.error("Payment failed:", error)
       alert(error instanceof Error ? error.message : "Could not initiate payment.")
@@ -142,7 +163,7 @@ export default function BillingPage() {
                     <span className="text-sm font-normal text-slate-400"> / {plan.cadence}</span>
                   </p>
                   <button 
-                    onClick={() => handlePayment(plan.id)}
+                    onClick={() => handlePayment(plan)}
                     disabled={loadingPlan === plan.id}
                     className="w-full mt-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2"
                   >
@@ -223,7 +244,7 @@ export default function BillingPage() {
                       <span className="text-sm font-normal text-slate-400"> / {plan.cadence}</span>
                     </p>
                     <button 
-                      onClick={() => handlePayment(plan.id)}
+                      onClick={() => handlePayment(plan)}
                       disabled={loadingPlan === plan.id}
                       className="w-full mt-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
@@ -238,9 +259,6 @@ export default function BillingPage() {
               </Card>
             ))}
           </div>
-          
-          {/* 🚨 TEST MODE ALERT IS DELETED 🚨 */}
-
         </div>
 
         <div className="space-y-4">
