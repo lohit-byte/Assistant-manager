@@ -3,7 +3,7 @@ from discord.ext import commands
 import re
 import asyncio
 from datetime import datetime, timedelta, timezone
-from database import supabase
+from database import supabase, is_staff_member
 
 SCHEDULE_7D = [
     (6 * 24 + 22, 0, "20%"), (5 * 24 + 19, 0, "10%"), (5 * 24 + 0, 0, "30%"),
@@ -110,8 +110,7 @@ class MazeTracker(commands.Cog):
         if not action:
             return await ctx.send("Usage: `!maze help`, `!maze start`, `!maze status`, or `!maze ping 20%`")
 
-        perms = ctx.author.guild_permissions
-        if not (perms.administrator or perms.manage_guild):
+        if not is_staff_member(ctx.author):
             return await ctx.send("❌ You must be an Admin or Staff to use Maze commands.")
 
         if action == "status":
