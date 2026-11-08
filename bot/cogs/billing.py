@@ -21,7 +21,7 @@ class BillingManager(commands.Cog):
     async def check_expirations(self):
         await self.bot.wait_until_ready()
         try:
-            # Fetch all premium servers
+            # Fetch all premium servers (NO parentheses after .execute here)
             res = await asyncio.to_thread(
                 supabase.table("guilds").select("*").eq("premium_status", "premium").execute
             )
@@ -49,7 +49,6 @@ class BillingManager(commands.Cog):
                     continue
 
                 # Determine the channel to send the message
-                # Try the maze channel, then the system channel, then the first text channel
                 channel_id = guild_data.get("maze_channel_id")
                 channel = guild.get_channel(channel_id) if channel_id else None
                 if not channel:
@@ -62,12 +61,12 @@ class BillingManager(commands.Cog):
 
                 # --- LOGIC FOR EXPIRY ---
                 if days_left <= 0 and last_ping != -1:
-                    # 1. Expired
+                    # 1. Expired (NO parentheses after .execute here)
                     await asyncio.to_thread(
                         supabase.table("guilds").update({
                             "premium_status": "expired",
                             "last_renewal_ping": -1
-                        }).eq("guild_id", guild_id).execute()
+                        }).eq("guild_id", guild_id).execute
                     )
                     embed = discord.Embed(
                         title="🚨 Premium Expired", 
@@ -76,10 +75,10 @@ class BillingManager(commands.Cog):
                     )
                     await channel.send(content=guild.owner.mention if guild.owner else "", embed=embed)
                     
-                elif 0 < days_left <= 1 and last_ping > 1 or last_ping == 0:
-                    # 2. 1 Day Warning
+                elif 0 < days_left <= 1 and (last_ping > 1 or last_ping == 0):
+                    # 2. 1 Day Warning (NO parentheses after .execute here)
                     await asyncio.to_thread(
-                        supabase.table("guilds").update({"last_renewal_ping": 1}).eq("guild_id", guild_id).execute()
+                        supabase.table("guilds").update({"last_renewal_ping": 1}).eq("guild_id", guild_id).execute
                     )
                     embed = discord.Embed(
                         title="⚠️ Premium Expires Tomorrow", 
@@ -89,9 +88,9 @@ class BillingManager(commands.Cog):
                     await channel.send(content=guild.owner.mention if guild.owner else "", embed=embed)
 
                 elif 1 < days_left <= 3 and (last_ping > 3 or last_ping == 0):
-                    # 3. 3 Day Warning
+                    # 3. 3 Day Warning (NO parentheses after .execute here)
                     await asyncio.to_thread(
-                        supabase.table("guilds").update({"last_renewal_ping": 3}).eq("guild_id", guild_id).execute()
+                        supabase.table("guilds").update({"last_renewal_ping": 3}).eq("guild_id", guild_id).execute
                     )
                     embed = discord.Embed(
                         title="⏳ Premium Expiring Soon", 
