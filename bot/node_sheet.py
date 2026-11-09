@@ -25,11 +25,23 @@ _lock = threading.Lock()
 
 
 def default_path() -> str:
-    """The bundled sheet path: ``NODESHEET_PATH`` or ``<repo>/nodesheet.json``."""
+    """Resolve the bundled sheet path.
+
+    Order: ``NODESHEET_PATH`` → ``<repo>/nodesheet.json`` if it exists →
+    ``<cwd>/nodesheet.json`` if it exists → ``<repo>/nodesheet.json``. The
+    working-directory fallback matters for the Docker image, which copies the
+    bot package into ``/app`` so there is no repo-root file next to it.
+    """
     configured = (os.getenv("NODESHEET_PATH") or "").strip()
     if configured:
         return configured
-    return os.path.join(ROOT_DIR, "nodesheet.json")
+    repo_path = os.path.join(ROOT_DIR, "nodesheet.json")
+    if os.path.isfile(repo_path):
+        return repo_path
+    cwd_path = os.path.join(os.getcwd(), "nodesheet.json")
+    if os.path.isfile(cwd_path):
+        return cwd_path
+    return repo_path
 
 
 def parse_nodesheet(payload):

@@ -182,6 +182,14 @@ def log_attack(guild_id, channel_id, war_start, discord_id, alias, delta, source
         print(f"Failed to log war attack: {e}")
 
 
+async def _log_attack_safely(*args, **kwargs):
+    """Write a war-log row; a logging failure must never break the attack path."""
+    try:
+        await asyncio.to_thread(log_attack, *args, **kwargs)
+    except Exception as e:
+        print(f"Failed to log war attack: {e}")
+
+
 class AttackView(discord.ui.View):
     """The persistent "I attacked" button.
 
@@ -485,6 +493,18 @@ class WarTracker(commands.Cog):
             supabase.table("wars").update({"team_role_id": role_id})
             .eq("channel_id", ctx.channel.id).execute
         )
+        # teams.team_role_id is the Setup value and the fresh-war fallback, so
+        # this action must write both rows or the two drift apart (and one
+        # action could silently clear/restore the ping role). No team row for
+        # this channel -> nothing to sync, keep the old behaviour.
+        try:
+            await asyncio.to_thread(
+                supabase.table("teams").update({"team_role_id": role_id})
+                .eq("guild_id", ctx.guild.id)
+                .eq("war_channel_id", ctx.channel.id).execute
+            )
+        except Exception as e:
+            print(f"Team role sync failed for channel {ctx.channel.id}: {e}")
         if role_id:
             role = ctx.guild.get_role(role_id)
             # Deliberately name the role instead of mentioning it: a live
@@ -887,8 +907,8 @@ class WarTracker(commands.Cog):
                     .eq("channel_id", channel_id).execute
                 )
                 if new_total > old_total:
-                    await asyncio.to_thread(
-                        log_attack, guild.id, channel_id, war.get("war_start"),
+                    await _log_attack_safely(
+                        guild.id, channel_id, war.get("war_start"),
                         user.id, my_alias, new_total - old_total, "self",
                     )
             await self._reply_ephemeral(
@@ -1048,10 +1068,12 @@ class WarTracker(commands.Cog):
             war = await get_war(ctx.channel.id)
             if not war:
                 return await ctx.send("ℹ️ No war data found.")
-            counts = war.get("attack_counts") or {}
-            missing = war.get("missing_list") or []
-            counts[name] = int(count)
-            if int(count) >= required:
+            counts = dict(war.get("attack_counts") or {})
+            missing = list(war.get("missing_list") or [])
+            old_count = int(counts.get(name) or 0)
+            new_count = int(count)
+            counts[name] = new_count
+            if new_count >= required:
                 missing = [m for m in missing if (m.get("name") or "").lower() != name]
             else:
                 absent = {(a.get("name") or "").lower() for a in war.get("absent_list") or []}
@@ -1064,6 +1086,12 @@ class WarTracker(commands.Cog):
                 supabase.table("wars").update({"attack_counts": counts, "missing_list": missing})
                 .eq("channel_id", ctx.channel.id).execute
             )
+            if new_count != old_count:
+                # war_logs.source='staff': audit trail for manual corrections.
+                await _log_attack_safely(
+                    ctx.guild.id, ctx.channel.id, war.get("war_start"),
+                    discord_id, name, new_count - old_count, "staff",
+                )
         await ctx.send(f"✅ `{name}`: {count}/{required} attacks.")
 
     async def war_check(self, ctx):
@@ -1221,8 +1249,8 @@ class WarTracker(commands.Cog):
             # negative delta from the text path (only the staff undo is negative).
             log_delta = max(0, total - old_total)
             if log_delta:
-                await asyncio.to_thread(
-                    log_attack, message.guild.id, message.channel.id,
+                await _log_attack_safely(
+                    message.guild.id, message.channel.id,
                     war.get("war_start"), message.author.id, my_alias,
                     log_delta, "self",
                 )
@@ -1273,8 +1301,8 @@ class WarTracker(commands.Cog):
                 counts[name] = 0
                 await asyncio.to_thread(supabase.table("wars").update({"missing_list": missing, "attack_counts": counts}).eq("channel_id", payload.channel_id).execute)
                 if old_total:
-                    await asyncio.to_thread(
-                        log_attack, payload.guild_id, payload.channel_id,
+                    await _log_attack_safely(
+                        payload.guild_id, payload.channel_id,
                         war.get("war_start"), reactor.id, name, -old_total, "undo",
                     )
 

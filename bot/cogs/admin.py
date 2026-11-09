@@ -1,3 +1,5 @@
+import shlex
+
 import discord
 from discord.ext import commands
 from database import supabase, is_staff_member, ensure_user, rename_alias
@@ -89,7 +91,15 @@ class Admin(commands.Cog):
                 await ctx.send(f"❌ Database error: {e}")
 
         elif action == "rename":
-            parts = args.split()
+            # shlex keeps quoted aliases with spaces working; the plain
+            # two-token form `!alias rename old new` is unchanged.
+            try:
+                parts = shlex.split(args)
+            except ValueError as e:
+                return await ctx.send(
+                    f"❌ Could not read the alias names ({e}). "
+                    "Usage: `!alias rename <old> <new>`"
+                )
             if len(parts) != 2:
                 return await ctx.send("Usage: `!alias rename <old> <new>`")
             try:

@@ -42,6 +42,7 @@ from cogs.war import (
     progress_bar,
 )
 import ocr_engine
+import node_sheet
 from node_sheet import bundled_sheet, default_path, load_nodesheet, parse_nodesheet
 
 GUILD = 100
@@ -1883,3 +1884,225 @@ def test_captain_can_cancel_the_team_war(clean_db):
     run(call(WarTracker.war_group, war_cog(), ctx, "cancel"))
 
     assert db.one("wars", channel_id=CHANNEL)["is_active"] is False
+
+
+# ------------------------------------------- review fixes: round 2 (task-5)
+
+
+def test_war_set_role_syncs_the_team_setup_row(clean_db):
+    db = clean_db
+    seed_team(db, 1, war_channel_id=CHANNEL)
+    seed_war(db)
+    ctx = make_ctx(channel_id=CHANNEL)
+    role = FakeRole(777, "Team A")
+    ctx.guild.roles.append(role)
+    ctx.message.role_mentions = [role]
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "set", "role", args="<@&777>"))
+
+    assert db.one("wars", channel_id=CHANNEL)["team_role_id"] == 777
+    team = db.one("teams", id=1)
+    assert team["team_role_id"] == 777
+
+
+def test_war_set_role_clears_both_the_war_and_the_team_row(clean_db):
+    db = clean_db
+    seed_team(db, 1, war_channel_id=CHANNEL, team_role_id=777)
+    seed_war(db, team_role_id=777)
+    ctx = make_ctx(channel_id=CHANNEL)
+    ctx.message.role_mentions = []
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "set", "role", args="none"))
+
+    assert db.one("wars", channel_id=CHANNEL)["team_role_id"] is None
+    assert db.one("teams", id=1)["team_role_id"] is None
+
+
+def test_war_set_role_without_a_team_row_keeps_working(clean_db):
+    db = clean_db
+    seed_war(db)
+    ctx = make_ctx(channel_id=CHANNEL)
+    role = FakeRole(777, "Team A")
+    ctx.guild.roles.append(role)
+    ctx.message.role_mentions = [role]
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "set", "role", args="<@&777>"))
+
+    assert db.one("wars", channel_id=CHANNEL)["team_role_id"] == 777
+    assert db.rows("teams") == []
+
+
+def test_default_path_resolves_repo_root_then_cwd(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    cwd = tmp_path / "cwd"
+    repo.mkdir()
+    cwd.mkdir()
+    monkeypatch.delenv("NODESHEET_PATH", raising=False)
+    monkeypatch.setattr(node_sheet, "ROOT_DIR", str(repo))
+    monkeypatch.chdir(cwd)
+
+    # Neither file exists -> repo-root fallback (the historical behaviour).
+    assert default_path() == str(repo / "nodesheet.json")
+
+    # Docker layout (`COPY bot/ .`): only the working directory has the file.
+    (cwd / "nodesheet.json").write_text("{}", encoding="utf-8")
+    assert default_path() == str(cwd / "nodesheet.json")
+
+    # A repo-root file still wins over the working directory.
+    (repo / "nodesheet.json").write_text("{}", encoding="utf-8")
+    assert default_path() == str(repo / "nodesheet.json")
+
+
+def test_alias_rename_accepts_quoted_names_with_spaces(clean_db):
+    db = clean_db
+    seed_alias(db, 900, "old name")
+    seed_war(db, attack_counts={"old name": 4},
+             missing_list=[{"name": "old name"}], absent_list=[])
+    ctx = make_ctx()
+
+    run(call(Admin.alias_group, admin_cog(), ctx, "rename",
+             args='"old name" "new name"'))
+
+    assert db.one("aliases", alias_name="new name", guild_id=GUILD)
+    war = db.one("wars", channel_id=CHANNEL)
+    assert war["attack_counts"] == {"new name": 4}
+    assert war["missing_list"] == [{"name": "new name"}]
+
+
+def test_alias_rename_bad_quoting_reports_an_error(clean_db):
+    db = clean_db
+    seed_alias(db, 900, "old name")
+    ctx = make_ctx()
+
+    run(call(Admin.alias_group, admin_cog(), ctx, "rename", args='"old name'))
+
+    assert db.one("aliases", alias_name="old name", guild_id=GUILD)
+    assert any("rename" in text.lower() for text in ctx.texts)
+
+
+def test_war_attacks_logs_the_staff_correction(clean_db):
+    db = clean_db
+    seed_alias(db, 200, "sam")
+    seed_war(db, attack_counts={"sam": 2})
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "attacks", "Sam", args="6"))
+
+    row = db.one("wars", channel_id=CHANNEL)
+    assert row["attack_counts"] == {"sam": 6}
+    log = db.rows("war_logs")[-1]
+    assert (log["player_name"], log["attacks"], log["source"]) == ("sam", 4, "staff")
+    assert log["discord_id"] == 200
+    assert log["channel_id"] == CHANNEL
+
+
+def test_war_attacks_negative_correction_logs_a_negative_staff_delta(clean_db):
+    db = clean_db
+    seed_alias(db, 200, "sam")
+    seed_war(db, attack_counts={"sam": 6})
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "attacks", "Sam", args="2"))
+
+    log = db.rows("war_logs")[-1]
+    assert (log["attacks"], log["source"]) == (-4, "staff")
+
+
+def test_war_attacks_without_a_change_writes_no_log(clean_db):
+    db = clean_db
+    seed_alias(db, 200, "sam")
+    seed_war(db, attack_counts={"sam": 6})
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "attacks", "Sam", args="6"))
+
+    assert db.rows("war_logs") == []
+
+
+def test_attack_button_survives_a_war_log_failure(clean_db, monkeypatch):
+    db = clean_db
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[{"name": "sam"}], attack_counts={"sam": 5})
+    guild = FakeGuild(GUILD, me=FakeMember(999, "Bot", administrator=False))
+    channel = guild.add_channel(FakeChannel(CHANNEL, guild=guild))
+    user = FakeMember(900, "Sam", administrator=False, guild=guild)
+    interaction = FakeInteraction(user=user, guild=guild, channel=channel)
+
+    def broken_log(*args, **kwargs):
+        raise RuntimeError("war_logs insert failed")
+
+    monkeypatch.setattr("cogs.war.log_attack", broken_log)
+
+    run(war_cog()._handle_attack_press(interaction))
+
+    war = db.one("wars", channel_id=CHANNEL)
+    assert war["attack_counts"] == {"sam": 6}
+    assert war["missing_list"] == []
+    assert any("6/6" in text for text in interaction.texts)
+
+
+def test_attacks_done_message_survives_a_war_log_failure(clean_db, monkeypatch):
+    db = clean_db
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[{"name": "sam"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, display_name="Sam")
+    message = FakeMessage(content="attacks done", author=ctx.author,
+                          guild=ctx.guild, channel=ctx.channel)
+
+    def broken_log(*args, **kwargs):
+        raise RuntimeError("war_logs insert failed")
+
+    monkeypatch.setattr("cogs.war.log_attack", broken_log)
+
+    run(war_cog().on_message(message))
+
+    war = db.one("wars", channel_id=CHANNEL)
+    assert war["attack_counts"] == {"sam": 6}
+    assert war["missing_list"] == []
+    assert message.replies
+    assert "6/6" in message.replies[-1]
+
+
+class _BrokenTableDB:
+    """Delegates to the fake DB but raises for one table name."""
+
+    def __init__(self, db, broken_table):
+        self._db = db
+        self._broken = broken_table
+
+    def table(self, name):
+        if name == self._broken:
+            raise RuntimeError(f"relation {self._broken} does not exist")
+        return self._db.table(name)
+
+
+def test_attacks_done_survives_a_missing_war_logs_table(clean_db, monkeypatch):
+    db = clean_db
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[{"name": "sam"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, display_name="Sam")
+    message = FakeMessage(content="attacks done", author=ctx.author,
+                          guild=ctx.guild, channel=ctx.channel)
+    monkeypatch.setattr("cogs.war.supabase", _BrokenTableDB(db, "war_logs"))
+
+    run(war_cog().on_message(message))
+
+    war = db.one("wars", channel_id=CHANNEL)
+    assert war["attack_counts"] == {"sam": 6}
+    assert message.replies and "6/6" in message.replies[-1]
+
+
+def test_war_set_role_survives_a_team_sync_failure(clean_db, monkeypatch):
+    db = clean_db
+    seed_team(db, 1, war_channel_id=CHANNEL)
+    seed_war(db)
+    ctx = make_ctx(channel_id=CHANNEL)
+    role = FakeRole(777, "Team A")
+    ctx.guild.roles.append(role)
+    ctx.message.role_mentions = [role]
+    monkeypatch.setattr("cogs.war.supabase", _BrokenTableDB(db, "teams"))
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "set", "role", args="<@&777>"))
+
+    assert db.one("wars", channel_id=CHANNEL)["team_role_id"] == 777
+    assert any("will ping" in text for text in ctx.texts)
