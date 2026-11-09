@@ -151,7 +151,7 @@ export default function MazePage() {
             <Field label="Maze type">
               <div className="grid grid-cols-2 gap-2">
                 {(['7d', '3d'] as const).map((type) => (
-                  <button key={type} type="button" onClick={() => changeType(type)} className={`rounded-xl border px-4 py-3 text-left transition-colors ${draft.maze_type === type ? 'border-purple-500/60 bg-purple-500/10' : 'border-slate-700 bg-slate-950/60 hover:border-slate-600'}`}>
+                  <button key={type} type="button" onClick={() => changeType(type)} className={`rounded-xl border px-4 py-3 text-left transition-colors ${draft.maze_type === type ? 'border-indigo-500/60 bg-indigo-500/10' : 'border-slate-700 bg-slate-950/60 hover:border-slate-600'}`}>
                     <p className="text-sm font-semibold text-white">{MAZE_TYPE_META[type].label}</p>
                   </button>
                 ))}
@@ -184,7 +184,7 @@ export default function MazePage() {
             <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm">
               {start && end ? (
                 <div className="space-y-1">
-                  <p className="flex items-center gap-2 text-slate-300"><CalendarClock className="h-4 w-4 text-purple-300" /> {formatDateTime(start)} → {formatDateTime(end)}</p>
+                  <p className="flex items-center gap-2 text-slate-300"><CalendarClock className="h-4 w-4 text-indigo-300" /> {formatDateTime(start)} → {formatDateTime(end)}</p>
                   <p className="flex items-center gap-2 text-xs text-slate-500"><Clock3 className="h-3.5 w-3.5" /> {formatRelative(end, now)} · {upcoming ? `${upcoming.percent} next` : 'No upcoming discounts'}</p>
                 </div>
               ) : <p className="text-slate-500">Choose a start and end time to preview.</p>}
@@ -204,15 +204,15 @@ export default function MazePage() {
                 {moments.map((moment, index) => {
                   const isNext = upcoming !== null && moment.at.getTime() === upcoming.at.getTime()
                   return (
-                    <li key={`${moment.percent}-${index}`} className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 ${isNext ? 'border-purple-500/50 bg-purple-500/10' : moment.past ? 'border-slate-800/70 bg-slate-950/40' : 'border-slate-800 bg-slate-950/60'}`}>
+                    <li key={`${moment.percent}-${index}`} className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 ${isNext ? 'border-indigo-500/50 bg-indigo-500/10' : moment.past ? 'border-slate-800/70 bg-slate-950/40' : 'border-slate-800 bg-slate-950/60'}`}>
                       <div className="flex items-center gap-3">
-                        <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${isNext ? 'bg-purple-500 text-white' : moment.past ? 'bg-slate-800 text-slate-500' : 'bg-slate-800 text-slate-300'}`}>{index + 1}</span>
+                        <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${isNext ? 'bg-indigo-500 text-white' : moment.past ? 'bg-slate-800 text-slate-500' : 'bg-slate-800 text-slate-300'}`}>{index + 1}</span>
                         <div>
-                          <p className={`text-sm font-semibold ${isNext ? 'text-purple-200' : moment.past ? 'text-slate-500' : 'text-slate-200'}`}>{moment.percent} discount</p>
+                          <p className={`text-sm font-semibold ${isNext ? 'text-indigo-200' : moment.past ? 'text-slate-500' : 'text-slate-200'}`}>{moment.percent} discount</p>
                           <p className="text-xs text-slate-500">{formatDateTime(moment.at)}</p>
                         </div>
                       </div>
-                      <span className={`text-xs ${isNext ? 'font-semibold text-purple-300' : moment.past ? 'text-slate-600' : 'text-slate-400'}`}>{moment.past ? 'Passed' : formatRelative(moment.at, now)}</span>
+                      <span className={`text-xs ${isNext ? 'font-semibold text-indigo-300' : moment.past ? 'text-slate-600' : 'text-slate-400'}`}>{moment.past ? 'Passed' : formatRelative(moment.at, now)}</span>
                     </li>
                   )
                 })}

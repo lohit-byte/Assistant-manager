@@ -176,7 +176,7 @@ export default function WarPage() {
                 <select 
                   value={channelId || ''}
                   onChange={(e) => router.push(`?channel=${e.target.value}`)}
-                  className="appearance-none bg-slate-900 border border-slate-700 text-white text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:border-purple-500"
+                  className="appearance-none bg-slate-900 border border-slate-700 text-white text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:border-indigo-500"
                 >
                   {availableChannels.map(id => <option key={id} value={id}>Team Channel ({id})</option>)}
                 </select>
@@ -280,8 +280,8 @@ export default function WarPage() {
             <CardBody className="space-y-6">
               <Field label="Required Attacks">
                 <div className="flex items-center gap-4">
-                  <input type="range" min="1" max={MAX_ATTACKS_REQUIRED} value={settings.attacks_required} onChange={(e) => setSettings({...settings, attacks_required: parseInt(e.target.value)})} className="w-full accent-purple-500" />
-                  <div className="flex h-10 w-12 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-lg font-bold text-purple-300">{settings.attacks_required}</div>
+                  <input type="range" min="1" max={MAX_ATTACKS_REQUIRED} value={settings.attacks_required} onChange={(e) => setSettings({...settings, attacks_required: parseInt(e.target.value)})} className="w-full accent-indigo-500" />
+                  <div className="flex h-10 w-12 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-lg font-bold text-indigo-300">{settings.attacks_required}</div>
                 </div>
               </Field>
               <Button onClick={saveSettings} loading={busy === 'settings'} className="w-full">Save Settings</Button>
@@ -297,7 +297,7 @@ export default function WarPage() {
                 <select 
                   value={warningId} 
                   onChange={(e) => setWarningId(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-white focus:border-purple-500"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-white focus:border-indigo-500"
                 >
                   <option value="" disabled>Select a player (alias)...</option>
                   {aliases.map(a => (

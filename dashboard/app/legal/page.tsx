@@ -21,7 +21,7 @@ export default function LegalPage() {
         {/* TERMS OF SERVICE */}
         <section className="bg-slate-900 border border-slate-800 p-8 rounded-2xl space-y-4">
           <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
-            <Scale className="w-6 h-6 text-purple-400" />
+            <Scale className="w-6 h-6 text-indigo-400" />
             <h2 className="text-2xl font-bold">Terms of Service</h2>
           </div>
           <div className="text-slate-300 space-y-3 text-sm leading-relaxed">

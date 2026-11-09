@@ -23,8 +23,8 @@ import {
   Map,
   Menu,
   RefreshCw,
-  Rocket,
   Server,
+  Settings,
   ShieldAlert,
   Sparkles,
   Swords,
@@ -71,15 +71,12 @@ const NAV_GROUPS = [
     label: 'Manage',
     items: [
       { name: 'Aliases', segment: '/aliases', icon: Users },
-      { name: 'Updates', segment: '/updates', icon: Rocket },
+      { name: 'Settings', segment: '/settings', icon: Settings },
     ],
   },
   {
     label: 'Account',
-    items: [
-      { name: 'Pricing', segment: '/pricing', icon: Sparkles },
-      { name: 'Billing', segment: '/billing', icon: CreditCard },
-    ],
+    items: [{ name: 'Billing', segment: '/billing', icon: CreditCard }],
   },
 ]
 
@@ -356,7 +353,7 @@ export default function GuildShell({
           <div className="border-t border-white/[0.06] p-3">
             {activeGuild.premium_status !== 'premium' ? (
               <Link
-                href={`/dashboard/${guildId}/pricing`}
+                href={`/dashboard/${guildId}/billing`}
                 className="mb-3 block rounded-xl border border-indigo-400/20 bg-gradient-to-br from-indigo-500/15 via-indigo-500/5 to-transparent p-3 transition-colors hover:border-indigo-400/35"
               >
                 <p className="flex items-center gap-1.5 text-xs font-semibold text-indigo-200">

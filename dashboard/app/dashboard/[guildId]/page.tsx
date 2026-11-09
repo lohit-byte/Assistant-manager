@@ -104,11 +104,11 @@ export default function OverviewPage() {
   const warExcused = summary?.war?.absent_list?.length ?? 0
   const warLogged = Object.keys(summary?.war?.attack_counts ?? {}).length
   const phaseElapsed = useMemo(() => {
-    if (!warWindow.active || !warWindow.start || !warWindow.end) return null
+    if (!warWindow.active || !warWindow.start || !warWindow.phaseEnd) return null
     const attackStart = warWindow.phase === 'attack' ? warWindow.start.getTime() + 24 * 3600_000 : warWindow.start.getTime()
     return {
       value: now.getTime() - attackStart,
-      max: Math.max(1, warWindow.end.getTime() - attackStart),
+      max: Math.max(1, warWindow.phaseEnd.getTime() - attackStart),
     }
   }, [warWindow, now])
 
@@ -173,7 +173,7 @@ export default function OverviewPage() {
           label="War"
           value={warWindow.active ? warPhaseLabel(warWindow.phase) : 'Idle'}
           hint={
-            warWindow.active && warWindow.end ? formatRelative(warWindow.end, now) : 'No active war'
+            warWindow.active && warWindow.phaseEnd ? formatRelative(warWindow.phaseEnd, now) : 'No active war'
           }
           icon={<Swords className="h-4 w-4" />}
           tone={warWindow.active ? 'amber' : 'slate'}
@@ -252,9 +252,9 @@ export default function OverviewPage() {
                     >
                       {warWindow.active ? warPhaseLabel(warWindow.phase) : 'Inactive'}
                     </Badge>
-                    {warWindow.end ? (
+                    {warWindow.phaseEnd ? (
                       <span className="text-xs text-slate-500">
-                        Ends {formatDateTime(warWindow.end)}
+                        Ends {formatDateTime(warWindow.phaseEnd)}
                       </span>
                     ) : null}
                   </div>
@@ -269,8 +269,8 @@ export default function OverviewPage() {
                       />
                       <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
                         <Clock className="h-3.5 w-3.5" />
-                        {warWindow.end
-                          ? `${formatDuration(warWindow.end.getTime() - now.getTime())} remaining`
+                        {warWindow.phaseEnd
+                          ? `${formatDuration(warWindow.phaseEnd.getTime() - now.getTime())} remaining`
                           : 'No timer'}
                       </p>
                     </div>

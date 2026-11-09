@@ -14,7 +14,7 @@ export default function AuthErrorPage() {
       </p>
       <Link
         href="/"
-        className="rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-purple-500"
+        className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
       >
         Return to sign in
       </Link>

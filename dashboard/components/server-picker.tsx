@@ -123,13 +123,14 @@ export default function ServerPicker() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-gradient-to-b from-purple-900/20 to-transparent" />
+    <div className="relative min-h-screen bg-ink-950 text-slate-100">
+      <div className="bg-blueprint pointer-events-none absolute inset-x-0 top-0 h-72 opacity-70" aria-hidden />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-gradient-to-b from-indigo-500/[0.07] to-transparent" />
       <div className="relative mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:py-14">
         <div className="mb-8 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-600">
-              <ShieldAlert className="h-5 w-5" />
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/[0.08] bg-gradient-to-b from-indigo-400/25 to-indigo-600/10 text-indigo-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">
+              <ShieldAlert className="h-4 w-4" />
             </div>
             <span className="text-sm font-bold tracking-wide text-slate-300">
               MONSTER LEGENDS ASSISTANT
@@ -241,7 +242,7 @@ export default function ServerPicker() {
                       key={guild.id}
                       type="button"
                       onClick={() => router.push(`/dashboard/${guild.id}`)}
-                      className="group flex flex-col rounded-2xl border border-slate-800 bg-slate-900/60 p-5 text-left transition-all hover:-translate-y-0.5 hover:border-purple-500/60 hover:bg-slate-900 hover:shadow-xl hover:shadow-purple-950/20"
+                      className="surface group flex flex-col p-5 text-left transition-all hover:-translate-y-0.5 hover:border-white/[0.14]"
                     >
                       <div className="flex items-start gap-3">
                         {guild.icon ? (
@@ -249,10 +250,10 @@ export default function ServerPicker() {
                           <img
                             src={DISCORD_GUILD_ICON(guild.id, guild.icon)}
                             alt=""
-                            className="h-12 w-12 rounded-2xl border border-slate-700 object-cover"
+                            className="h-12 w-12 rounded-xl border border-white/[0.08] object-cover"
                           />
                         ) : (
-                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-700 bg-slate-800">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04]">
                             <Server className="h-6 w-6 text-slate-400" />
                           </div>
                         )}
@@ -260,7 +261,7 @@ export default function ServerPicker() {
                           <p className="truncate font-semibold text-white">{guild.name}</p>
                           <p className="truncate font-mono text-xs text-slate-500">{guild.id}</p>
                         </div>
-                        <ArrowRight className="h-4 w-4 shrink-0 text-slate-600 transition-transform group-hover:translate-x-0.5 group-hover:text-purple-300" />
+                        <ArrowRight className="h-4 w-4 shrink-0 text-slate-600 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-300" />
                       </div>
 
                       <div className="mt-4 flex flex-wrap items-center gap-2">

@@ -167,7 +167,7 @@ export default function RacePage() {
           <div className="flex items-center gap-2">
             {availableChannels.length > 0 && (
               <div className="relative">
-                <select value={channelId} onChange={(e) => router.push(`?channel=${e.target.value}`)} className="appearance-none bg-slate-900 border border-slate-700 text-white text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:border-purple-500">
+                <select value={channelId} onChange={(e) => router.push(`?channel=${e.target.value}`)} className="appearance-none bg-slate-900 border border-slate-700 text-white text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:border-indigo-500">
                   {availableChannels.map(id => <option key={id} value={id}>Team Channel ({id})</option>)}
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
@@ -198,11 +198,11 @@ export default function RacePage() {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <p className="flex items-center gap-2 text-sm font-semibold text-white"><Hand className="h-4 w-4 text-purple-300" /> One For All (OFA)</p>
+                  <p className="flex items-center gap-2 text-sm font-semibold text-white"><Hand className="h-4 w-4 text-indigo-300" /> One For All (OFA)</p>
                   <Badge tone={draft.ofa_done ? 'green' : ofaName ? 'amber' : 'slate'}>{draft.ofa_done ? 'Done' : ofaName ? 'Claimed' : 'Open'}</Badge>
                 </div>
                 <div className="p-3 bg-slate-900 rounded-lg border border-slate-800 text-sm">
-                  {ofaName ? <span>Player <strong className="text-purple-300">{ofaName}</strong> {draft.ofa_done ? 'has completed this.' : 'is working on this.'}</span> : <span className="text-slate-500">Nobody has claimed this yet.</span>}
+                  {ofaName ? <span>Player <strong className="text-indigo-300">{ofaName}</strong> {draft.ofa_done ? 'has completed this.' : 'is working on this.'}</span> : <span className="text-slate-500">Nobody has claimed this yet.</span>}
                 </div>
               </div>
 
@@ -273,7 +273,7 @@ export default function RacePage() {
                 <ul className="divide-y divide-slate-800/50">
                   {logs.map((log) => {
                     const actionMap: Record<string, { label: string, color: string }> = {
-                      ofa_claim: { label: 'Claimed OFA', color: 'text-purple-300' },
+                      ofa_claim: { label: 'Claimed OFA', color: 'text-indigo-300' },
                       ofa_done: { label: 'Completed OFA', color: 'text-emerald-300' },
                       dyp_done: { label: 'Logged DYP', color: 'text-blue-300' },
                       je_done: { label: 'Logged JE', color: 'text-amber-300' },
