@@ -41,3 +41,23 @@ A unified Discord bot and web dashboard designed for Monster Legends alliances t
 *  **If you have any billing issues or need to claim subscription manually, please email to warbot.support@gmail.com
 
 *  Created by [lohit/lohit-byte]
+
+## ⚙️ Bot environment variables
+Set these as process environment variables (Fly secrets / Wispbyte env) or in a
+`.env` file at the repo root. The file is gitignored — never commit it.
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `DISCORD_TOKEN` | yes | Bot login token |
+| `SUPABASE_URL` | yes | Supabase project URL |
+| `SUPABASE_SECRET_KEY` | yes | Service-role key (server-side only, bypasses RLS) |
+| `OCR_SPACE_API_KEY` | for race OCR | ocr.space key used by `!race newnode <image>` |
+| `DASHBOARD_URL` | optional | Link shown in billing notices |
+
+## 🧪 Tests
+The bot tests run fully offline — no Discord/Supabase/OCR keys and no network
+access are needed (fake Discord context + in-memory, FK-aware Supabase stand-in):
+
+```bash
+python -m pytest tests -q
+```
