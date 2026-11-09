@@ -25,15 +25,17 @@ class _Resp:
         self.data = data
 
 
-def _matches(row, filters):
-    return all(str(row.get(col)) == str(val) for col, val in filters)
+def _matches(row, filters, in_filters=()):
+    if not all(str(row.get(col)) == str(val) for col, val in filters):
+        return False
+    return all(str(row.get(col)) in {str(v) for v in vals} for col, vals in in_filters)
 
 
 class FakeDB:
     TABLES = (
         "guilds", "users", "aliases", "warnings", "war_settings", "wars",
         "race_state", "race_sheets", "race_logs", "maze_schedules",
-        "player_ping_settings",
+        "player_ping_settings", "teams", "team_captains", "war_logs",
     )
 
     def __init__(self):
@@ -75,6 +77,7 @@ class _Query:
         self.on_conflict = None
         self.ignore_duplicates = False
         self.filters = []
+        self._in_filters = []
         self._order = None
         self._desc = False
         self._limit = None
@@ -110,6 +113,10 @@ class _Query:
         self.filters.append((col, val))
         return self
 
+    def in_(self, col, values):
+        self._in_filters.append((col, list(values)))
+        return self
+
     def order(self, col, desc=False):
         self._order = col
         self._desc = desc
@@ -124,6 +131,8 @@ class _Query:
         fks = (
             ("aliases", "discord_id", "users", "discord_id"),
             ("warnings", "discord_id", "users", "discord_id"),
+            ("team_captains", "team_id", "teams", "id"),
+            ("team_captains", "discord_id", "users", "discord_id"),
         )
         for table, col, parent, parent_col in fks:
             if self.name == table and row.get(col) is not None:
@@ -139,7 +148,7 @@ class _Query:
     def execute(self):
         rows = self.db.rows(self.name)
         self.db.calls.append((self.name, self.op, self.payload))
-        matched = [r for r in rows if _matches(r, self.filters)]
+        matched = [r for r in rows if _matches(r, self.filters, self._in_filters)]
 
         if self.op == "select":
             res = matched
@@ -352,6 +361,10 @@ class FakeBot:
     def __init__(self):
         self.user = FakeMember(999, "Bot", administrator=False)
         self.guilds = []
+        self.views = []
+
+    def add_view(self, view, message_id=None):
+        self.views.append(view)
 
     def get_guild(self, guild_id):
         for guild in self.guilds:
@@ -409,6 +422,40 @@ def make_ctx(guild_id=100, channel_id=10, author_id=1, display_name="Tester",
     author = FakeMember(author_id, display_name, administrator=administrator, guild=guild)
     guild.members.append(author)
     return FakeCtx(guild=guild, channel=channel, author=author, bot=bot)
+
+
+class FakeInteractionResponse:
+    def __init__(self):
+        self.messages = []
+        self.ephemeral = []
+
+    async def send_message(self, content=None, embed=None, ephemeral=False, **kwargs):
+        self.messages.append((content, embed))
+        self.ephemeral.append(ephemeral)
+
+
+class FakeInteraction:
+    """The slice of ``discord.Interaction`` a button handler touches."""
+
+    def __init__(self, user=None, guild=None, channel=None, channel_id=None):
+        self.user = user or FakeMember(1, "Tester", guild=guild)
+        self.guild = guild
+        self.channel = channel
+        self.channel_id = channel_id if channel_id is not None else getattr(channel, "id", None)
+        self.response = FakeInteractionResponse()
+
+    @property
+    def texts(self):
+        return [content for content, _embed in self.response.messages]
+
+
+class FakeReactionPayload:
+    def __init__(self, guild_id=100, channel_id=10, message_id=1, user_id=1, emoji="❌"):
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.message_id = message_id
+        self.user_id = user_id
+        self.emoji = emoji
 
 
 def call(command, instance, *args, **kwargs):

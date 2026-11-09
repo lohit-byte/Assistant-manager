@@ -105,3 +105,152 @@ async def is_staff_member(m) -> bool:
     role_ids = await asyncio.to_thread(get_staff_role_ids, m.guild.id)
     return any(r.id in role_ids for r in m.roles)
 
+
+_team_cache = {}
+
+
+def get_team_captain_map(guild_id: int) -> dict:
+    """Map each team channel of a guild to the Discord ids of its captains.
+
+    A team has a war channel and/or a race channel; both resolve to the same
+    captain set. Failures (table missing before the migration, network) log and
+    return an empty map so the caller treats everyone as "not a captain" and the
+    global staff path keeps working.
+    """
+    now = time.time()
+    cached = _team_cache.get(guild_id)
+    if cached and now - cached[0] < 60:
+        return cached[1]
+    mapping = {}
+    try:
+        res = supabase.table("teams").select(
+            "id, war_channel_id, race_channel_id").eq("guild_id", guild_id).execute()
+        teams = res.data or []
+        team_ids = [team["id"] for team in teams if team.get("id") is not None]
+        captains_by_team = {}
+        if team_ids:
+            cres = supabase.table("team_captains").select(
+                "team_id, discord_id").in_("team_id", team_ids).execute()
+            for row in cres.data or []:
+                if row.get("discord_id") is None:
+                    continue
+                captains_by_team.setdefault(row.get("team_id"), set()).add(int(row["discord_id"]))
+        for team in teams:
+            captains = captains_by_team.get(team.get("id"))
+            if not captains:
+                continue
+            for key in ("war_channel_id", "race_channel_id"):
+                channel_id = team.get(key)
+                if channel_id is not None:
+                    mapping.setdefault(int(channel_id), set()).update(captains)
+    except Exception as e:
+        # Do not cache a failed lookup as "no captains" for the next minute.
+        print(f"Team captain lookup failed: {e}")
+        return {}
+    _team_cache[guild_id] = (now, mapping)
+    return mapping
+
+
+async def is_team_staff(m, channel_id: int) -> bool:
+    """Staff for one team channel: global staff, or a captain of that team."""
+    if await is_staff_member(m):
+        return True
+    if m.guild is None or channel_id is None:
+        return False
+    captains = await asyncio.to_thread(get_team_captain_map, m.guild.id)
+    try:
+        ids = captains.get(int(channel_id), set())
+    except (TypeError, ValueError):
+        return False
+    return m.id in ids
+
+
+def get_team_role_id(guild_id: int, channel_id: int):
+    """The role configured on the team that owns this war/race channel, if any."""
+    try:
+        res = supabase.table("teams").select(
+            "war_channel_id, race_channel_id, team_role_id"
+        ).eq("guild_id", guild_id).execute()
+        for team in res.data or []:
+            owns_channel = (
+                str(team.get("war_channel_id")) == str(channel_id)
+                or str(team.get("race_channel_id")) == str(channel_id)
+            )
+            if owns_channel:
+                role_id = team.get("team_role_id")
+                return int(role_id) if role_id else None
+    except Exception as e:
+        # A missing teams table (pre-migration) must not block starting a war.
+        print(f"Team role lookup failed: {e}")
+    return None
+
+
+def _rename_entries(items, old: str, new: str):
+    """Rewrite ``{"name": ...}`` entries (or legacy plain strings) in a JSONB list."""
+    changed = False
+    out = []
+    for item in items or []:
+        if isinstance(item, dict) and (item.get("name") or "").strip().lower() == old:
+            item = {**item, "name": new}
+            changed = True
+        elif isinstance(item, str) and item.strip().lower() == old:
+            item = new
+            changed = True
+        out.append(item)
+    return out, changed
+
+
+def _migrate_war_names(guild_id: int, old: str, new: str) -> None:
+    """Move a renamed alias's live war data to the new name for every war row."""
+    try:
+        res = supabase.table("wars").select(
+            "channel_id, attack_counts, missing_list, absent_list"
+        ).eq("guild_id", guild_id).execute()
+    except Exception as e:
+        print(f"Alias war-data migration lookup failed: {e}")
+        return
+    for war in res.data or []:
+        counts = war.get("attack_counts") or {}
+        new_counts, counts_changed = {}, False
+        for key, value in counts.items():
+            if (key or "").lower() == old:
+                new_counts[new] = value
+                counts_changed = True
+            else:
+                new_counts[key] = value
+        missing, missing_changed = _rename_entries(war.get("missing_list"), old, new)
+        absent, absent_changed = _rename_entries(war.get("absent_list"), old, new)
+        if not (counts_changed or missing_changed or absent_changed):
+            continue
+        try:
+            supabase.table("wars").update({
+                "attack_counts": new_counts,
+                "missing_list": missing,
+                "absent_list": absent,
+            }).eq("channel_id", war["channel_id"]).execute()
+        except Exception as e:
+            print(f"Alias war-data migration failed for channel {war.get('channel_id')}: {e}")
+
+
+def rename_alias(guild_id: int, old_name: str, new_name: str):
+    """Rename an alias in place, keeping its current war counts/lists attached.
+
+    Returns a user-facing error message, or ``None`` on success.
+    """
+    old = (old_name or "").strip().lower()
+    new = (new_name or "").strip().lower()
+    if not old or not new:
+        return "❌ Usage: `!alias rename <old> <new>`"
+    existing = supabase.table("aliases").select("alias_name").eq(
+        "guild_id", guild_id).eq("alias_name", old).limit(1).execute()
+    if not existing.data:
+        return f"❌ No alias named `{old}` in this server."
+    duplicate = supabase.table("aliases").select("alias_name").eq(
+        "guild_id", guild_id).eq("alias_name", new).limit(1).execute()
+    if duplicate.data:
+        return f"❌ `{new}` already exists in this server."
+    supabase.table("aliases").update({"alias_name": new}).eq(
+        "guild_id", guild_id).eq("alias_name", old).execute()
+    _migrate_war_names(guild_id, old, new)
+    return None
+

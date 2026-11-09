@@ -11,6 +11,13 @@ def build_overview(is_staff):
     e.add_field(name="🛡️ War", value="`!war status` · `!war missing list`\nType `attacks done` to log your attacks", inline=False)
     e.add_field(name="🏁 Race", value="`!race status` · `!race ofa` · `!race dmp` · `!race je +500k`", inline=False)
     e.add_field(name="🗺️ Maze", value="`!maze status` · `!maze alerts dm|here|off` · `!maze start 7d 6d12h`", inline=False)
+    e.add_field(
+        name="👑 Captains",
+        value=("A team captain can run their team's war and race commands in the team's "
+               "channels (war tracking, lists, `!war attacks`, node/target/sheet selection). "
+               "Server settings, warnings, aliases, sheet uploads and other teams stay staff-only."),
+        inline=False,
+    )
     if is_staff:
         e.add_field(name="🔧 Admin", value="`!alias add @user <name>` · `!alias list` · `!ids` · `!warning`", inline=False)
     e.set_footer(text="Staff-only commands are shown to staff only.")
@@ -23,6 +30,13 @@ def build_topic(topic, is_staff):
         e.add_field(name="Reminders", value=(
             "Channel reminders fire automatically: defence ends 30m, attack starts, 12h, 6h, 3h, 30m, war end. "
             "The 12h reminder mentions only players on the missing list."), inline=False)
+        e.add_field(
+            name="Captains",
+            value=("A team captain can run the team war commands in their team's war channel: "
+                   "start/cancel a war, the live board, the missing/excused lists, "
+                   "`!war attacks`, `!war check` and `!war set role`."),
+            inline=False,
+        )
         if is_staff:
             e.add_field(name="Staff", value=(
                 "`!war defence ends <time>`\n`!war attack ends <time>`\n`!war cancel`\n"
@@ -34,9 +48,17 @@ def build_topic(topic, is_staff):
     if topic == "race":
         e = _embed("🏁 Race Commands", discord.Color.green())
         e.add_field(name="Everyone", value="`!race status`\n`!race ofa` · `!race ofa done`\n`!race dmp`\n`!race je +500k` · `!race je done`", inline=False)
+        e.add_field(
+            name="Captains",
+            value=("A team captain can run the team race commands in their team's race channel: "
+                   "`!race use`, `!race next`, `!race target`, `!race newnode`, `!race set`, "
+                   "`!race sheets`, and OFA approve/cancel/release. Sheet uploads stay staff-only."),
+            inline=False,
+        )
         if is_staff:
             e.add_field(name="Staff", value=(
-                "`!race uploadsheet <name>` (.json/.csv/.tsv) · `!race use <name>`\n`!race next`\n"
+                "`!race uploadsheet <name>` (.json/.csv/.tsv) · `!race use <name>` · `!race use default` (bundled)\n"
+                "`!race sheets` — guild sheets + default (bundled)\n`!race next`\n"
                 "`!race newnode <image>` or `!race newnode 50 hatch | 10 breed`\n"
                 "`!race set <desc|dyp|je|ofa> <value>`\n`!race target <number>`\n"
                 "`!race ofa cancel` · `!race ofa release` · `!race clear`"), inline=False)
@@ -56,7 +78,12 @@ def build_topic(topic, is_staff):
     if topic in ("alias", "aliases"):
         e = _embed("👤 Aliases", discord.Color.orange(), "Aliases link in-game names to Discord users so they aren't pinged by name.")
         if is_staff:
-            e.add_field(name="Commands", value="`!alias add @user <alias>`\n`!alias remove <alias>`\n`!alias list`", inline=False)
+            e.add_field(
+                name="Commands",
+                value=("`!alias add @user <alias>`\n`!alias remove <alias>`\n"
+                       "`!alias rename <old> <new>` — keeps the current war counts/lists\n`!alias list`"),
+                inline=False,
+            )
         else:
             e.description += "\nStaff manage aliases."
         return e

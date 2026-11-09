@@ -5,7 +5,14 @@ import re
 import time
 import asyncio
 from collections import defaultdict
-from database import supabase, is_staff_member, ensure_user, get_staff_role_ids
+from database import (
+    supabase,
+    is_staff_member,
+    is_team_staff,
+    ensure_user,
+    get_staff_role_ids,
+    get_team_role_id,
+)
 
 DEFENCE = ("defence", "defense")
 PHASE = timedelta(hours=24)
@@ -124,6 +131,76 @@ async def check_team_limit(guild_id):
     active = await asyncio.to_thread(supabase.table("wars").select("channel_id").eq("guild_id", guild_id).eq("is_active", True).execute)
     return len(active.data) < max_teams
 
+
+def _entry_name(entry):
+    """Name of a missing/absent list entry (dict ``{"name": ...}`` or legacy str)."""
+    if isinstance(entry, dict):
+        return (entry.get("name") or "").strip().lower()
+    return str(entry or "").strip().lower()
+
+
+def apply_attack(war, alias, delta, required):
+    """Apply one attack report to a war row.
+
+    Pure: returns ``(attack_counts, missing_list)``. The total is capped at
+    ``required`` and floored at 0, and the alias is dropped from the missing
+    list once it reaches the requirement. Missing entries are never re-added
+    here (that is the staff undo path); adding twice therefore removes once.
+    """
+    name = (alias or "").strip().lower()
+    counts = dict(war.get("attack_counts") or {})
+    missing = [dict(m) if isinstance(m, dict) else m for m in (war.get("missing_list") or [])]
+    if not name:
+        return counts, missing
+    try:
+        cap = max(0, int(required or 0))
+    except (TypeError, ValueError):
+        cap = 0
+    current = int(counts.get(name) or 0)
+    new_total = max(0, current + int(delta))
+    if cap:
+        new_total = min(new_total, cap)
+    counts[name] = new_total
+    if cap and new_total >= cap:
+        missing = [entry for entry in missing if _entry_name(entry) != name]
+    return counts, missing
+
+
+def log_attack(guild_id, channel_id, war_start, discord_id, alias, delta, source="self"):
+    """Insert one signed attack report into ``war_logs`` (never raises)."""
+    try:
+        supabase.table("war_logs").insert({
+            "guild_id": guild_id,
+            "channel_id": channel_id,
+            "war_start": war_start,
+            "discord_id": discord_id,
+            "player_name": (alias or "").strip().lower(),
+            "attacks": int(delta),
+            "source": source,
+        }).execute()
+    except Exception as e:
+        print(f"Failed to log war attack: {e}")
+
+
+class AttackView(discord.ui.View):
+    """The persistent "I attacked" button.
+
+    ``timeout=None`` plus the fixed ``custom_id`` let Discord re-attach presses
+    to a button on a board/reminder that was posted before a bot restart, as
+    long as the view is registered again on startup (see cog_load).
+    """
+
+    def __init__(self, cog=None):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(label="✅ I attacked", style=discord.ButtonStyle.success,
+                       custom_id="war:i_attacked")
+    async def i_attacked(self, interaction, button):
+        if self.cog is not None:
+            await self.cog._handle_attack_press(interaction)
+
+
 class WarTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -132,8 +209,24 @@ class WarTracker(commands.Cog):
         self.done_replies = {}  
         self.locks = defaultdict(asyncio.Lock)
         self.board_updated = {}
+        # discord.py >= 2.6 needs a running event loop to build a ui.View, so
+        # the persistent view is created lazily from the async command paths
+        # (cog __init__ runs on the event loop in production, but tests build
+        # the cog synchronously).
+        self._attack_view = None
+
+    @property
+    def attack_view(self):
+        if self._attack_view is None:
+            self._attack_view = AttackView(self)
+        return self._attack_view
+
+    def register_persistent_views(self):
+        """Register the fixed-custom_id views so messages survive a restart."""
+        self.bot.add_view(self.attack_view)
 
     async def cog_load(self):
+        self.register_persistent_views()
         self.bot.loop.create_task(self.restore_events())
 
     def cog_unload(self):
@@ -190,16 +283,19 @@ class WarTracker(commands.Cog):
             return await self.war_attacks(ctx, " ".join(parts))
         if action == "check": return await self.war_check(ctx)
         if action == "set":
-            if not await is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
             if subaction in ("role", "teamrole", "team-role"):
+                if not await is_team_staff(ctx.author, ctx.channel.id):
+                    return await ctx.send("❌ Staff only.")
                 return await self.set_team_role(ctx, args)
+            if not await is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
             if subaction == "attacks" and args and args.strip().isdigit():
                 await asyncio.to_thread(supabase.table("war_settings").upsert({"guild_id": ctx.guild.id, "attacks_required": int(args)}, on_conflict="guild_id").execute)
                 return await ctx.send(f"✅ Required attacks updated to **{args.strip()}**.")
             return await ctx.send("Usage: `!war set attacks <number>` or `!war set role @Role`")
             
         if action in ("defence", "defense", "attack"):
-            if not await is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
+            if not await is_team_staff(ctx.author, ctx.channel.id):
+                return await ctx.send("❌ Staff only.")
             if subaction != "ends" or not args: return await ctx.send(f"Usage: `!war {action} ends <time>`")
             return await self.start_timer(ctx, action, args)
 
@@ -241,10 +337,14 @@ class WarTracker(commands.Cog):
                 war_data["attack_counts"] = {}
                 war_data["status_message_id"] = None
                 # A team's channel keeps its role across wars: the staff member
-                # configured it once for this channel, not for one war.
-                war_data["team_role_id"] = (
-                    existing_war.get("team_role_id") if existing_war else None
-                )
+                # configured it once for this channel, not for one war. An
+                # existing wars.team_role_id still wins; a fresh channel falls
+                # back to the team settings (configured from the dashboard).
+                team_role_id = existing_war.get("team_role_id") if existing_war else None
+                if not team_role_id:
+                    team_role_id = await asyncio.to_thread(
+                        get_team_role_id, ctx.guild.id, ctx.channel.id)
+                war_data["team_role_id"] = team_role_id
                 # Starting mid-war: don't fire reminders whose window already
                 # passed by more than the grace period.
                 initial = _initial_sent(war_end, now)
@@ -281,7 +381,8 @@ class WarTracker(commands.Cog):
 
     async def war_board(self, ctx, subaction):
         """Create/refresh the live board, or stop it with `!war board stop`."""
-        if not await is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
+        if not await is_team_staff(ctx.author, ctx.channel.id):
+            return await ctx.send("❌ Staff only.")
         sub = (subaction or "").lower()
         war = await get_war(ctx.channel.id)
         if sub in ("stop", "off", "remove", "delete"):
@@ -354,13 +455,13 @@ class WarTracker(commands.Cog):
         )
         return (" ".join(parts) if parts else None), allowed
 
-    async def _send_ping(self, channel, content, embed=None, war=None, allow_users=False, channel_ping=True):
+    async def _send_ping(self, channel, content, embed=None, war=None, allow_users=False, channel_ping=True, view=None):
         prefix, allowed = self._announcement_mentions(
             channel, war, allow_users=allow_users, channel_ping=channel_ping)
         if prefix:
             content = f"{prefix} {content}" if content else prefix
         try:
-            await channel.send(content=content, embed=embed, allowed_mentions=allowed)
+            await channel.send(content=content, embed=embed, allowed_mentions=allowed, view=view)
         except (discord.HTTPException, AttributeError, TypeError) as e:
             print(f"War announcement failed in {getattr(channel, 'id', '?')}: {e}")
 
@@ -455,9 +556,10 @@ class WarTracker(commands.Cog):
     async def announce_attack(self, channel, start, war):
         await self._send_ping(
             channel,
-            "⚔️ **Attack phase started!** Use `attacks done` after attacking.",
+            "⚔️ **Attack phase started!** Use `attacks done` or the **✅ I attacked** button after attacking.",
             self.build_embed(war, channel=channel, title_prefix="⚔️ **Attack phase started!**"),
             war=war,
+            view=self.attack_view,
         )
 
     async def send_reminder(self, channel, war, start, key, label):
@@ -470,9 +572,9 @@ class WarTracker(commands.Cog):
             mentions = await self._missing_mentions(war)
             content = "⏱️ **12 hours left!** "
             if mentions:
-                content += "Missing attacks: " + ", ".join(mentions) + " — use `attacks done` after you attack."
+                content += "Missing attacks: " + ", ".join(mentions) + " — use `attacks done` or the **✅ I attacked** button after you attack."
             else:
-                content += "Use `attacks done` after you attack."
+                content += "Use `attacks done` or the **✅ I attacked** button after you attack."
             embed = discord.Embed(
                 title="⏱️ 12 hours left in the war",
                 description=(
@@ -484,6 +586,7 @@ class WarTracker(commands.Cog):
             await self._send_ping(
                 channel, content, embed, war=war,
                 allow_users=bool(mentions), channel_ping=False,
+                view=self.attack_view,
             )
             return
 
@@ -492,9 +595,10 @@ class WarTracker(commands.Cog):
         embed.description = (
             f"**War ends:** <t:{war_ts}:R>\n"
             f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}\n"
-            "Use `attacks done` after attacking."
+            "Use `attacks done` or the **✅ I attacked** button after attacking."
         )
-        await self._send_ping(channel, f"⏰ **{label}**", embed, war=war)
+        await self._send_ping(channel, f"⏰ **{label}**", embed, war=war,
+                              view=self.attack_view)
 
     async def _missing_mentions(self, war):
         missing = war.get("missing_list") or []
@@ -602,14 +706,14 @@ class WarTracker(commands.Cog):
         if message_id:
             try:
                 message = await channel.fetch_message(int(message_id))
-                await message.edit(embed=embed)
+                await message.edit(embed=embed, view=self.attack_view)
                 return
             except (discord.NotFound, discord.Forbidden, discord.HTTPException,
                     AttributeError, TypeError):
                 pass  # message deleted or bot lacks access -> post a fresh one
 
         try:
-            message = await channel.send(embed=embed)
+            message = await channel.send(embed=embed, view=self.attack_view)
         except (discord.HTTPException, AttributeError, TypeError) as e:
             print(f"War board could not be posted in {channel_id}: {e}")
             return
@@ -686,7 +790,8 @@ class WarTracker(commands.Cog):
         await ctx.send(embed=self.build_embed(war, channel=ctx.channel))
 
     async def cancel_war(self, ctx):
-        if not await is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
+        if not await is_team_staff(ctx.author, ctx.channel.id):
+            return await ctx.send("❌ Staff only.")
         war = await get_war(ctx.channel.id)
         if not war or not war.get("is_active"): return await ctx.send("ℹ️ No active war here.")
         await self.finish_war(ctx.channel.id, ctx.channel)
@@ -716,6 +821,82 @@ class WarTracker(commands.Cog):
         except Exception as e:
             print(f"Alias lookup failed: {e}")
             return None
+
+    async def _pick_alias(self, guild_id, user_id, missing):
+        """The alias used to log this user's attacks (same rule on text + button).
+
+        A user may hold more than one alias; prefer the one this war's missing
+        list uses so the log lands on the tracked identity.
+        """
+        res = await asyncio.to_thread(
+            supabase.table("aliases").select("alias_name, discord_id")
+            .eq("guild_id", guild_id).execute
+        )
+        mine = [
+            row for row in res.data
+            if str(row.get("discord_id")) == str(user_id)
+        ]
+        if not mine:
+            return None
+        missing_names = {_entry_name(entry) for entry in missing or []}
+        mine.sort(key=lambda row: (row.get("alias_name") or "").lower())
+        return next(
+            (row.get("alias_name") for row in mine
+             if (row.get("alias_name") or "").lower() in missing_names),
+            mine[0].get("alias_name"),
+        )
+
+    async def _reply_ephemeral(self, interaction, content):
+        try:
+            await interaction.response.send_message(content, ephemeral=True)
+        except Exception as e:
+            print(f"Could not answer attack button: {e}")
+
+    async def _handle_attack_press(self, interaction):
+        """One tap on "✅ I attacked": record exactly one attack for the presser."""
+        try:
+            guild = getattr(interaction, "guild", None)
+            user = getattr(interaction, "user", None)
+            channel_id = getattr(interaction, "channel_id", None)
+            if channel_id is None:
+                channel_id = getattr(getattr(interaction, "channel", None), "id", None)
+            if guild is None or user is None or channel_id is None or getattr(user, "bot", False):
+                return
+
+            async with self.locks[channel_id]:
+                war = await get_war(channel_id)
+                if not war or not war.get("is_active"):
+                    return await self._reply_ephemeral(interaction, "ℹ️ No active war here.")
+                cfg = await get_settings(guild.id)
+                required = cfg["attacks_required"]
+                my_alias = await self._pick_alias(
+                    guild.id, user.id, war.get("missing_list") or [])
+                if not my_alias:
+                    return await self._reply_ephemeral(
+                        interaction,
+                        "❌ You don't have an alias yet — ask staff to add you with "
+                        "`!alias add @user <alias>` so your attacks can be tracked.",
+                    )
+                key = my_alias.lower()
+                old_total = int((war.get("attack_counts") or {}).get(key) or 0)
+                counts, missing = apply_attack(war, my_alias, 1, required)
+                new_total = int(counts.get(key) or 0)
+                await asyncio.to_thread(
+                    supabase.table("wars").update(
+                        {"attack_counts": counts, "missing_list": missing})
+                    .eq("channel_id", channel_id).execute
+                )
+                if new_total > old_total:
+                    await asyncio.to_thread(
+                        log_attack, guild.id, channel_id, war.get("war_start"),
+                        user.id, my_alias, new_total - old_total, "self",
+                    )
+            await self._reply_ephemeral(
+                interaction, f"✅ **{my_alias}**: {new_total}/{required} attacks recorded.")
+        except Exception as e:
+            print(f"Attack button failed: {e}")
+            await self._reply_ephemeral(
+                interaction, "❌ Could not record that attack. Try `attacks done`.")
 
     async def _alias_target(self, ctx, raw):
         """Resolve an alias name or an @mention of an aliased member to its row."""
@@ -753,7 +934,7 @@ class WarTracker(commands.Cog):
         sub = (subaction or "list").lower()
         if sub not in ("list", "add", "remove"):
             return await ctx.send("Usage: `!war missing list`, `!war missing add <alias>` or `!war missing remove <alias>`")
-        if sub != "list" and not await is_staff_member(ctx.author):
+        if sub != "list" and not await is_team_staff(ctx.author, ctx.channel.id):
             return await ctx.send("❌ Staff only.")
         async with self.locks[ctx.channel.id]:
             war = await get_war(ctx.channel.id)
@@ -798,7 +979,7 @@ class WarTracker(commands.Cog):
         sub = (subaction or "list").lower()
         if sub not in ("list", "add", "remove"):
             return await ctx.send("Usage: `!war absent list`, `!war absent add <alias>` or `!war absent remove <alias>`")
-        if sub != "list" and not await is_staff_member(ctx.author):
+        if sub != "list" and not await is_team_staff(ctx.author, ctx.channel.id):
             return await ctx.send("❌ Staff only.")
         async with self.locks[ctx.channel.id]:
             war = await get_war(ctx.channel.id)
@@ -839,7 +1020,7 @@ class WarTracker(commands.Cog):
             await ctx.send(f"🏖️ Added `{name}` to excused.")
 
     async def war_attacks(self, ctx, args):
-        if not await is_staff_member(ctx.author):
+        if not await is_team_staff(ctx.author, ctx.channel.id):
             return await ctx.send("❌ Staff only.")
         args = (args or "").strip()
         if not args:
@@ -886,7 +1067,8 @@ class WarTracker(commands.Cog):
         await ctx.send(f"✅ `{name}`: {count}/{required} attacks.")
 
     async def war_check(self, ctx):
-        if not await is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
+        if not await is_team_staff(ctx.author, ctx.channel.id):
+            return await ctx.send("❌ Staff only.")
         war = await get_war(ctx.channel.id)
         if not war: return await ctx.send("ℹ️ No war data found.")
         cfg = await get_settings(ctx.guild.id)
@@ -1004,19 +1186,11 @@ class WarTracker(commands.Cog):
 
             cfg = await get_settings(message.guild.id)
             required = cfg["attacks_required"]
-            counts = war.get("attack_counts") or {}
-            missing = war.get("missing_list") or []
 
             # Aliases are the single player identity: without one, nothing is logged.
-            aliases = await asyncio.to_thread(
-                supabase.table("aliases").select("alias_name, discord_id")
-                .eq("guild_id", message.guild.id).execute
-            )
-            mine = [
-                row for row in aliases.data
-                if str(row.get("discord_id")) == str(message.author.id)
-            ]
-            if not mine:
+            my_alias = await self._pick_alias(
+                message.guild.id, message.author.id, war.get("missing_list") or [])
+            if not my_alias:
                 try:
                     await message.reply(
                         "❌ You don't have an alias yet — ask staff to add you with "
@@ -1027,43 +1201,46 @@ class WarTracker(commands.Cog):
                     pass
                 return
 
-            # A user may hold more than one alias; prefer the one this war's
-            # missing list uses so the log lands on the tracked identity.
-            missing_names = {(m.get("name") or "").lower() for m in missing}
-            mine.sort(key=lambda row: (row.get("alias_name") or "").lower())
-            my_alias = next(
-                (row.get("alias_name") for row in mine
-                 if (row.get("alias_name") or "").lower() in missing_names),
-                mine[0].get("alias_name"),
-            )
-
             key = my_alias.lower()
-            found = next((m for m in missing if (m.get("name") or "").lower() == key), None)
+            was_missing = any(
+                _entry_name(entry) == key for entry in war.get("missing_list") or [])
             m = DONE_RE.search(message.content)
             done = int(m.group(1) or m.group(2) or required)
+            old_total = int((war.get("attack_counts") or {}).get(key) or 0)
 
-            counts[key] = done
-            if done >= required and found:
-                missing.remove(found)
+            # Absolute text count, capped at the requirement: pressing the button
+            # as well can never push the total over the cap.
+            counts, missing = apply_attack(war, my_alias, done - old_total, required)
+            total = int(counts.get(key) or 0)
 
             await asyncio.to_thread(
                 supabase.table("wars").update({"missing_list": missing, "attack_counts": counts})
                 .eq("channel_id", message.channel.id).execute
             )
+            # A lower text count is a correction, not a new attack: never log a
+            # negative delta from the text path (only the staff undo is negative).
+            log_delta = max(0, total - old_total)
+            if log_delta:
+                await asyncio.to_thread(
+                    log_attack, message.guild.id, message.channel.id,
+                    war.get("war_start"), message.author.id, my_alias,
+                    log_delta, "self",
+                )
 
+        completed = required > 0 and total >= required
         try:
             reply = await message.reply(
-                f"✅ **{my_alias}**: {done}/{required} attacks recorded."
-                + (" Staff: react ❌ to undo." if found and done >= required else ""),
+                f"✅ **{my_alias}**: {total}/{required} attacks recorded."
+                + (" Staff: react ❌ to undo." if completed and was_missing else ""),
                 mention_author=False,
             )
         except discord.HTTPException as e:
             print(f"Could not reply to attack log in {message.channel.id}: {e}")
             return
-        if found and done >= required:
+        if completed and was_missing:
             if len(self.done_replies) > 500:
                 self.done_replies.pop(next(iter(self.done_replies)), None)
-            self.done_replies[reply.id] = dict(found)
+            self.done_replies[reply.id] = {"name": my_alias, "id": message.author.id}
             try:
                 await reply.add_reaction("❌")
             except discord.HTTPException as e:
@@ -1081,20 +1258,26 @@ class WarTracker(commands.Cog):
         if not name: return
         guild = self.bot.get_guild(payload.guild_id)
         reactor = guild.get_member(payload.user_id) if guild else None
-        if not reactor or not await is_staff_member(reactor): return
+        if not reactor or not await is_team_staff(reactor, payload.channel_id): return
 
         async with self.locks[payload.channel_id]:
             war = await get_war(payload.channel_id)
             if not war or not war.get("is_active"): return
             missing = war.get("missing_list") or []
-            counts = war.get("attack_counts") or {}
-            if not any((m.get("name") or "").lower() == name for m in missing):
+            counts = dict(war.get("attack_counts") or {})
+            old_total = int(counts.get(name) or 0)
+            if not any(_entry_name(m) == name for m in missing):
                 # Keep the stored Discord id so the reminder mentions survive
                 # an alias rename.
-                missing.append(dict(entry))
+                missing = list(missing) + [dict(entry)]
                 counts[name] = 0
                 await asyncio.to_thread(supabase.table("wars").update({"missing_list": missing, "attack_counts": counts}).eq("channel_id", payload.channel_id).execute)
-            
+                if old_total:
+                    await asyncio.to_thread(
+                        log_attack, payload.guild_id, payload.channel_id,
+                        war.get("war_start"), reactor.id, name, -old_total, "undo",
+                    )
+
         self.done_replies.pop(payload.message_id, None)
         channel = self.bot.get_channel(payload.channel_id)
         if channel: await channel.send(f"↩️ **{name}** re-added to missing by {reactor.display_name}.")
@@ -1113,7 +1296,7 @@ class WarTracker(commands.Cog):
             ),
             inline=False,
         )
-        embed.add_field(name="Public", value="`!war status` — live-style board with countdowns + ping schedule\n`!war missing list`\n`attacks done` (uses your alias)", inline=False)
+        embed.add_field(name="Public", value="`!war status` — live-style board with countdowns + ping schedule\n`!war missing list`\n`attacks done` or the **✅ I attacked** button (uses your alias)", inline=False)
         if is_staff: embed.add_field(name="Staff", value="`!war defence ends <time>`\n`!war attack ends <time>`\n`!war cancel`\n`!war missing add|remove <alias>`\n`!war absent add|remove <alias>`\n`!war attacks <alias> <count>`\n`!war check`\n`!war board` — live updating board\n`!war set role @Role` — role pinged by this channel's announcements\n`!war warning add @user <reason>`", inline=False)
         await ctx.send(embed=embed)
 

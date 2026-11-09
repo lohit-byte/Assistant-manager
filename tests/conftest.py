@@ -75,6 +75,7 @@ def clean_db():
     try:
         import database
         database._role_cache.clear()
+        database._team_cache.clear()
     except Exception:
         pass
     yield DB

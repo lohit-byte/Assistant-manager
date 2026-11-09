@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from database import supabase, is_staff_member, ensure_user
+from database import supabase, is_staff_member, ensure_user, rename_alias
 import asyncio
 
 class Admin(commands.Cog):
@@ -10,7 +10,7 @@ class Admin(commands.Cog):
     @commands.command(name="alias")
     @commands.guild_only()
     async def alias_group(self, ctx, action: str = None, *, args: str = None):
-        """Manage player aliases. Usage: !alias add @user Sam | !alias remove Sam | !alias list"""
+        """Manage player aliases. Usage: !alias add @user Sam | !alias remove Sam | !alias rename <old> <new> | !alias list"""
         if not await is_staff_member(ctx.author):
             return await ctx.send("❌ Only Admins can manage aliases.")
 
@@ -42,7 +42,7 @@ class Admin(commands.Cog):
 
         if not action or not args:
             return await ctx.send(
-                "Usage: `!alias add @user <alias>`, `!alias remove <alias>` or `!alias list`"
+                "Usage: `!alias add @user <alias>`, `!alias remove <alias>`, `!alias rename <old> <new>` or `!alias list`"
             )
 
         if action == "add":
@@ -87,9 +87,26 @@ class Admin(commands.Cog):
                 await ctx.send(f"✅ Removed alias `{alias_name}`.")
             except Exception as e:
                 await ctx.send(f"❌ Database error: {e}")
+
+        elif action == "rename":
+            parts = args.split()
+            if len(parts) != 2:
+                return await ctx.send("Usage: `!alias rename <old> <new>`")
+            try:
+                error = await asyncio.to_thread(
+                    rename_alias, ctx.guild.id, parts[0], parts[1]
+                )
+            except Exception as e:
+                return await ctx.send(f"❌ Database error: {e}")
+            if error:
+                return await ctx.send(error)
+            old_name, new_name = parts[0].strip().lower(), parts[1].strip().lower()
+            await ctx.send(
+                f"✅ Renamed `{old_name}` to `{new_name}` — current war counts and lists moved too."
+            )
         else:
             await ctx.send(
-                "Usage: `!alias add @user <alias>`, `!alias remove <alias>` or `!alias list`"
+                "Usage: `!alias add @user <alias>`, `!alias remove <alias>`, `!alias rename <old> <new>` or `!alias list`"
             )
 
     @commands.command(name="ids")

@@ -5,7 +5,8 @@ import csv
 import io
 import re
 import json
-from database import supabase, check_premium_status, is_staff_member
+from database import supabase, check_premium_status, is_staff_member, is_team_staff
+from node_sheet import bundled_sheet, parse_nodesheet
 from ocr_engine import process_race_image
 
 NODES_PER_LAP = 5
@@ -122,13 +123,21 @@ async def get_alias(guild_id, user_id, default_name):
     res = await asyncio.to_thread(supabase.table("aliases").select("alias_name").eq("guild_id", guild_id).eq("discord_id", user_id).limit(1).execute)
     return res.data[0]["alias_name"] if res.data else default_name
 
-async def log_race_action(guild_id, user_id, player_name, action_type):
+async def log_race_action(guild_id, user_id, player_name, action_type,
+                         channel_id=None, lap=None, node=None):
+    """Record a race action; channel/lap/node scope it to one team's node."""
     try:
         await asyncio.to_thread(supabase.table("race_logs").insert({
-            "guild_id": guild_id, "discord_id": user_id, "player_name": player_name, "action_type": action_type
+            "guild_id": guild_id, "discord_id": user_id, "player_name": player_name,
+            "action_type": action_type, "channel_id": channel_id, "lap": lap, "node": node,
         }).execute)
     except Exception as e:
         print(f"Failed to log race action: {e}")
+
+
+def _is_default_sheet(name):
+    """True for "use the bundled sheet": unset, ``default`` or ``bundled``."""
+    return str(name or "").strip().lower() in ("", "default", "bundled")
 
 def _race_channel_in_use(row):
     # Only a cleared channel frees its team slot; a target-only row still counts.
@@ -175,10 +184,21 @@ class RaceTracker(commands.Cog):
         if action in ("ofa", "dmp", "dyp", "je"): 
             return await self.handle_task(ctx, action, subaction, args)
 
-        # STAFF ONLY
-        if not await is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
+        # Guild-level staff only: uploading a sheet changes the whole server's
+        # sheet library, and `clear` resets a team's node (kept guild-level).
+        if action in ("uploadsheet", "clear"):
+            if not await is_staff_member(ctx.author):
+                return await ctx.send("❌ Staff only.")
+        elif action in ("sheets", "use", "next", "target", "newnode", "set"):
+            # Team powers: global staff, or the captain of the team whose race
+            # channel this is.
+            if not await is_team_staff(ctx.author, ctx.channel.id):
+                return await ctx.send("❌ Staff only.")
+        else:
+            return await ctx.send("❌ Unknown race action. Use `!race help`.")
 
         if action == "uploadsheet": return await self.upload_sheet(ctx, args)
+        if action == "sheets": return await self.list_sheets(ctx)
         if action == "use": return await self.use_sheet(ctx, args)
         if action == "next": return await self.advance_node_auto(ctx)
         
@@ -227,49 +247,97 @@ class RaceTracker(commands.Cog):
             return await ctx.send(f"❌ File must be UTF-8 text: {e}")
         try:
             if filename.endswith(".json"):
-                data = json.loads(text)
+                data, warnings = parse_nodesheet(json.loads(text))
             else:
-                data = parse_sheet_csv(text, delimiter="\t" if filename.endswith(".tsv") else None)
+                data, warnings = parse_nodesheet(
+                    parse_sheet_csv(text, delimiter="\t" if filename.endswith(".tsv") else None)
+                )
         except (json.JSONDecodeError, ValueError, csv.Error) as e:
             return await ctx.send(f"❌ Failed to parse sheet: {e}")
-        if not isinstance(data, dict) or not data:
-            return await ctx.send("❌ Invalid sheet: expected rows keyed by `lap.node`.")
-        for key, node in data.items():
-            if not isinstance(node, dict) or not {"ofa", "dyp", "je"} <= set(node):
-                return await ctx.send(
-                    f"❌ Invalid sheet: node `{key}` must contain `ofa`, `dyp` and `je` keys."
-                )
+        if not data:
+            skipped = f" ({len(warnings)} malformed node(s) skipped)" if warnings else ""
+            return await ctx.send(
+                "❌ Invalid sheet: expected rows keyed by `lap.node` with `ofa`, `dyp` and `je`."
+                + skipped
+            )
         try:
             await asyncio.to_thread(supabase.table("race_sheets").upsert({"guild_id": ctx.guild.id, "name": name, "data": data}, on_conflict="guild_id,name").execute)
-            await ctx.send(f"✅ Sheet **{name}** uploaded successfully with **{len(data)}** nodes ({filename.rsplit(chr(46), 1)[-1].upper()}).")
+            message = (f"✅ Sheet **{name}** uploaded successfully with **{len(data)}** nodes "
+                       f"({filename.rsplit(chr(46), 1)[-1].upper()}).")
+            if warnings:
+                message += f" {len(warnings)} malformed node(s) skipped."
+            await ctx.send(message)
         except Exception as e: await ctx.send(f"❌ Database error: {e}")
 
     async def use_sheet(self, ctx, name):
-        if not name: return await ctx.send("Usage: `!race use <name>`")
+        if not name:
+            return await ctx.send("Usage: `!race use <name>` (`default` uses the bundled sheet)")
+        if _is_default_sheet(name):
+            if bundled_sheet() is None:
+                return await ctx.send(
+                    "❌ No bundled sheet found on the bot host. "
+                    "Upload one with `!race uploadsheet <name>`."
+                )
+            await asyncio.to_thread(supabase.table("race_state").upsert({
+                "channel_id": ctx.channel.id, "guild_id": ctx.guild.id,
+                "active_race_sheet": "default",
+            }, on_conflict="channel_id").execute)
+            return await ctx.send("✅ Now using the **default (bundled)** sheet.")
         res = await asyncio.to_thread(supabase.table("race_sheets").select("id").eq("guild_id", ctx.guild.id).eq("name", name).execute)
         if not res.data: return await ctx.send(f"❌ Sheet `{name}` not found.")
         await asyncio.to_thread(supabase.table("race_state").upsert({"channel_id": ctx.channel.id, "guild_id": ctx.guild.id, "active_race_sheet": name}, on_conflict="channel_id").execute)
         await ctx.send(f"✅ Now using sheet **{name}**.")
 
+    async def list_sheets(self, ctx):
+        """List the guild's sheets plus the bundled default."""
+        state = await get_race(ctx.channel.id)
+        active = (state or {}).get("active_race_sheet")
+        try:
+            res = await asyncio.to_thread(
+                supabase.table("race_sheets").select("name").eq("guild_id", ctx.guild.id).execute
+            )
+        except Exception as e:
+            return await ctx.send(f"❌ Database error: {e}")
+        names = sorted({row.get("name") for row in res.data or [] if row.get("name")})
+        lines = [f"• **{name}**" + (" ← active" if name == active else "") for name in names]
+        bundled = bundled_sheet()
+        marker = ""
+        if _is_default_sheet(active):
+            marker = " ← active" if active else " ← active (fallback)"
+        note = "" if bundled else " (not found on the bot host)"
+        lines.append(f"• **default (bundled)**{note}{marker}")
+        await ctx.send("📚 **Race sheets**\n" + "\n".join(lines))
+
     async def advance_node_auto(self, ctx):
         state = await get_race(ctx.channel.id)
-        if not state or not state.get('active_race_sheet'): return await ctx.send("❌ No active sheet set. Use `!race use <name>` first.")
-        sheet_name = state['active_race_sheet']
-        
+        if not state:
+            return await ctx.send("ℹ️ No race data found.")
+        sheet_name = state.get('active_race_sheet')
+        if _is_default_sheet(sheet_name):
+            label = "default (bundled)"
+            sheet_data = bundled_sheet()
+            if sheet_data is None:
+                return await ctx.send(
+                    "❌ No active sheet set and no bundled sheet found. "
+                    "Use `!race use <name>` first."
+                )
+        else:
+            label = sheet_name
+            res = await asyncio.to_thread(supabase.table("race_sheets").select("data").eq("guild_id", ctx.guild.id).eq("name", sheet_name).execute)
+            sheet_data = res.data[0].get("data") if res.data else None
+            if not isinstance(sheet_data, dict):
+                return await ctx.send(f"❌ Sheet **{sheet_name}** has invalid data. Re-upload it.")
+
         new_node = (state.get('current_node') or 0) + 1
         new_lap = state.get('current_lap') or 0
         if new_node > NODES_PER_LAP: new_node, new_lap = 1, new_lap + 1
         node_key = f"{new_lap}.{new_node}"
 
-        res = await asyncio.to_thread(supabase.table("race_sheets").select("data").eq("guild_id", ctx.guild.id).eq("name", sheet_name).execute)
-        sheet_data = res.data[0].get("data") if res.data else None
-        if not isinstance(sheet_data, dict):
-            return await ctx.send(f"❌ Sheet **{sheet_name}** has invalid data. Re-upload it.")
-        if node_key not in sheet_data: return await ctx.send(f"❌ Node `{node_key}` not found in sheet **{sheet_name}**. Are you at the end?")
+        if node_key not in sheet_data: return await ctx.send(f"❌ Node `{node_key}` not found in sheet **{label}**. Are you at the end?")
 
         node_info = sheet_data[node_key]
         if not isinstance(node_info, dict) or not {"ofa", "dyp", "je"} <= set(node_info):
-            return await ctx.send(f"❌ Node `{node_key}` in sheet **{sheet_name}** is missing `ofa`, `dyp` or `je`.")
+            return await ctx.send(f"❌ Node `{node_key}` in sheet **{label}** is missing `ofa`, `dyp` or `je`.")
         ofa_t, dyp_t, je_t = node_info['ofa'], node_info['dyp'], node_info['je']
         
         # SMARTER DYP PARSING (Looks for "10 members" first)
@@ -283,7 +351,7 @@ class RaceTracker(commands.Cog):
 
         desc = f"OFA: {ofa_t} | DYP: {dyp_t} | JE: {je_t}"
         await self._save_new_node(ctx, new_lap, new_node, ofa_t, dyp_target, je_t, desc, 0, "0")
-        await ctx.send(f"📖 Loaded **{node_key}** from sheet **{sheet_name}**.")
+        await ctx.send(f"📖 Loaded **{node_key}** from sheet **{label}**.")
 
     async def advance_node_manual(self, ctx, args):
         state = await get_race(ctx.channel.id)
@@ -355,10 +423,12 @@ class RaceTracker(commands.Cog):
                 return await ctx.send("❌ No active node.")
             
             display_name = await get_alias(ctx.guild.id, ctx.author.id, ctx.author.display_name)
+            lap, node = state.get('current_lap'), state.get('current_node')
 
             if action == "ofa":
                 if subaction in ("cancel", "release"):
-                    if not await is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
+                    if not await is_team_staff(ctx.author, ctx.channel.id):
+                        return await ctx.send("❌ Staff only.")
                     fields = {"pending_ofa_message_id": None, "pending_ofa_user_id": None}
                     if subaction == "release":
                         # Let staff hand the OFA slot back without losing the node.
@@ -367,10 +437,11 @@ class RaceTracker(commands.Cog):
                     return await ctx.send("✅ OFA released." if subaction == "release" else "✅ Pending OFA claim cancelled.")
                     
                 if subaction == "done":
-                    if not state.get('ofa_holder_id') or (ctx.author.id != state['ofa_holder_id'] and not await is_staff_member(ctx.author)): 
+                    if not state.get('ofa_holder_id') or (ctx.author.id != state['ofa_holder_id'] and not await is_team_staff(ctx.author, ctx.channel.id)): 
                         return await ctx.send("❌ You don't hold OFA.")
                     await asyncio.to_thread(supabase.table("race_state").update({"ofa_done": True}).eq("channel_id", ctx.channel.id).execute)
-                    await log_race_action(ctx.guild.id, ctx.author.id, display_name, "ofa_done")
+                    await log_race_action(ctx.guild.id, ctx.author.id, display_name, "ofa_done",
+                                        channel_id=ctx.channel.id, lap=lap, node=node)
                     return await ctx.send(f"🎉 **OFA marked as COMPLETED** by {display_name}!")
                     
                 if state.get('ofa_holder_id') or state.get('pending_ofa_message_id'): 
@@ -392,7 +463,8 @@ class RaceTracker(commands.Cog):
                 new_prog = min(progress + 1, target)
                 contribs.append(str(ctx.author.id))
                 await asyncio.to_thread(supabase.table("race_state").update({"dyp_progress": new_prog, "dyp_contributors": contribs}).eq("channel_id", ctx.channel.id).execute)
-                await log_race_action(ctx.guild.id, ctx.author.id, display_name, "dyp_done")
+                await log_race_action(ctx.guild.id, ctx.author.id, display_name, "dyp_done",
+                                        channel_id=ctx.channel.id, lap=lap, node=node)
                 
                 if new_prog >= target: 
                     await ctx.send(f"🎉 **DYP Target Reached!** ({new_prog}/{target})")
@@ -403,7 +475,8 @@ class RaceTracker(commands.Cog):
                 if not args: return await ctx.send("Usage: `!race je +500k` or `!race je done`")
                 if args.lower() == "done":
                     await asyncio.to_thread(supabase.table("race_state").update({"je_done": True, "je_progress": state.get('je_target')}).eq("channel_id", ctx.channel.id).execute)
-                    await log_race_action(ctx.guild.id, ctx.author.id, display_name, "je_done")
+                    await log_race_action(ctx.guild.id, ctx.author.id, display_name, "je_done",
+                                        channel_id=ctx.channel.id, lap=lap, node=node)
                     return await ctx.send(f"🎉 **JE completed** by {display_name}!")
                 if args.startswith("+"):
                     try:
@@ -429,7 +502,8 @@ class RaceTracker(commands.Cog):
                         done = False
                         target_label = str(state.get('je_target') or "target not set")
                     await asyncio.to_thread(supabase.table("race_state").update({"je_progress": format_amount(new_val), "je_done": done}).eq("channel_id", ctx.channel.id).execute)
-                    await log_race_action(ctx.guild.id, ctx.author.id, display_name, "je_add")
+                    await log_race_action(ctx.guild.id, ctx.author.id, display_name, "je_add",
+                                        channel_id=ctx.channel.id, lap=lap, node=node)
                     await ctx.send(f"✅ JE logged for **{display_name}**. Progress: `{format_amount(new_val)}/{target_label}`")
                     if done: await ctx.send("🎉 **JE Target Reached!**")
 
@@ -497,7 +571,8 @@ class RaceTracker(commands.Cog):
         if is_staff: 
             embed.add_field(name="Staff Commands", value=(
                 "`!race uploadsheet <name>`\n"
-                "`!race use <name>`\n"
+                "`!race use <name>` · `!race use default` (bundled)\n"
+                "`!race sheets` — guild sheets + default (bundled)\n"
                 "`!race next`\n"
                 "`!race newnode <image>`\n"
                 "`!race newnode 50 hatch | 10 breed | 5 craft`\n"
@@ -514,7 +589,7 @@ class RaceTracker(commands.Cog):
         
         guild = self.bot.get_guild(payload.guild_id)
         reactor = guild.get_member(payload.user_id) if guild else None
-        if not reactor or not await is_staff_member(reactor): return
+        if not reactor or not await is_team_staff(reactor, payload.channel_id): return
 
         is_premium = await asyncio.to_thread(check_premium_status, guild.id)
         if not is_premium: return
@@ -540,7 +615,9 @@ class RaceTracker(commands.Cog):
                         "ofa_holder_id": user_id, "ofa_done": False,
                         "pending_ofa_message_id": None, "pending_ofa_user_id": None
                     }).eq("channel_id", payload.channel_id).execute)
-                    await log_race_action(payload.guild_id, user_id, display_name, "ofa_claim")
+                    await log_race_action(payload.guild_id, user_id, display_name, "ofa_claim",
+                                          channel_id=payload.channel_id,
+                                          lap=state.get('current_lap'), node=state.get('current_node'))
                     await channel.send(f"✅ OFA locked for **{display_name}**!")
             else:
                 await asyncio.to_thread(supabase.table("race_state").update({
