@@ -60,11 +60,18 @@ async def get_war(channel_id):
 
 async def get_settings(guild_id):
     res = await asyncio.to_thread(supabase.table("war_settings").select("*").eq("guild_id", guild_id).limit(1).execute)
-    return {"attacks_required": 6, "exempt_absent": True, **(res.data[0] if res.data else {})}
+    settings = {"attacks_required": 6, "exempt_absent": True}
+    if res.data:
+        row = res.data[0]
+        if row.get("attacks_required") is not None:
+            settings["attacks_required"] = int(row["attacks_required"])
+        if row.get("exempt_absent") is not None:
+            settings["exempt_absent"] = bool(row["exempt_absent"])
+    return settings
 
 async def check_team_limit(guild_id):
     res = await asyncio.to_thread(supabase.table("guilds").select("max_teams").eq("guild_id", guild_id).execute)
-    max_teams = res.data[0].get("max_teams", 1) if res.data else 1
+    max_teams = (res.data[0].get("max_teams") if res.data else None) or 1
     active = await asyncio.to_thread(supabase.table("wars").select("channel_id").eq("guild_id", guild_id).eq("is_active", True).execute)
     return len(active.data) < max_teams
 

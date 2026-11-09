@@ -77,7 +77,7 @@ async def log_race_action(guild_id, user_id, player_name, action_type):
 
 async def check_team_limit(guild_id):
     res = await asyncio.to_thread(supabase.table("guilds").select("max_teams").eq("guild_id", guild_id).execute)
-    max_teams = res.data[0].get("max_teams", 1) if res.data else 1
+    max_teams = (res.data[0].get("max_teams") if res.data else None) or 1
     active = await asyncio.to_thread(
         supabase.table("race_state")
         .select("channel_id, task_description, is_event_active")
@@ -446,6 +446,8 @@ class RaceTracker(commands.Cog):
             
             channel = self.bot.get_channel(payload.channel_id)
             user_id = state.get('pending_ofa_user_id')
+            if not user_id:
+                return
             display_name = await get_alias(payload.guild_id, user_id, f"<@{user_id}>")
             
             if str(payload.emoji) == "✅":
