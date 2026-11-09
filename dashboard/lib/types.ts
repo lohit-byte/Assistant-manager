@@ -43,6 +43,7 @@ export interface War {
   attack_counts: Record<string, number> | null
   is_active: boolean | null
   status_message_id: Id | null
+  team_role_id: Id | null
 }
 
 export interface RaceState {

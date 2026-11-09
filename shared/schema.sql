@@ -74,6 +74,7 @@ CREATE TABLE wars (
     attack_counts JSONB DEFAULT '{}'::jsonb, -- { "sam": 6 }
     status_message_id BIGINT, -- live war board message; NULL = auto-create, -1 = stopped by staff
     sent_pings JSONB DEFAULT '[]'::jsonb, -- reminder keys already sent, e.g. ["hours_12"]
+    team_role_id BIGINT, -- role pinged by announcements in this team's war channel
     is_active BOOLEAN DEFAULT TRUE
 );
 
@@ -145,6 +146,7 @@ CREATE TABLE player_ping_settings (
 -- MIGRATIONS for existing databases (safe to run repeatedly)
 -- ============================================================================
 ALTER TABLE wars ADD COLUMN IF NOT EXISTS sent_pings JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE wars ADD COLUMN IF NOT EXISTS team_role_id BIGINT;
 ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS ping_mention TEXT DEFAULT 'here';
 ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS ping_role_id BIGINT;
 ALTER TABLE player_ping_settings ADD COLUMN IF NOT EXISTS maze_alert_mode TEXT DEFAULT 'here';

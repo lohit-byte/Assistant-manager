@@ -70,7 +70,8 @@ export default function WarPage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<Feedback>(null)
 
-  const [missingInput, setMissingInput] = useState('')
+  const [missingAlias, setMissingAlias] = useState('')
+  const [teamRole, setTeamRole] = useState('')
   const [warningId, setWarningId] = useState('')
   const [warningReason, setWarningReason] = useState('')
 
@@ -110,6 +111,7 @@ export default function WarPage() {
           setWar(nextWar)
           if (nextWar) {
             setCounts(Object.fromEntries(Object.entries(nextWar.attack_counts ?? {}).map(([name, value]) => [name.toLowerCase(), String(value)])))
+            setTeamRole(nextWar.team_role_id ? String(nextWar.team_role_id) : '')
           }
         }
       } catch (caught) {
@@ -142,6 +144,27 @@ export default function WarPage() {
       await saveWarSettings(createClient(), guildId, { attacks_required: settings.attacks_required, exempt_absent: settings.exempt_absent })
       setFeedback({ tone: 'green', text: 'War settings saved.' })
     } catch (caught) { setFeedback({ tone: 'red', text: 'Could not save.' }) } finally { setBusy(null) }
+  }
+
+  const saveTeamRole = async () => {
+    if (!channelId || !war) return
+    const roleId = teamRole.trim()
+    if (roleId && !isSnowflake(roleId)) {
+      return setFeedback({ tone: 'red', text: 'Enter a valid Discord role ID (17–20 digits), or leave it empty.' })
+    }
+    setBusy('team-role')
+    try {
+      await updateWar(createClient(), channelId, { team_role_id: roleId || null })
+      setWar(await getWar(createClient(), channelId))
+      setFeedback({
+        tone: 'green',
+        text: roleId ? 'Team role saved — announcements in this channel will ping it.' : 'Team role cleared.',
+      })
+    } catch (caught) {
+      setFeedback({ tone: 'red', text: 'Could not save the team role.' })
+    } finally {
+      setBusy(null)
+    }
   }
 
   const submitWarning = async () => {
@@ -237,18 +260,66 @@ export default function WarPage() {
               {war && war.is_active && (
                 <>
                   <Card>
+                    <CardHeader
+                      title="Announcements (this channel)"
+                      description="Pings are only sent for war announcements."
+                      icon={<Users className="h-5 w-5" />}
+                    />
+                    <CardBody className="space-y-3">
+                      {readOnly ? (
+                        <p className="text-sm text-slate-400">
+                          Team role: {war.team_role_id ? `ID ${war.team_role_id}` : 'none — @here fallback'}
+                        </p>
+                      ) : (
+                        <>
+                          <Field
+                            label="Team role ID"
+                            hint="Announcements in this channel ping this role instead of @here. Leave empty to clear."
+                          >
+                            <TextInput
+                              value={teamRole}
+                              onChange={(e) => setTeamRole(e.target.value)}
+                              placeholder="e.g. 123456789012345678"
+                              inputMode="numeric"
+                            />
+                          </Field>
+                          <Button onClick={saveTeamRole} loading={busy === 'team-role'} className="w-full">
+                            <Save className="h-4 w-4" /> Save Team Role
+                          </Button>
+                        </>
+                      )}
+                    </CardBody>
+                  </Card>
+
+                  <Card>
                     <CardHeader title="Attack Log" description={`Required: ${required} attacks per player`} icon={<Swords className="h-5 w-5" />} />
                     <CardBody className="space-y-4">
                       {readOnly ? null : (
                         <div className="flex flex-col gap-2 sm:flex-row">
-                          <TextInput placeholder="Player alias" value={missingInput} onChange={(e) => setMissingInput(e.target.value)} className="sm:flex-1" />
+                          <select
+                            value={missingAlias}
+                            onChange={(e) => setMissingAlias(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-50 focus:border-accent-500 sm:flex-1"
+                          >
+                            <option value="" disabled>Select a player (alias)...</option>
+                            {aliases.map((alias) => (
+                              <option key={alias.id} value={alias.alias_name.toLowerCase()}>
+                                {alias.alias_name}
+                              </option>
+                            ))}
+                          </select>
                           <Button onClick={() => {
-                            if(!missingInput || !war) return
-                            const nextMissing = [...missing, { name: missingInput.toLowerCase() }]
-                            updateWar(createClient(), channelId, { missing_list: nextMissing }).then(() => { setMissingInput(''); load('refresh') })
+                            if(!missingAlias || !war) return
+                            const alias = aliases.find((a) => a.alias_name.toLowerCase() === missingAlias)
+                            if (!alias) return
+                            const nextMissing = [...missing, { name: missingAlias, id: alias.discord_id }]
+                            updateWar(createClient(), channelId, { missing_list: nextMissing }).then(() => { setMissingAlias(''); load('refresh') })
                           }}>Add Missing</Button>
                         </div>
                       )}
+                      {!readOnly && aliases.length === 0 ? (
+                        <p className="text-xs text-slate-500">Add players with `!alias add @user &lt;alias&gt;` in Discord first.</p>
+                      ) : null}
                       <div className="max-h-[300px] overflow-y-auto">
                         <table className="w-full text-left text-sm">
                           <tbody className="divide-y divide-slate-800">

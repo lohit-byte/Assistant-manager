@@ -41,6 +41,11 @@ def admin_cog():
     return Admin(FakeBot())
 
 
+def seed_alias(db, discord_id, name, guild=GUILD):
+    db.seed("users", {"discord_id": discord_id})
+    db.seed("aliases", {"guild_id": guild, "discord_id": discord_id, "alias_name": name})
+
+
 def seed_war(db, **overrides):
     row = {
         "channel_id": CHANNEL,
@@ -88,6 +93,7 @@ def seed_race(db, **overrides):
 
 def test_war_attacks_pipe_syntax_records_the_name(clean_db):
     db = clean_db
+    seed_alias(db, 200, "sam")
     seed_war(db)
     ctx = make_ctx(channel_id=CHANNEL)
     run(call(WarTracker.war_group, war_cog(), ctx, "attacks", "Sam", args="| 6"))
@@ -99,6 +105,7 @@ def test_war_attacks_pipe_syntax_records_the_name(clean_db):
 
 def test_war_attacks_space_syntax_records_the_name(clean_db):
     db = clean_db
+    seed_alias(db, 200, "sam")
     seed_war(db)
     ctx = make_ctx(channel_id=CHANNEL)
     run(call(WarTracker.war_group, war_cog(), ctx, "attacks", "Sam", args="6"))
@@ -108,6 +115,7 @@ def test_war_attacks_space_syntax_records_the_name(clean_db):
 
 def test_war_missing_add_resolves_a_mention(clean_db):
     db = clean_db
+    seed_alias(db, 200, "sam")
     seed_war(db, missing_list=[])
     ctx = make_ctx(channel_id=CHANNEL)
     member = FakeMember(200, "Sam", administrator=False, guild=ctx.guild)
@@ -134,6 +142,7 @@ def test_war_missing_unknown_subcommand_does_not_remove(clean_db):
 
 def test_attacks_done_message_is_recorded(clean_db):
     db = clean_db
+    seed_alias(db, 1, "sam")
     seed_war(db, missing_list=[{"name": "sam"}, {"name": "bob"}], attack_counts={})
     ctx = make_ctx(channel_id=CHANNEL, display_name="Sam")
     war = war_cog()
@@ -150,6 +159,7 @@ def test_attacks_done_message_is_recorded(clean_db):
 
 def test_warning_add_creates_missing_user_row(clean_db):
     db = clean_db
+    seed_alias(db, 200, "sam")
     ctx = make_ctx()
     member = FakeMember(200, "Sam", administrator=False, guild=ctx.guild)
     ctx.guild.members.append(member)
@@ -481,6 +491,7 @@ def test_team_limit_blocks_second_team_via_set_desc(clean_db):
 
 def test_war_attacks_resolves_a_mention(clean_db):
     db = clean_db
+    seed_alias(db, 200, "sam")
     seed_war(db, missing_list=[{"name": "sam"}], attack_counts={})
     ctx = make_ctx(channel_id=CHANNEL)
     member = FakeMember(200, "Sam", administrator=False, guild=ctx.guild)
@@ -496,6 +507,7 @@ def test_war_attacks_resolves_a_mention(clean_db):
 
 def test_war_attacks_lowering_count_readds_to_missing(clean_db):
     db = clean_db
+    seed_alias(db, 200, "sam")
     seed_war(db, missing_list=[], attack_counts={"sam": 5})
     ctx = make_ctx(channel_id=CHANNEL)
 
@@ -777,12 +789,11 @@ def test_war_board_command_posts_live_message(clean_db):
     assert any(embed is not None for _c, embed in ctx.channel.messages)
 
 
-def test_war_missing_add_pings_the_player(clean_db):
+def test_war_missing_add_is_alias_only_and_does_not_ping(clean_db):
     db = clean_db
     now = datetime.now(timezone.utc)
     seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(), missing_list=[])
-    db.seed("users", {"discord_id": 200})
-    db.seed("aliases", {"guild_id": GUILD, "discord_id": 200, "alias_name": "sam"})
+    seed_alias(db, 200, "sam")
     ctx = make_ctx(channel_id=CHANNEL)
     member = FakeMember(200, "Sam", administrator=False, guild=ctx.guild)
     ctx.guild.members.append(member)
@@ -791,8 +802,9 @@ def test_war_missing_add_pings_the_player(clean_db):
 
     row = db.one("wars", channel_id=CHANNEL)
     assert any(entry.get("id") == 200 for entry in row["missing_list"])
-    assert any("<@200>" in (content or "") for content, _embed in ctx.channel.messages)
-    assert member.dms
+    # Pings only happen in announcement messages, never as a command side effect.
+    assert not member.dms
+    assert all("<@200>" not in (content or "") for content, _embed in ctx.channel.messages)
 
 
 def test_finish_war_pings_staff_roles(clean_db):
@@ -839,3 +851,234 @@ def test_war_board_stop_disables_auto_board(clean_db):
     run(call(WarTracker.war_group, tracker, ctx, "board", "stop"))
 
     assert db.one("wars", channel_id=CHANNEL)["status_message_id"] == -1
+
+
+# ------------------------------------------- aliases-only + announcement pings
+
+
+def test_war_team_role_is_pinged_in_announcements(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    war = seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(), team_role_id=777)
+    _bot, guild, channel = _maze_bot()
+    guild.roles.append(FakeRole(777, "Team A"))
+    tracker = war_cog()
+
+    run(tracker._send_ping(channel, "⏰ test reminder", war=war))
+
+    assert any("<@&777>" in (content or "") for content, _embed in channel.messages)
+    allowed = channel.sent_kwargs[-1]["allowed_mentions"]
+    assert allowed.roles is True
+    assert allowed.everyone is False
+
+
+def test_war_announcement_falls_back_to_here(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    war = seed_war(db, war_start=(now - timedelta(hours=1)).isoformat())
+    _bot, _guild, channel = _maze_bot()
+    tracker = war_cog()
+
+    run(tracker._send_ping(channel, "⏰ test reminder", war=war))
+
+    assert any("@here" in (content or "") for content, _embed in channel.messages)
+    assert channel.sent_kwargs[-1]["allowed_mentions"].everyone is True
+
+
+def test_war_12h_reminder_mentions_team_role_and_missing_players(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(hours=36)
+    seed_alias(db, 200, "sam")
+    war = seed_war(db, war_start=start.isoformat(), team_role_id=777,
+                   missing_list=[{"name": "sam", "id": 200}])
+    _bot, guild, channel = _maze_bot()
+    guild.roles.append(FakeRole(777, "Team A"))
+    tracker = war_cog()
+
+    run(tracker.send_reminder(channel, war, start, "hours_12", "12h warning"))
+
+    content = channel.last_text()
+    assert "<@&777>" in content
+    assert "<@200>" in content
+    assert content.count("<@200>") == 1  # role prefix + missing mention, no duplicate
+    assert "12 hours left" in content
+    assert "@everyone" not in content
+
+
+def test_war_missing_rejects_unknown_alias(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(), missing_list=[])
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(war_cog().war_missing(ctx, "add", "ghost"))
+
+    assert db.one("wars", channel_id=CHANNEL)["missing_list"] == []
+    assert any("No alias" in text for text in ctx.texts)
+
+
+def test_war_attacks_rejects_unknown_alias(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(), attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "attacks", "ghost", args="6"))
+
+    assert db.one("wars", channel_id=CHANNEL)["attack_counts"] == {}
+    assert any("No alias" in text for text in ctx.texts)
+
+
+def test_attack_logging_requires_an_alias(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(),
+             missing_list=[{"name": "bob"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL, display_name="Bob")
+    message = FakeMessage(content="2 attacks done", author=ctx.author,
+                          guild=ctx.guild, channel=ctx.channel)
+
+    run(war_cog().on_message(message))
+
+    assert db.one("wars", channel_id=CHANNEL)["attack_counts"] == {}
+    assert message.replies
+    assert "alias" in (message.replies[0] or "")
+
+
+def test_warning_add_requires_an_alias(clean_db):
+    db = clean_db
+    ctx = make_ctx()
+    member = FakeMember(200, "Sam", administrator=False, guild=ctx.guild)
+    ctx.guild.members.append(member)
+
+    run(call(WarTracker.warning_group, war_cog(), ctx, "add", member.mention, reason="late"))
+
+    assert db.rows("warnings") == []
+    assert any("no alias" in text.lower() for text in ctx.texts)
+
+
+def test_war_set_role_command(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat())
+    ctx = make_ctx(channel_id=CHANNEL)
+    role = FakeRole(777, "Team A")
+    ctx.guild.roles.append(role)
+    ctx.message.role_mentions = [role]
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "set", "role", args="<@&777>"))
+
+    assert db.one("wars", channel_id=CHANNEL)["team_role_id"] == 777
+    # The confirmation names the role; a live mention would ping the whole team
+    # from a plain command reply.
+    assert any("Team A" in text for text in ctx.texts)
+    assert all("<@&777>" not in text for text in ctx.texts)
+
+
+def test_war_board_shows_team_role(clean_db):
+    now = datetime.now(timezone.utc)
+    war = {
+        "guild_id": GUILD, "channel_id": CHANNEL, "is_active": True,
+        "war_start": (now - timedelta(hours=1)).isoformat(),
+        "phase": "defence", "missing_list": [], "absent_list": [],
+        "sent_pings": [], "team_role_id": 777, "status_message_id": None,
+    }
+    guild = FakeGuild(GUILD, me=FakeMember(999, "Bot", administrator=False))
+    guild.roles.append(FakeRole(777, "Team A"))
+    channel = guild.add_channel(FakeChannel(CHANNEL, guild=guild, name="team-a"))
+
+    embed = war_cog().build_embed(war, channel=channel)
+
+    fields = {field.name: field.value for field in embed.fields}
+    assert fields.get("🔔 Team role") == "<@&777>"
+
+
+def test_war_team_role_survives_starting_the_next_war(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_war(db, war_start=(now - timedelta(hours=60)).isoformat(), phase="ended",
+             is_active=False, team_role_id=777)
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "defence", "ends", args="20h"))
+
+    assert db.one("wars", channel_id=CHANNEL)["team_role_id"] == 777
+
+
+def test_finish_war_falls_back_to_the_team_role_without_staff_roles(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    war = seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(), team_role_id=777)
+    _bot, guild, channel = _maze_bot()
+    guild.roles.append(FakeRole(777, "Team A"))
+    tracker = war_cog()
+
+    run(tracker._send_staff_ping(channel, tracker.build_embed(war), war))
+
+    assert any("<@&777>" in (content or "") for content, _embed in channel.messages)
+    assert channel.sent_kwargs[-1]["allowed_mentions"].roles is True
+
+
+def test_war_missing_remove_works_after_the_alias_is_deleted(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(),
+             missing_list=[{"name": "ghost"}])
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(war_cog().war_missing(ctx, "remove", "ghost"))
+
+    assert db.one("wars", channel_id=CHANNEL)["missing_list"] == []
+
+
+def test_attack_logging_prefers_the_alias_tracked_by_the_war(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_alias(db, 1, "s4m")
+    seed_alias(db, 1, "sam")
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(),
+             missing_list=[{"name": "sam"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL)
+    message = FakeMessage(content="6 attacks done", author=ctx.author,
+                          guild=ctx.guild, channel=ctx.channel)
+
+    run(war_cog().on_message(message))
+
+    row = db.one("wars", channel_id=CHANNEL)
+    assert row["attack_counts"] == {"sam": 6}
+    assert row["missing_list"] == []
+
+
+def test_war_set_role_accepts_a_raw_id_and_none(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat())
+    ctx = make_ctx(channel_id=CHANNEL)
+    ctx.guild.roles.append(FakeRole(777, "Team A"))
+    ctx.message.role_mentions = []
+    tracker = war_cog()
+
+    run(call(WarTracker.war_group, tracker, ctx, "set", "ROLE", args="777"))
+    assert db.one("wars", channel_id=CHANNEL)["team_role_id"] == 777
+
+    run(call(WarTracker.war_group, tracker, ctx, "set", "role", args="none"))
+    assert db.one("wars", channel_id=CHANNEL)["team_role_id"] is None
+
+
+def test_war_absent_add_and_remove_by_alias(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_alias(db, 200, "sam")
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(),
+             missing_list=[{"name": "sam"}], absent_list=[])
+    ctx = make_ctx(channel_id=CHANNEL)
+    tracker = war_cog()
+
+    run(tracker.war_absent(ctx, "add", "sam"))
+    row = db.one("wars", channel_id=CHANNEL)
+    assert [a.get("name") for a in row["absent_list"]] == ["sam"]
+    assert row["missing_list"] == []
+
+    run(tracker.war_absent(ctx, "remove", "sam"))
+    assert db.one("wars", channel_id=CHANNEL)["absent_list"] == []

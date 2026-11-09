@@ -271,12 +271,14 @@ class FakeChannel:
         self.mention = f"<#{channel_id}>"
         self.messages = []
         self.sent_messages = []
+        self.sent_kwargs = []
         self._mention_everyone = mention_everyone
 
     async def send(self, content=None, embed=None, **kwargs):
         message = FakeMessage(content=content, guild=self.guild, channel=self, embed=embed)
         self.messages.append((content, embed))
         self.sent_messages.append(message)
+        self.sent_kwargs.append(kwargs)
         return message
 
     async def fetch_message(self, message_id):
