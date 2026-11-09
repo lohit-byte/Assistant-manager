@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import os
 import asyncio
+import traceback
 from dotenv import load_dotenv
 
 from database import supabase, get_or_create_guild, check_premium_status
@@ -71,8 +72,16 @@ async def on_command_error(ctx, error):
         return await ctx.send("❌ This command only works in a server.")
     if isinstance(error, commands.CheckFailure):
         return # The check itself already sends a message
-        
+    if isinstance(error, commands.UserInputError):
+        # Bad arguments, unknown members, missing required arguments, ...
+        return await ctx.send(f"❌ {error}")
+
     print(f"❌ Command Error in {ctx.command}: {error}")
+    traceback.print_exception(type(error), error, error.__traceback__)
+    try:
+        await ctx.send("❌ Something went wrong while running that command. The bot owner has the details.")
+    except discord.HTTPException:
+        pass
 
 @bot.check
 async def premium_gate(ctx):
@@ -80,9 +89,13 @@ async def premium_gate(ctx):
     if ctx.author.id == DEVELOPER_ID:
         return True
 
+    # Help must stay reachable when a trial expires so people can find support.
+    if ctx.command is not None and ctx.command.name == "help":
+        return True
+
     if ctx.guild is None:
         return False
-        
+
     ok = await asyncio.to_thread(check_premium_status, ctx.guild.id)
     if not ok:
         await ctx.send("❌ This server's 7-day trial has expired or the server is blocked. Please upgrade via the dashboard.")

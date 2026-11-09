@@ -24,41 +24,110 @@ class MazeTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.timers = {}
+        self.schedule_signatures = {}
+        self._sync_task = None
 
     async def cog_load(self):
-        self.bot.loop.create_task(self.restore_schedules())
+        self._sync_task = asyncio.create_task(self._sync_loop())
 
     def cog_unload(self):
-        for tasks in self.timers.values():
-            for t in tasks: t.cancel()
+        if self._sync_task:
+            self._sync_task.cancel()
+        for guild_id in list(self.timers):
+            self._cancel(guild_id)
+
+    def _cancel(self, guild_id):
+        for t in self.timers.pop(guild_id, []):
+            t.cancel()
+        self.schedule_signatures.pop(guild_id, None)
+
+    async def _sync_loop(self):
+        """Reload schedules periodically so dashboard edits reach a running bot."""
+        await self.bot.wait_until_ready()
+        while True:
+            try:
+                await self.restore_schedules()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                print(f"Maze schedule sync failed: {e}")
+            await asyncio.sleep(300)
+
+    async def _resolve_channel(self, row):
+        """Schedule channel, then the guild's configured maze channel, then system channel."""
+        channel = self.bot.get_channel(row.get("channel_id")) if row.get("channel_id") else None
+        if channel:
+            return channel
+        guild = self.bot.get_guild(row.get("guild_id"))
+        if not guild:
+            return None
+        try:
+            res = await asyncio.to_thread(
+                supabase.table("guilds").select("maze_channel_id")
+                .eq("guild_id", row["guild_id"]).limit(1).execute
+            )
+            configured = res.data[0].get("maze_channel_id") if res.data else None
+        except Exception:
+            configured = None
+        return guild.get_channel(configured) if configured else guild.system_channel
 
     async def restore_schedules(self):
         await self.bot.wait_until_ready()
-        try:
-            res = await asyncio.to_thread(supabase.table("maze_schedules").select("*").execute)
-            now = datetime.now(timezone.utc)
-            
-            for row in res.data:
-                try:
-                    channel = self.bot.get_channel(row.get("channel_id"))
-                    end_time = to_utc(row.get("event_end"))
-                    start_time = to_utc(row.get("event_start"))
-                    
-                    if not channel or not end_time or end_time <= now:
-                        continue
-                        
-                    self.schedule_pings(row["guild_id"], channel, row.get("maze_type", "7d"), end_time, start_time)
-                except Exception as e:
-                    print(f"Error restoring maze schedule for {row.get('guild_id')}: {e}")
-        except Exception as e:
-            print(f"Failed to fetch maze schedules: {e}")
+        res = await asyncio.to_thread(supabase.table("maze_schedules").select("*").execute)
+        now = datetime.now(timezone.utc)
+        seen = set()
 
-    def schedule_pings(self, guild_id, channel, maze_type, end_time, start_time):
-        if guild_id in self.timers:
-            for t in self.timers[guild_id]: t.cancel()
-        
+        for row in res.data:
+            guild_id = row.get("guild_id")
+            seen.add(guild_id)
+            try:
+                channel = await self._resolve_channel(row)
+                end_time = to_utc(row.get("event_end"))
+                start_time = to_utc(row.get("event_start"))
+                signature = (
+                    row.get("event_start"), row.get("event_end"), row.get("maze_type"),
+                    getattr(channel, "id", None), row.get("ping_enabled_global"),
+                    repr(row.get("discount_schedule")),
+                )
+                if signature == self.schedule_signatures.get(guild_id):
+                    continue  # unchanged -> keep the existing timers
+                if not channel or not end_time or end_time <= now:
+                    self._cancel(guild_id)
+                    continue
+                self.schedule_pings(
+                    guild_id, channel, row.get("maze_type", "7d"),
+                    end_time, start_time, row.get("discount_schedule"),
+                )
+                self.schedule_signatures[guild_id] = signature
+            except Exception as e:
+                print(f"Error restoring maze schedule for {guild_id}: {e}")
+
+        # A dashboard delete/stop removes the row: drop its leftover timers.
+        for guild_id in list(self.timers):
+            if guild_id not in seen:
+                self._cancel(guild_id)
+
+    @staticmethod
+    def _normalise_schedule(raw):
+        """Validate a custom ``discount_schedule`` JSON value (list of [hours, minutes, pct])."""
+        if not isinstance(raw, list) or not raw:
+            return None
+        out = []
+        for item in raw:
+            try:
+                hours, minutes, pct = item
+                out.append((int(hours), int(minutes), str(pct)))
+            except (TypeError, ValueError):
+                return None
+        return out
+
+    def schedule_pings(self, guild_id, channel, maze_type, end_time, start_time, custom_schedule=None):
+        self._cancel(guild_id)
+
         self.timers[guild_id] = []
-        schedule = SCHEDULE_7D if maze_type == "7d" else SCHEDULE_3D
+        schedule = self._normalise_schedule(custom_schedule) or (
+            SCHEDULE_7D if maze_type == "7d" else SCHEDULE_3D
+        )
         now = datetime.now(timezone.utc)
         
         for hours, minutes, pct in schedule:
@@ -67,28 +136,31 @@ class MazeTracker(commands.Cog):
             
             if delay > 0:
                 self.timers[guild_id].append(
-                    asyncio.create_task(self.ping_discount_at_time(guild_id, channel, pct, delay))
+                    asyncio.create_task(self.ping_discount_at_time(guild_id, channel, pct, delay, end_time))
                 )
             elif -300 < delay <= 0:
                 self.timers[guild_id].append(
-                    asyncio.create_task(self.ping_discount_at_time(guild_id, channel, pct, 0))
+                    asyncio.create_task(self.ping_discount_at_time(guild_id, channel, pct, 0, end_time))
                 )
 
-    async def ping_discount_at_time(self, guild_id, channel, pct, delay):
+    async def ping_discount_at_time(self, guild_id, channel, pct, delay, expected_end=None):
         if delay > 0:
             await asyncio.sleep(delay)
 
-        # The event may have been cancelled or pings disabled while we slept.
+        # The event may have been cancelled, rescheduled or pings disabled while we slept.
         try:
             res = await asyncio.to_thread(
                 supabase.table("maze_schedules")
-                .select("ping_enabled_global")
+                .select("ping_enabled_global, event_end")
                 .eq("guild_id", guild_id)
                 .limit(1)
                 .execute
             )
-            if not res.data or res.data[0].get("ping_enabled_global") is False:
+            row = res.data[0] if res.data else None
+            if not row or row.get("ping_enabled_global") is False:
                 return
+            if expected_end is not None and to_utc(row.get("event_end")) != expected_end:
+                return  # schedule changed; the sync loop owns the new timers
         except Exception as e:
             print(f"Maze ping check failed for {guild_id}: {e}")
             return
@@ -111,12 +183,17 @@ class MazeTracker(commands.Cog):
             pass
         # ----------------------------------------------
         
+        # channel.guild.me is None when the bot member is not cached (for
+        # example right after a reconnect), which would raise AttributeError.
+        me = getattr(getattr(channel, "guild", None), "me", None)
+        can_mention = bool(me and channel.permissions_for(me).mention_everyone)
+
         try:
-            if channel.permissions_for(channel.guild.me).mention_everyone:
+            if can_mention:
                 await channel.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
             else:
                 await channel.send(embed=embed)
-        except discord.HTTPException as e:
+        except (discord.HTTPException, AttributeError, TypeError) as e:
             print(f"Maze ping failed in {guild_id}: {e}")
 
     @commands.command(name="maze")
@@ -129,7 +206,9 @@ class MazeTracker(commands.Cog):
         if action == "help":
             return await ctx.invoke(self.bot.get_command("help"), topic="maze")
 
-        if not is_staff_member(ctx.author):
+        # `status` is informational, so members may use it. Everything else
+        # changes shared server state and stays staff-only.
+        if action != "status" and not is_staff_member(ctx.author):
             return await ctx.send("❌ You must be an Admin or Staff to use Maze commands.")
 
         if action == "status":
@@ -156,9 +235,7 @@ class MazeTracker(commands.Cog):
         elif action in ("stop", "cancel", "clear"):
             try:
                 await asyncio.to_thread(supabase.table("maze_schedules").delete().eq("guild_id", ctx.guild.id).execute)
-                if ctx.guild.id in self.timers:
-                    for t in self.timers[ctx.guild.id]: t.cancel()
-                    del self.timers[ctx.guild.id]
+                self._cancel(ctx.guild.id)
                 await ctx.send("🛑 Maze schedule and all pending discount pings have been cancelled.")
             except Exception as e:
                 await ctx.send(f"❌ Database error: {e}")
@@ -182,17 +259,26 @@ class MazeTracker(commands.Cog):
                 days = 3 if duration == "3d" else 7
                 start_time = end_time - timedelta(days=days)
             else:
-                try:
-                    start_time = datetime.strptime(f"{time_input}/{now.year}", "%d/%m/%Y").replace(hour=11, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
-                    days = 3 if duration == "3d" else 7
-                    end_time = start_time + timedelta(days=days)
-                    
-                    # If the event has already passed entirely, roll to next year
-                    if end_time < now:
-                        start_time = start_time.replace(year=now.year + 1)
-                        end_time = start_time + timedelta(days=days)
-                except ValueError:
+                m = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", time_input)
+                if not m:
                     return await ctx.send("❌ Invalid date format. Use `DD/MM` (e.g., `05/11`).")
+                day, month = int(m.group(1)), int(m.group(2))
+                year = int(m.group(3)) if m.group(3) else now.year
+                try:
+                    start_time = datetime(year, month, day, 11, 0, tzinfo=timezone.utc)
+                except ValueError:
+                    return await ctx.send("❌ That date doesn't exist. Use `DD/MM` (e.g., `05/11`).")
+
+                days = 3 if duration == "3d" else 7
+                end_time = start_time + timedelta(days=days)
+
+                # If the event has already passed entirely, roll to next year
+                if end_time < now:
+                    try:
+                        start_time = start_time.replace(year=start_time.year + 1)
+                    except ValueError:  # 29 Feb -> next year isn't a leap year
+                        start_time = start_time.replace(year=start_time.year + 1, day=28)
+                    end_time = start_time + timedelta(days=days)
 
             try:
                 await asyncio.to_thread(
@@ -208,7 +294,9 @@ class MazeTracker(commands.Cog):
             except Exception as e:
                 return await ctx.send(f"❌ Database error: {e}")
 
-            self.schedule_pings(ctx.guild.id, ctx.channel, duration, end_time, start_time)
+            # Reload from the database so both this command and the periodic sync
+            # agree on the timers.
+            await self.restore_schedules()
 
             embed = discord.Embed(title="🗺️ Maze Event Scheduled", color=discord.Color.purple())
             embed.add_field(name="Duration", value=f"{duration.upper()}", inline=True)
@@ -224,7 +312,8 @@ class MazeTracker(commands.Cog):
                 return await ctx.send("❌ Use a percentage from 1–100, e.g. `!maze ping 20%`")
 
             # INDENTATION FIXED HERE
-            if not ctx.channel.permissions_for(ctx.guild.me).mention_everyone:
+            me = ctx.guild.me
+            if not me or not ctx.channel.permissions_for(me).mention_everyone:
                 return await ctx.send("❌ I lack the 'Mention @everyone' permission in this channel.")
 
             embed = discord.Embed(

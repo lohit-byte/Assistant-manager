@@ -12,7 +12,19 @@ UNITS = {'K': 1e3, 'M': 1e6, 'B': 1e9}
 def parse_amount(s):
     m = re.fullmatch(r'\s*([\d.,]+)\s*([KMB])?\s*', str(s), re.IGNORECASE)
     if not m: raise ValueError(f"bad amount: {s}")
-    return float(m.group(1).replace(',', '.')) * UNITS.get((m.group(2) or '').upper(), 1)
+    return _to_number(m.group(1)) * UNITS.get((m.group(2) or '').upper(), 1)
+
+def _to_number(num):
+    """Normalise OCR/typed numbers: '1,200' -> 1200, '1,5' -> 1.5."""
+    if "." in num and "," in num:
+        num = num.replace(",", "")
+    elif "," in num:
+        parts = num.split(",")
+        num = "".join(parts) if all(len(p) == 3 for p in parts[1:]) else num.replace(",", ".")
+    try:
+        return float(num)
+    except ValueError:
+        raise ValueError(f"bad number: {num}")
 
 def format_amount(v):
     for suffix, div in (('B', 1e9), ('M', 1e6), ('K', 1e3)):
@@ -20,12 +32,12 @@ def format_amount(v):
     return f"{round(v, 2):g}"
 
 def clean_val(v_str):
-    """Safely parses strings like '1.2M' or '15' into an integer."""
+    """Safely parses strings like '1.2M', '15' or '1,200' into an integer."""
     try:
-        m = re.match(r'\s*([\d.]+)\s*([KMB])?', str(v_str).upper())
+        m = re.match(r'\s*([\d.,]+)\s*([KMB])?', str(v_str).upper())
         if not m: return 0
-        return int(float(m.group(1)) * {'K': 1e3, 'M': 1e6, 'B': 1e9}.get(m.group(2), 1))
-    except:
+        return int(_to_number(m.group(1)) * {'K': 1e3, 'M': 1e6, 'B': 1e9}.get(m.group(2), 1))
+    except (ValueError, AttributeError, TypeError):
         return 0
 
 def parse_node_args(args):
@@ -66,8 +78,19 @@ async def log_race_action(guild_id, user_id, player_name, action_type):
 async def check_team_limit(guild_id):
     res = await asyncio.to_thread(supabase.table("guilds").select("max_teams").eq("guild_id", guild_id).execute)
     max_teams = res.data[0].get("max_teams", 1) if res.data else 1
-    active = await asyncio.to_thread(supabase.table("race_state").select("channel_id").eq("guild_id", guild_id).execute)
-    return len(active.data) < max_teams
+    active = await asyncio.to_thread(
+        supabase.table("race_state")
+        .select("channel_id, task_description, is_event_active")
+        .eq("guild_id", guild_id)
+        .execute
+    )
+
+    def in_use(row):
+        # A channel whose node was cleared ("No Active Node") no longer uses a
+        # team slot, so a server can start tracking another team afterwards.
+        return bool(row.get("is_event_active")) or row.get("task_description") not in (None, "No Active Node")
+
+    return sum(1 for row in active.data if in_use(row)) < max_teams
 
 class RaceTracker(commands.Cog):
     def __init__(self, bot):
@@ -115,7 +138,8 @@ class RaceTracker(commands.Cog):
             
         if action == "clear":
             await asyncio.to_thread(supabase.table("race_state").upsert({
-                "channel_id": ctx.channel.id, "task_description": "No Active Node", 
+                "channel_id": ctx.channel.id, "guild_id": ctx.guild.id,
+                "task_description": "No Active Node", 
                 "ofa_holder_id": None, "ofa_target": None, "ofa_done": False, 
                 "dyp_progress": 0, "dyp_target": 0, "dyp_contributors": [], 
                 "je_progress": "0", "je_target": "0", "je_done": False, 
@@ -133,12 +157,24 @@ class RaceTracker(commands.Cog):
         if not ctx.message.attachments: return await ctx.send("❌ Please attach a `.json` file.")
         attachment = ctx.message.attachments[0]
         if not attachment.filename.endswith('.json'): return await ctx.send("❌ File must be a `.json` file.")
+        if getattr(attachment, "size", 0) > 2_000_000:
+            return await ctx.send("❌ That file is too large (max 2 MB).")
         try:
             content = await attachment.read()
             data = json.loads(content.decode('utf-8'))
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            return await ctx.send(f"❌ Failed to parse JSON: {e}")
+        if not isinstance(data, dict) or not data:
+            return await ctx.send("❌ Invalid sheet: expected a JSON object keyed by `lap.node`.")
+        for key, node in data.items():
+            if not isinstance(node, dict) or not {"ofa", "dyp", "je"} <= set(node):
+                return await ctx.send(
+                    f"❌ Invalid sheet: node `{key}` must contain `ofa`, `dyp` and `je` keys."
+                )
+        try:
             await asyncio.to_thread(supabase.table("race_sheets").upsert({"guild_id": ctx.guild.id, "name": name, "data": data}, on_conflict="guild_id,name").execute)
             await ctx.send(f"✅ Sheet **{name}** uploaded successfully with **{len(data)}** nodes.")
-        except Exception as e: await ctx.send(f"❌ Failed to parse JSON: {e}")
+        except Exception as e: await ctx.send(f"❌ Database error: {e}")
 
     async def use_sheet(self, ctx, name):
         if not name: return await ctx.send("Usage: `!race use <name>`")
@@ -152,16 +188,20 @@ class RaceTracker(commands.Cog):
         if not state or not state.get('active_race_sheet'): return await ctx.send("❌ No active sheet set. Use `!race use <name>` first.")
         sheet_name = state['active_race_sheet']
         
-        new_node = state.get('current_node', 0) + 1
-        new_lap = state.get('current_lap', 0)
+        new_node = (state.get('current_node') or 0) + 1
+        new_lap = state.get('current_lap') or 0
         if new_node > NODES_PER_LAP: new_node, new_lap = 1, new_lap + 1
         node_key = f"{new_lap}.{new_node}"
 
         res = await asyncio.to_thread(supabase.table("race_sheets").select("data").eq("guild_id", ctx.guild.id).eq("name", sheet_name).execute)
-        sheet_data = res.data[0]['data']
+        sheet_data = res.data[0].get("data") if res.data else None
+        if not isinstance(sheet_data, dict):
+            return await ctx.send(f"❌ Sheet **{sheet_name}** has invalid data. Re-upload it.")
         if node_key not in sheet_data: return await ctx.send(f"❌ Node `{node_key}` not found in sheet **{sheet_name}**. Are you at the end?")
 
         node_info = sheet_data[node_key]
+        if not isinstance(node_info, dict) or not {"ofa", "dyp", "je"} <= set(node_info):
+            return await ctx.send(f"❌ Node `{node_key}` in sheet **{sheet_name}** is missing `ofa`, `dyp` or `je`.")
         ofa_t, dyp_t, je_t = node_info['ofa'], node_info['dyp'], node_info['je']
         
         # SMARTER DYP PARSING (Looks for "10 members" first)
@@ -180,8 +220,8 @@ class RaceTracker(commands.Cog):
     async def advance_node_manual(self, ctx, args):
         state = await get_race(ctx.channel.id)
         if not state: state = {"current_lap": 0, "current_node": 0}
-        new_node = state.get('current_node', 0) + 1
-        new_lap = state.get('current_lap', 0)
+        new_node = (state.get('current_node') or 0) + 1
+        new_lap = (state.get('current_lap') or 0)
         if new_node > NODES_PER_LAP: new_node, new_lap = 1, new_lap + 1
 
         if ctx.message.attachments:
@@ -192,7 +232,7 @@ class RaceTracker(commands.Cog):
                 await self._save_new_node(ctx, new_lap, new_node, ocr_result['ofa']['target'], ocr_result['dyp']['target'], ocr_result['je']['target'], desc, ocr_result['dyp']['progress'], ocr_result['je']['progress'])
                 return
             else: 
-                await ctx.send(f"⚠️ {ocr_result}\nChecking manual input...")
+                await ctx.send("⚠️ Couldn't read that screenshot. Falling back to text input...")
 
         if args:
             try:
@@ -216,24 +256,26 @@ class RaceTracker(commands.Cog):
         await self.show_status(ctx)
 
     async def manual_set(self, ctx, subaction, args):
-        if not subaction or not args: return await ctx.send("Usage: `!race set <desc|dyp|je|ofa> <value>`")
-        parts = args.split(maxsplit=1)
-        val = parts[1].strip() if len(parts) > 1 else ""
+        parts = (args or "").split(maxsplit=1)
+        value = parts[1].strip() if len(parts) > 1 else ""
+        usage = "Usage: `!race set <desc|dyp|je|ofa> <value>`"
+        if not subaction or not value:
+            return await ctx.send(usage)
         try:
             if subaction == "desc": 
-                await asyncio.to_thread(supabase.table("race_state").upsert({"channel_id": ctx.channel.id, "task_description": args}, on_conflict="channel_id").execute)
-                return await ctx.send(f"✅ Task description set to: `{args}`")
-            elif subaction == "dyp" and val.isdigit(): 
-                await asyncio.to_thread(supabase.table("race_state").upsert({"channel_id": ctx.channel.id, "dyp_target": int(val)}, on_conflict="channel_id").execute)
-                return await ctx.send(f"✅ DYP target set to {val}.")
+                await asyncio.to_thread(supabase.table("race_state").upsert({"channel_id": ctx.channel.id, "guild_id": ctx.guild.id, "task_description": value}, on_conflict="channel_id").execute)
+                return await ctx.send(f"✅ Task description set to: `{value}`")
+            elif subaction == "dyp" and value.isdigit(): 
+                await asyncio.to_thread(supabase.table("race_state").upsert({"channel_id": ctx.channel.id, "guild_id": ctx.guild.id, "dyp_target": int(value)}, on_conflict="channel_id").execute)
+                return await ctx.send(f"✅ DYP target set to {value}.")
             elif subaction == "je": 
-                await asyncio.to_thread(supabase.table("race_state").upsert({"channel_id": ctx.channel.id, "je_target": val}, on_conflict="channel_id").execute)
-                return await ctx.send(f"✅ JE target set to {val}.")
+                await asyncio.to_thread(supabase.table("race_state").upsert({"channel_id": ctx.channel.id, "guild_id": ctx.guild.id, "je_target": value}, on_conflict="channel_id").execute)
+                return await ctx.send(f"✅ JE target set to {value}.")
             elif subaction == "ofa": 
-                await asyncio.to_thread(supabase.table("race_state").upsert({"channel_id": ctx.channel.id, "ofa_target": val}, on_conflict="channel_id").execute)
-                return await ctx.send(f"✅ OFA target set to {val}.")
+                await asyncio.to_thread(supabase.table("race_state").upsert({"channel_id": ctx.channel.id, "guild_id": ctx.guild.id, "ofa_target": value}, on_conflict="channel_id").execute)
+                return await ctx.send(f"✅ OFA target set to {value}.")
             else: 
-                return await ctx.send("❌ Invalid set command.")
+                return await ctx.send(usage)
         except Exception as e: 
             await ctx.send(f"❌ Database error: {e}")
 
@@ -249,8 +291,12 @@ class RaceTracker(commands.Cog):
             if action == "ofa":
                 if subaction in ("cancel", "release"):
                     if not is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
-                    await asyncio.to_thread(supabase.table("race_state").update({"pending_ofa_message_id": None, "pending_ofa_user_id": None}).eq("channel_id", ctx.channel.id).execute)
-                    return await ctx.send("✅ Pending OFA claim cancelled.")
+                    fields = {"pending_ofa_message_id": None, "pending_ofa_user_id": None}
+                    if subaction == "release":
+                        # Let staff hand the OFA slot back without losing the node.
+                        fields.update({"ofa_holder_id": None, "ofa_done": False})
+                    await asyncio.to_thread(supabase.table("race_state").update(fields).eq("channel_id", ctx.channel.id).execute)
+                    return await ctx.send("✅ OFA released." if subaction == "release" else "✅ Pending OFA claim cancelled.")
                     
                 if subaction == "done":
                     if not state.get('ofa_holder_id') or (ctx.author.id != state['ofa_holder_id'] and not is_staff_member(ctx.author)): 
@@ -267,19 +313,23 @@ class RaceTracker(commands.Cog):
                 await asyncio.to_thread(supabase.table("race_state").update({"pending_ofa_message_id": msg.id, "pending_ofa_user_id": ctx.author.id}).eq("channel_id", ctx.channel.id).execute)
 
             elif action in ("dmp", "dyp"):
+                target = int(state.get('dyp_target') or 0)
+                if target <= 0:
+                    return await ctx.send("❌ DYP target isn't set for this node. Staff can set it with `!race set dyp <number>`.")
                 contribs = state.get('dyp_contributors') or []
-                if str(ctx.author.id) in contribs: 
+                if str(ctx.author.id) in [str(c) for c in contribs]:
                     return await ctx.send("❌ You have already contributed for this node.")
                     
-                new_prog = min(state.get('dyp_progress', 0) + 1, state.get('dyp_target', 0))
+                progress = int(state.get('dyp_progress') or 0)
+                new_prog = min(progress + 1, target)
                 contribs.append(str(ctx.author.id))
                 await asyncio.to_thread(supabase.table("race_state").update({"dyp_progress": new_prog, "dyp_contributors": contribs}).eq("channel_id", ctx.channel.id).execute)
                 await log_race_action(ctx.guild.id, ctx.author.id, display_name, "dyp_done")
                 
-                if new_prog >= state.get('dyp_target', 0): 
-                    await ctx.send(f"🎉 **DYP Target Reached!** ({new_prog}/{state['dyp_target']})")
+                if new_prog >= target: 
+                    await ctx.send(f"🎉 **DYP Target Reached!** ({new_prog}/{target})")
                 else: 
-                    await ctx.send(f"✅ DYP logged for **{display_name}**. Pending: `{new_prog}/{state['dyp_target']}`")
+                    await ctx.send(f"✅ DYP logged for **{display_name}**. Pending: `{new_prog}/{target}`")
 
             elif action == "je":
                 if not args: return await ctx.send("Usage: `!race je +500k` or `!race je done`")
@@ -292,10 +342,12 @@ class RaceTracker(commands.Cog):
                         amt = parse_amount(args[1:])
                         curr = parse_amount(state.get('je_progress', '0'))
                         targ = parse_amount(state.get('je_target', '0'))
+                        if targ <= 0:
+                            return await ctx.send("❌ JE target isn't set for this node. Staff can set it with `!race set je <target>`.")
                         new_val = min(curr + amt, targ)
                         done = new_val >= targ
                         await asyncio.to_thread(supabase.table("race_state").update({"je_progress": format_amount(new_val), "je_done": done}).eq("channel_id", ctx.channel.id).execute)
-                        await log_race_action(ctx.guild.id, ctx.author.id, display_name, "je_done")
+                        await log_race_action(ctx.guild.id, ctx.author.id, display_name, "je_add")
                         await ctx.send(f"✅ JE logged for **{display_name}**. Progress: `{format_amount(new_val)}/{state['je_target']}`")
                         if done: await ctx.send("🎉 **JE Target Reached!**")
                     except ValueError: 
@@ -306,12 +358,12 @@ class RaceTracker(commands.Cog):
         if not state: return await ctx.send("ℹ️ No race data found.")
         
         embed = discord.Embed(title="🏁 Current Race Node Status", color=discord.Color.blue())
-        curr_lap = state.get('current_lap', 0)
-        target = state.get('target_laps', 0)
+        curr_lap = state.get('current_lap') or 0
+        target = state.get('target_laps') or 0
         target_str = f" (Target: {target})" if target > 0 else ""
         sheet_str = f"\n**Sheet:** {state.get('active_race_sheet')}" if state.get('active_race_sheet') else ""
         
-        embed.add_field(name="Progress", value=f"**Lap {curr_lap}.{state.get('current_node', 0)}**{target_str}{sheet_str}", inline=False)
+        embed.add_field(name="Progress", value=f"**Lap {curr_lap}.{state.get('current_node') or 0}**{target_str}{sheet_str}", inline=False)
         embed.add_field(name="Tasks", value=state.get('task_description', 'None'), inline=False)
         
         if state.get('task_description') == "No Active Node" or not state.get('task_description'):
@@ -331,11 +383,23 @@ class RaceTracker(commands.Cog):
             
         embed.add_field(name="One For All (OFA)", value=ofa_status, inline=False)
         
-        dyp_curr, dyp_targ = state.get('dyp_progress', 0), state.get('dyp_target', 0)
-        embed.add_field(name="Do Your Part (DYP)", value="✅ Completed" if dyp_curr >= dyp_targ else f"{dyp_curr}/{dyp_targ} pending", inline=True)
+        dyp_curr, dyp_targ = state.get('dyp_progress') or 0, state.get('dyp_target') or 0
+        if dyp_targ <= 0:
+            dyp_status = f"{dyp_curr}/? (target not set)"
+        elif dyp_curr >= dyp_targ:
+            dyp_status = "✅ Completed"
+        else:
+            dyp_status = f"{dyp_curr}/{dyp_targ} pending"
+        embed.add_field(name="Do Your Part (DYP)", value=dyp_status, inline=True)
         
-        je_curr, je_targ = state.get('je_progress', '0'), state.get('je_target', '0')
-        embed.add_field(name="Joint Effort (JE)", value="✅ Completed" if state.get('je_done') else f"{je_curr}/{je_targ} contributions", inline=True)
+        je_curr, je_targ = state.get('je_progress') or '0', state.get('je_target') or '0'
+        if state.get('je_done'):
+            je_status = "✅ Completed"
+        elif str(je_targ) in ("", "0"):
+            je_status = f"{je_curr} (target not set)"
+        else:
+            je_status = f"{je_curr}/{je_targ}"
+        embed.add_field(name="Joint Effort (JE)", value=je_status, inline=True)
         
         await ctx.send(embed=embed)
 
@@ -359,7 +423,7 @@ class RaceTracker(commands.Cog):
                 "`!race newnode 50 hatch | 10 breed | 5 craft`\n"
                 "`!race set <desc|dyp|je|ofa> <value>`\n"
                 "`!race target <number>`\n"
-                "`!race ofa cancel`\n"
+                "`!race ofa cancel` · `!race ofa release`\n"
                 "`!race clear`"
             ), inline=False)
         await ctx.send(embed=embed)

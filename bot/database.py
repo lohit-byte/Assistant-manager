@@ -16,6 +16,31 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL.strip().rstrip('/'), SUPABASE_KEY.strip())
 
+
+def _parse_timestamp(value) -> datetime:
+    """Parse a Supabase timestamptz into an aware UTC datetime (None if invalid)."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def ensure_user(discord_id: int) -> None:
+    """Create the users row a player needs before aliases/warnings can reference them.
+
+    ``aliases.discord_id`` and ``warnings.discord_id`` are foreign keys into
+    ``users``; without this row those inserts fail with a constraint error.
+    """
+    supabase.table("users").upsert(
+        {"discord_id": discord_id},
+        on_conflict="discord_id",
+        ignore_duplicates=True,
+    ).execute()
+
+
 def get_or_create_guild(guild_id: int) -> dict:
     res = supabase.table("guilds").select("*").eq("guild_id", guild_id).execute()
     if res.data:
@@ -31,34 +56,25 @@ def get_or_create_guild(guild_id: int) -> dict:
 
 def check_premium_status(guild_id: int) -> bool:
     guild = get_or_create_guild(guild_id)
-    if guild.get("is_blacklisted"): 
+    if guild.get("is_blacklisted"):
         return False
-        
+
     status = guild.get("premium_status")
-    
+    now = datetime.now(timezone.utc)
+
     if status == "premium":
         ends = guild.get("premium_ends_at")
-        if not ends: 
-            return True # Manual premium with no expiry
-        try:
-            clean_date = ends.replace("Z", "+00:00")
-            end_date = datetime.fromisoformat(clean_date)
-            return end_date > datetime.now(timezone.utc)
-        except Exception as e:
-            print(f"Error parsing premium date {ends}: {e}")
-            return False
-            
+        if not ends:
+            return True  # Manual premium with no expiry
+        end_date = _parse_timestamp(ends)
+        return bool(end_date and end_date > now)
+
     if status == "trial":
-        ends = guild.get("trial_ends_at")
-        if not ends: 
-            return False 
-        try:
-            clean_date = ends.replace("Z", "+00:00")
-            end_date = datetime.fromisoformat(clean_date)
-            return end_date > datetime.now(timezone.utc)
-        except Exception:
-            return False 
-            
+        end_date = _parse_timestamp(guild.get("trial_ends_at"))
+        return bool(end_date and end_date > now)
+
+    return False
+
 _role_cache = {}
 
 def get_staff_role_ids(guild_id: int) -> set:
@@ -85,4 +101,3 @@ def is_staff_member(m) -> bool:
     role_ids = get_staff_role_ids(m.guild.id)
     return any(r.id in role_ids for r in m.roles)
 
-    return False

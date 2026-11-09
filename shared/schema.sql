@@ -13,7 +13,7 @@ CREATE TABLE guilds (
     max_teams INTEGER DEFAULT 1, -- war/race team channels allowed by the plan
     last_order_id TEXT, -- last processed payment order (webhook idempotency)
     last_renewal_ping INTEGER DEFAULT 0, -- 0 none, 3 three-day warning, 1 one-day warning, -1 expired
-    required_attacks INTEGER DEFAULT 6,
+    required_attacks INTEGER DEFAULT 6, -- legacy; war_settings.attacks_required is authoritative
 
     -- Channel configurations
     war_channel_id BIGINT,
@@ -69,7 +69,7 @@ CREATE TABLE wars (
     guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
     war_start TIMESTAMP WITH TIME ZONE,
     phase TEXT, -- 'defence' or 'attack' (then 'ended')
-    missing_list JSONB DEFAULT '[]'::jsonb, -- [{ "name": "Sam", "id": 12345 }]
+    missing_list JSONB DEFAULT '[]'::jsonb, -- [{ "name": "sam" }]; id is optional when known
     absent_list JSONB DEFAULT '[]'::jsonb,
     attack_counts JSONB DEFAULT '{}'::jsonb, -- { "sam": 6 }
     status_message_id BIGINT,
@@ -125,11 +125,12 @@ CREATE TABLE maze_schedules (
     event_end TIMESTAMP WITH TIME ZONE,
     maze_type TEXT DEFAULT '7d', -- '7d' or '3d'
     channel_id BIGINT, -- channel the discount pings are sent to
-    discount_schedule JSONB, -- optional custom offsets; SCHEDULE_7D/3D in bot/cogs/maze.py are the defaults
+    discount_schedule JSONB, -- optional [[hours, minutes, "pct"], ...]; SCHEDULE_7D/3D are the defaults
     ping_enabled_global BOOLEAN DEFAULT TRUE
 );
 
 -- 10. PLAYER PING PREFERENCES (players can opt out of maze pings)
+-- NOTE: not consulted by the maze ping path yet (pings use @everyone).
 CREATE TABLE player_ping_settings (
     guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
     discord_id BIGINT REFERENCES users(discord_id) ON DELETE CASCADE,

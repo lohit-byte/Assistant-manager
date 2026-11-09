@@ -7,12 +7,12 @@ def _embed(title, color, desc=None):
 
 def build_overview(is_staff):
     e = _embed("📖 Bot Help", discord.Color.blurple(),
-               "Use `!help <topic>` for details: `war`, `race`, `maze`, `alias`, `ids`, `pings`")
+               "Use `!help <topic>` for details: `war`, `race`, `maze`, `alias`, `ids`, `warning`, `pings`")
     e.add_field(name="🛡️ War", value="`!war status` · `!war missing list`\nType `attacks done` to log your attacks", inline=False)
     e.add_field(name="🏁 Race", value="`!race status` · `!race ofa` · `!race dmp` · `!race je +500k`", inline=False)
     e.add_field(name="🗺️ Maze", value="`!maze status` · `!maze start 7d 6d12h`", inline=False)
     if is_staff:
-        e.add_field(name="🔧 Admin", value="`!alias add @user <name>` · `!ids` · `!warning`", inline=False)
+        e.add_field(name="🔧 Admin", value="`!alias add @user <name>` · `!alias list` · `!ids` · `!warning`", inline=False)
     e.set_footer(text="Staff-only commands are shown to staff only.")
     return e
 
@@ -24,8 +24,8 @@ def build_topic(topic, is_staff):
             e.add_field(name="Staff", value=(
                 "`!war defence ends <time>`\n`!war attack ends <time>`\n`!war cancel`\n"
                 "`!war missing add|remove <name>`\n`!war absent add|remove <name>`\n"
-                "`!war attacks <name> | <count>`\n`!war set attacks <number>`\n"
-                "`!war check` · `!war report`\n`!warning add|list|remove`"), inline=False)
+                "`!war attacks <name> <count>` (or `name | count`)\n`!war set attacks <number>`\n"
+                "`!war check` · `!war report`\n`!warning add @user <reason>` · `!warning list`"), inline=False)
         return e
     if topic == "race":
         e = _embed("🏁 Race Commands", discord.Color.green())
@@ -35,21 +35,27 @@ def build_topic(topic, is_staff):
                 "`!race uploadsheet <name>` · `!race use <name>`\n`!race next`\n"
                 "`!race newnode <image>` or `!race newnode 50 hatch | 10 breed`\n"
                 "`!race set <desc|dyp|je|ofa> <value>`\n`!race target <number>`\n"
-                "`!race ofa cancel` · `!race clear`"), inline=False)
+                "`!race ofa cancel` · `!race ofa release` · `!race clear`"), inline=False)
         return e
     if topic == "maze":
-        e = _embed("🗺️ Maze Commands", discord.Color.purple(), "Maze commands are staff only.")
+        e = _embed("🗺️ Maze Commands", discord.Color.purple())
+        e.add_field(name="Everyone", value="`!maze status` — current event and ping state", inline=False)
         if is_staff:
-            e.add_field(name="Commands", value=(
+            e.add_field(name="Staff", value=(
                 "`!maze start <3d|7d> <time>` — time left (`6d12h`) or start date (`05/11`)\n"
-                "`!maze status`\n`!maze stop`\n`!maze ping 20%` — manual discount ping"), inline=False)
+                "`!maze stop`\n`!maze ping 20%` — manual discount ping"), inline=False)
         return e
     if topic in ("alias", "aliases"):
         e = _embed("👤 Aliases", discord.Color.orange(), "Aliases link in-game names to Discord users so they aren't pinged by name.")
         if is_staff:
-            e.add_field(name="Commands", value="`!alias add @user <alias>`\n`!alias remove <alias>`", inline=False)
+            e.add_field(name="Commands", value="`!alias add @user <alias>`\n`!alias remove <alias>`\n`!alias list`", inline=False)
         else:
             e.description += "\nStaff manage aliases."
+        return e
+    if topic in ("warning", "warnings"):
+        e = _embed("⚠️ Warnings", discord.Color.red(), "Warnings are tracked per server and shown on the dashboard.")
+        if is_staff:
+            e.add_field(name="Commands", value="`!warning add @user <reason>`\n`!warning list` — recent server warnings\n`!warning list @user`\n`!warning remove <id>`", inline=False)
         return e
     if topic in ("ids", "id"):
         e = _embed("🪪 ID Lookup", discord.Color.teal(), "Staff only.")

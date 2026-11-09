@@ -4,12 +4,12 @@ from datetime import datetime, timezone, timedelta
 import re
 import asyncio
 from collections import defaultdict
-from database import supabase, check_premium_status, is_staff_member
+from database import supabase, is_staff_member, ensure_user
 
 DEFENCE = ("defence", "defense")
 PHASE = timedelta(hours=24)
 WAR = timedelta(hours=48)
-DONE_RE = re.compile(r"\battacks?\s+done(?:\s+(\d+))?", re.I)
+DONE_RE = re.compile(r"\b(?:(\d+)\s+)?attacks?\s+done(?:\s+(\d+))?\b", re.I)
 
 def parse_time(time_str):
     regex = re.compile(r'((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?')
@@ -100,12 +100,9 @@ class WarTracker(commands.Cog):
                     await self.finish_war(war["channel_id"], channel)
                     continue
 
-                # The bot may have been offline during the defence -> attack switch.
-                if current == "attack" and (war.get("phase") or "").lower() in DEFENCE:
-                    await asyncio.to_thread(
-                        supabase.table("wars").update({"phase": "attack"})
-                        .eq("channel_id", war["channel_id"]).execute
-                    )
+                # Do not advance the stored phase here: status_updater detects the
+                # defence -> attack switch, records it and announces it, so the
+                # announcement is not lost when the bot was offline at the switch.
 
                 self.status_tasks[war["channel_id"]] = asyncio.create_task(
                     self.status_updater(war["channel_id"], channel)
@@ -125,19 +122,26 @@ class WarTracker(commands.Cog):
         if action == "report": return await self.war_report(ctx)
         if action in ("cancel", "reset"): return await self.cancel_war(ctx)
         if action in ("warning", "warn"): return await self.war_warning(ctx, subaction, args)
-        if action == "attacks": return await self.war_attacks(ctx, args)
+        if action == "attacks":
+            # ``subaction`` swallows the first word (the player name); re-join it
+            # with the rest so both "!war attacks Sam 6" and
+            # "!war attacks Sam | 6" reach the parser intact.
+            parts = [p for p in (subaction, args) if p]
+            return await self.war_attacks(ctx, " ".join(parts))
         if action == "check": return await self.war_check(ctx)
         if action == "set":
             if not is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
-            if subaction == "attacks" and args and args.isdigit():
+            if subaction == "attacks" and args and args.strip().isdigit():
                 await asyncio.to_thread(supabase.table("war_settings").upsert({"guild_id": ctx.guild.id, "attacks_required": int(args)}, on_conflict="guild_id").execute)
-                return await ctx.send(f"✅ Required attacks updated to **{args}**.")
+                return await ctx.send(f"✅ Required attacks updated to **{args.strip()}**.")
             return await ctx.send("Usage: `!war set attacks <number>`")
             
         if action in ("defence", "defense", "attack"):
             if not is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
             if subaction != "ends" or not args: return await ctx.send(f"Usage: `!war {action} ends <time>`")
-            await self.start_timer(ctx, action, args)
+            return await self.start_timer(ctx, action, args)
+
+        await ctx.send("❌ Unknown war action. Use `!war help`.")
 
     async def start_timer(self, ctx, phase, time_str):
         td = parse_time(time_str)
@@ -196,8 +200,11 @@ class WarTracker(commands.Cog):
 
     async def _send_ping(self, channel, content, embed=None):
         try:
-            perms = channel.permissions_for(channel.guild.me)
-            if perms.mention_everyone:
+            # channel.guild.me is None when the bot member is not cached (for
+            # example right after a reconnect); don't crash the updater then.
+            me = getattr(getattr(channel, "guild", None), "me", None)
+            can_mention = bool(me and channel.permissions_for(me).mention_everyone)
+            if can_mention:
                 await channel.send(
                     content="@everyone " + content,
                     embed=embed,
@@ -205,7 +212,7 @@ class WarTracker(commands.Cog):
                 )
             else:
                 await channel.send(content=content, embed=embed)
-        except Exception as e:
+        except (discord.HTTPException, AttributeError, TypeError) as e:
             print(f"War announcement failed in {getattr(channel, 'id', '?')}: {e}")
 
     async def status_updater(self, channel_id, channel):
@@ -363,8 +370,20 @@ class WarTracker(commands.Cog):
         if absent: embed.add_field(name=f"🏖️ Excused ({len(absent)})", value=join_names(absent), inline=False)
         await ctx.send(embed=embed)
 
+    def _resolve_name(self, ctx, raw):
+        """Turn an ``@mention`` into a display name, otherwise lower-case the text."""
+        raw = (raw or "").strip()
+        if not raw:
+            return None
+        if ctx.message.mentions:
+            member = ctx.message.mentions[0]
+            return (member.display_name or member.name).strip().lower()
+        return raw.lower()
+
     async def war_missing(self, ctx, subaction, args):
         sub = (subaction or "list").lower()
+        if sub not in ("list", "add", "remove"):
+            return await ctx.send("Usage: `!war missing list`, `!war missing add <name>` or `!war missing remove <name>`")
         if sub != "list" and not is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
         async with self.locks[ctx.channel.id]:
             war = await get_war(ctx.channel.id)
@@ -373,8 +392,8 @@ class WarTracker(commands.Cog):
             if sub == "list":
                 if not missing: return await ctx.send("✅ The missing list is empty.")
                 return await ctx.send("⚠️ **Missing:** " + join_names(missing))
-            if not args: return await ctx.send("❌ Provide a name.")
-            name = args.strip().lower()
+            name = self._resolve_name(ctx, args)
+            if not name: return await ctx.send("❌ Provide a name or mention a user.")
             if sub == "add":
                 if any(a["name"].lower() == name for a in absent): return await ctx.send(f"🏖️ `{name}` is excused.")
                 if not any(m["name"].lower() == name for m in missing):
@@ -382,13 +401,18 @@ class WarTracker(commands.Cog):
                     await asyncio.to_thread(supabase.table("wars").update({"missing_list": missing}).eq("channel_id", ctx.channel.id).execute)
                 await ctx.send(f"✅ Added `{name}` to missing.")
             else:
+                if not any(m["name"].lower() == name for m in missing):
+                    return await ctx.send(f"❌ `{name}` is not on the missing list.")
                 missing = [m for m in missing if m["name"].lower() != name]
                 await asyncio.to_thread(supabase.table("wars").update({"missing_list": missing}).eq("channel_id", ctx.channel.id).execute)
                 await ctx.send(f"✅ Removed `{name}` from missing.")
 
     async def war_absent(self, ctx, subaction, args):
         sub = (subaction or "list").lower()
-        if not is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
+        if sub not in ("list", "add", "remove"):
+            return await ctx.send("Usage: `!war absent list`, `!war absent add <name>` or `!war absent remove <name>`")
+        if sub != "list" and not is_staff_member(ctx.author):
+            return await ctx.send("❌ Staff only.")
         args = (args or "").strip()
         async with self.locks[ctx.channel.id]:
             war = await get_war(ctx.channel.id)
@@ -397,8 +421,8 @@ class WarTracker(commands.Cog):
             if sub == "list":
                 if not absent: return await ctx.send("✅ The excused list is empty.")
                 return await ctx.send("🏖️ **Excused:** " + join_names(absent))
-            if not args: return await ctx.send("❌ Provide a name.")
-            name = args.lower()
+            name = self._resolve_name(ctx, args)
+            if not name: return await ctx.send("❌ Provide a name or mention a user.")
             if sub == "add":
                 if not any(a["name"].lower() == name for a in absent):
                     absent.append({"name": name})
@@ -406,6 +430,8 @@ class WarTracker(commands.Cog):
                     await asyncio.to_thread(supabase.table("wars").update({"absent_list": absent, "missing_list": missing}).eq("channel_id", ctx.channel.id).execute)
                 await ctx.send(f"🏖️ Added `{name}` to excused.")
             else:
+                if not any(a["name"].lower() == name for a in absent):
+                    return await ctx.send(f"❌ `{name}` is not on the excused list.")
                 absent = [a for a in absent if a["name"].lower() != name]
                 await asyncio.to_thread(supabase.table("wars").update({"absent_list": absent}).eq("channel_id", ctx.channel.id).execute)
                 await ctx.send(f"✅ Removed `{name}` from excused.")
@@ -421,6 +447,7 @@ class WarTracker(commands.Cog):
             parts = args.rsplit(maxsplit=1)
             if len(parts) != 2: return await ctx.send("Usage: `!war attacks <name> <count>` (or `name | count`)")
             name, count = parts[0].strip().lower(), parts[1].strip()
+        if not name: return await ctx.send("Usage: `!war attacks <name> <count>` (or `name | count`)")
         if not count.isdigit(): return await ctx.send("❌ Count must be a number.")
         cfg = await get_settings(ctx.guild.id)
         async with self.locks[ctx.channel.id]:
@@ -440,7 +467,7 @@ class WarTracker(commands.Cog):
         if not war: return await ctx.send("ℹ️ No war data found.")
         cfg = await get_settings(ctx.guild.id)
         required = cfg["attacks_required"]
-        counts = {k.lower(): int(v) for k, v in (war.get("attack_counts") or {}).items()}
+        counts = {k.lower(): int(v or 0) for k, v in (war.get("attack_counts") or {}).items()}
         absent = {a["name"].lower() for a in war.get("absent_list") or []}
         missing = {m["name"].lower() for m in war.get("missing_list") or []}
         names = set(counts) | missing 
@@ -450,25 +477,85 @@ class WarTracker(commands.Cog):
         else: embed.description = "✅ Everyone met the requirement."
         await ctx.send(embed=embed)
 
+    async def _resolve_member(self, ctx, raw):
+        """Resolve ``@mention`` / id / display name to a member without an API call when cached."""
+        raw = (raw or "").strip()
+        if not raw:
+            return None
+        if ctx.message.mentions:
+            return ctx.message.mentions[0]
+        match = re.fullmatch(r"<@!?(\d+)>", raw)
+        if match:
+            member = ctx.guild.get_member(int(match.group(1)))
+            if member:
+                return member
+        member = ctx.guild.get_member_named(raw)
+        if member:
+            return member
+        try:
+            results = await ctx.guild.query_members(query=raw, limit=5)
+        except Exception:
+            results = []
+        return results[0] if results else None
+
     async def warning_dispatch(self, ctx, action, target, reason):
         if not is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
         action = (action or "").lower()
-        if action not in ("add", "list", "remove") or not target: return await ctx.send("Usage: `!warning add|list|remove`")
+        usage = "Usage: `!warning add @user <reason>` · `!warning list [@user]` · `!warning remove <id>`"
+        if action not in ("add", "list", "remove"):
+            return await ctx.send(usage)
+
         try:
             if action == "remove":
-                res = await asyncio.to_thread(supabase.table("warnings").delete().eq("id", int(target)).eq("guild_id", ctx.guild.id).execute)
+                if not (target or "").isdigit():
+                    return await ctx.send("❌ Usage: `!warning remove <id>` — get IDs from `!warning list`.")
+                res = await asyncio.to_thread(
+                    supabase.table("warnings").delete()
+                    .eq("id", int(target)).eq("guild_id", ctx.guild.id).execute
+                )
                 return await ctx.send("✅ Warning removed." if res.data else "❌ Not found.")
-            member = await commands.MemberConverter().convert(ctx, target)
+
+            if action == "list" and not target:
+                res = await asyncio.to_thread(
+                    supabase.table("warnings").select("id, discord_id, reason")
+                    .eq("guild_id", ctx.guild.id).order("created_at", desc=True).limit(15).execute
+                )
+                if not res.data:
+                    return await ctx.send("✅ No warnings recorded for this server.")
+                embed = discord.Embed(title=f"⚠️ Warnings ({len(res.data)})", color=discord.Color.red())
+                for w in res.data:
+                    embed.add_field(name=f"ID {w['id']} · <@{w['discord_id']}>",
+                                    value=w.get("reason") or "No reason", inline=False)
+                return await ctx.send(embed=embed)
+
+            if not target:
+                return await ctx.send(usage)
+
+            member = await self._resolve_member(ctx, target)
+            if member is None:
+                return await ctx.send(f"❌ Couldn't find a member called `{target}`. Try mentioning them.")
             if action == "add":
-                await asyncio.to_thread(supabase.table("warnings").insert({"guild_id": ctx.guild.id, "discord_id": member.id, "reason": reason or "No reason", "issued_by": ctx.author.id}).execute)
+                # warnings.discord_id is a foreign key into users.
+                await asyncio.to_thread(ensure_user, member.id)
+                await asyncio.to_thread(
+                    supabase.table("warnings").insert({
+                        "guild_id": ctx.guild.id, "discord_id": member.id,
+                        "reason": reason or "No reason", "issued_by": ctx.author.id,
+                    }).execute
+                )
                 await ctx.send(f"📌 **{member.display_name}** has been warned.")
             else:
-                res = await asyncio.to_thread(supabase.table("warnings").select("*").eq("guild_id", ctx.guild.id).eq("discord_id", member.id).order("created_at", desc=True).limit(10).execute)
+                res = await asyncio.to_thread(
+                    supabase.table("warnings").select("*")
+                    .eq("guild_id", ctx.guild.id).eq("discord_id", member.id)
+                    .order("created_at", desc=True).limit(10).execute
+                )
                 if not res.data: return await ctx.send(f"✅ **{member.display_name}** has no warnings.")
                 embed = discord.Embed(title=f"Warnings for {member.display_name}", color=discord.Color.red())
-                for w in res.data: embed.add_field(name=f"ID {w['id']}", value=w['reason'], inline=False)
+                for w in res.data: embed.add_field(name=f"ID {w['id']}", value=w['reason'] or "No reason", inline=False)
                 await ctx.send(embed=embed)
-        except Exception as e: await ctx.send(f"❌ Error: {e}")
+        except Exception as e:
+            await ctx.send(f"❌ Error: {e}")
 
     @commands.command(name="warning")
     @commands.guild_only()
@@ -499,7 +586,7 @@ class WarTracker(commands.Cog):
             found = next((m for m in missing if m["name"].lower() in names), None)
 
             m = DONE_RE.search(message.content)
-            done = int(m.group(1)) if m.group(1) else required
+            done = int(m.group(1) or m.group(2) or required)
             key = found["name"].lower() if found else message.author.display_name.lower()
             
             counts[key] = done
@@ -507,7 +594,15 @@ class WarTracker(commands.Cog):
                 
             await asyncio.to_thread(supabase.table("wars").update({"missing_list": missing, "attack_counts": counts}).eq("channel_id", message.channel.id).execute)
 
-        reply = await message.reply(f"✅ **{message.author.display_name}**: {done}/{required} attacks recorded." + (" Staff: react ❌ to undo." if found and done >= required else ""), mention_author=False)
+        try:
+            reply = await message.reply(
+                f"✅ **{message.author.display_name}**: {done}/{required} attacks recorded."
+                + (" Staff: react ❌ to undo." if found and done >= required else ""),
+                mention_author=False,
+            )
+        except discord.HTTPException as e:
+            print(f"Could not reply to attack log in {message.channel.id}: {e}")
+            return
         if found and done >= required:
             if len(self.done_replies) > 500: self.done_replies.pop(next(iter(self.done_replies)), None)
             self.done_replies[reply.id] = found["name"]
@@ -551,7 +646,7 @@ class WarTracker(commands.Cog):
             inline=False,
         )
         embed.add_field(name="Public", value="`!war status`\n`!war missing list`\n`attacks done`", inline=False)
-        if is_staff: embed.add_field(name="Staff", value="`!war defence ends <time>`\n`!war attack ends <time>`\n`!war cancel`\n`!war missing add|remove <name>`\n`!war absent add|remove <name>`\n`!war attacks <name> | <count>`\n`!war check`\n`!war warning`", inline=False)
+        if is_staff: embed.add_field(name="Staff", value="`!war defence ends <time>`\n`!war attack ends <time>`\n`!war cancel`\n`!war missing add|remove <name>`\n`!war absent add|remove <name>`\n`!war attacks <name> <count>`\n`!war check`\n`!war warning add @user <reason>`", inline=False)
         await ctx.send(embed=embed)
 
 async def setup(bot):
