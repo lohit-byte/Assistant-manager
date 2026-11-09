@@ -12,7 +12,7 @@ import {
 } from '@/components/ui'
 import {
   addWarning, deleteWarning, getWar, getWarSettings, listAliases, listRaceLogs, listWarnings,
-  listWarLogs, saveWarSettings, updateWar,
+  listWarLogs, saveWarSettings, saveWarTeamRole, updateWar,
 } from '@/lib/data'
 import { computeRatings, type RatingRow } from '@/lib/rating'
 import { createClient } from '@/lib/supabase/client'
@@ -153,8 +153,10 @@ export default function WarPage() {
             team?.race_channel_id !== null && team?.race_channel_id !== undefined
               ? String(team.race_channel_id)
               : null
-          const windowStart =
-            nextWar?.war_start ?? new Date(Date.now() - 7 * 86_400_000).toISOString()
+          // Only an active war narrows the race window; otherwise rating uses the last 7 days.
+          const windowStart = nextWar?.is_active
+            ? nextWar.war_start ?? new Date(Date.now() - 7 * 86_400_000).toISOString()
+            : new Date(Date.now() - 7 * 86_400_000).toISOString()
 
           const [nextWarLogs, nextRaceLogs] = await Promise.all([
             listWarLogs(supabase, channelId, nextWar?.war_start ?? null, 25).catch(() => []),
@@ -169,7 +171,6 @@ export default function WarPage() {
               warSettings: nextSettings,
               raceLogs: nextRaceLogs,
               aliases: nextAliases,
-              windowStart,
               warChannelId: channelId,
               raceChannelId,
             }),
@@ -226,11 +227,15 @@ export default function WarPage() {
     }
     setBusy('team-role')
     try {
-      await updateWar(createClient(), channelId, { team_role_id: roleId || null })
+      // Keep `teams.team_role_id` (the Setup source of truth) in sync with the war row the bot
+      // reads, so both editors agree.
+      await saveWarTeamRole(createClient(), channelId, ratingTeam?.id ?? null, roleId || null)
       setWar(await getWar(createClient(), channelId))
       setFeedback({
         tone: 'green',
-        text: roleId ? 'Team role saved — announcements in this channel will ping it.' : 'Team role cleared.',
+        text: roleId
+          ? `Team role saved — announcements in this channel will ping it${ratingTeam ? ', and the team setup shows it too' : ''}.`
+          : 'Team role cleared.',
       })
     } catch (caught) {
       setFeedback({ tone: 'red', text: 'Could not save the team role.' })

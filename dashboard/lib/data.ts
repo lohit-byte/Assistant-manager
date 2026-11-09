@@ -280,7 +280,8 @@ export async function renameAlias(
   const oldName = alias.alias_name.trim().toLowerCase()
   const cleanName = newName.trim().toLowerCase()
   if (!cleanName) throw new Error('Enter a new alias name.')
-  if (cleanName === oldName) return
+  // Renaming to the current name is the same user mistake as renaming onto another alias.
+  if (cleanName === oldName) throw new Error(`“${cleanName}” already exists.`)
 
   // Aliases are stored lower-case; compare in JS so mixed-case rows are caught too.
   const aliases = await listAliases(supabase, guildId)
@@ -305,15 +306,28 @@ export async function renameAlias(
     )
   }
 
-  const renameEntries = (
-    entries: War['missing_list'],
-  ): { entries: War['missing_list']; changed: boolean } => {
-    if (!entries) return { entries, changed: false }
+  /**
+   * Mirrors the bot's `_rename_entries`: rewrites `{ "name": ... }` entries and also the
+   * legacy plain-string entries old war rows may still hold.
+   */
+  const renameEntries = (raw: unknown): { entries: unknown[] | null; changed: boolean } => {
+    if (raw === null || raw === undefined) return { entries: null, changed: false }
+    if (!Array.isArray(raw)) return { entries: null, changed: false }
     let changed = false
-    const next = entries.map((entry) => {
-      if (entry?.name && entry.name.trim().toLowerCase() === oldName) {
-        changed = true
-        return { ...entry, name: cleanName }
+    const next = raw.map((entry: unknown) => {
+      if (typeof entry === 'string') {
+        if (entry.trim().toLowerCase() === oldName) {
+          changed = true
+          return cleanName
+        }
+        return entry
+      }
+      if (entry && typeof entry === 'object') {
+        const name = (entry as { name?: unknown }).name
+        if (typeof name === 'string' && name.trim().toLowerCase() === oldName) {
+          changed = true
+          return { ...(entry as Record<string, unknown>), name: cleanName }
+        }
       }
       return entry
     })
@@ -356,6 +370,55 @@ export interface TeamValues {
   team_role_id: string | null
 }
 
+type WriteError = { message: string; code?: string; details?: string | null } | null
+
+/** Friendly message for Postgres unique-violation (23505) writes on teams. */
+function throwTeamWriteError(error: WriteError, context: string): void {
+  if (!error) return
+  if (error.code === '23505') {
+    const text = `${error.message ?? ''} ${error.details ?? ''}`
+    if (/war_channel/i.test(text)) {
+      throw new Error('That war channel is already linked to another team.')
+    }
+    if (/race_channel/i.test(text)) {
+      throw new Error('That race channel is already linked to another team.')
+    }
+    if (/name/i.test(text)) {
+      throw new Error('A team with that name already exists.')
+    }
+    throw new Error('That team already exists.')
+  }
+  throw new Error(`${context}: ${error.message}`)
+}
+
+/** Friendly message for Postgres unique-violation (23505) writes on team captains. */
+function throwCaptainWriteError(error: WriteError, context: string): void {
+  if (!error) return
+  if (error.code === '23505') {
+    throw new Error('That user is already a captain of this team.')
+  }
+  throw new Error(`${context}: ${error.message}`)
+}
+
+/**
+ * The bot still reads `wars.team_role_id` for announcements, so every team-role edit is
+ * mirrored onto the team's war row when that row exists. A no-op when no war row exists.
+ */
+async function mirrorTeamRoleToWar(
+  supabase: SupabaseClient,
+  warChannelId: string | null,
+  teamRoleId: string | null,
+): Promise<void> {
+  if (!warChannelId) return
+  const { error } = await supabase
+    .from('wars')
+    .update({ team_role_id: teamRoleId })
+    .eq('channel_id', warChannelId)
+  if (error) {
+    throw new Error(`Team saved, but the war role could not be synced: ${error.message}`)
+  }
+}
+
 export async function listTeams(supabase: SupabaseClient, guildId: string): Promise<Team[]> {
   const { data, error } = await supabase
     .from('teams')
@@ -375,14 +438,21 @@ export async function createTeam(
   const name = values.name.trim()
   if (!name) throw new Error('Enter a team name.')
 
+  const warChannelId = cleanSnowflake(values.war_channel_id)
+  const teamRoleId = cleanSnowflake(values.team_role_id)
+
   const { error } = await supabase.from('teams').insert({
     guild_id: guildId,
     name,
-    war_channel_id: cleanSnowflake(values.war_channel_id),
+    war_channel_id: warChannelId,
     race_channel_id: cleanSnowflake(values.race_channel_id),
-    team_role_id: cleanSnowflake(values.team_role_id),
+    team_role_id: teamRoleId,
   })
-  throwIfError(error, 'Could not create the team')
+  throwTeamWriteError(error, 'Could not create the team')
+
+  // A role picked while creating the team must reach the bot too. Leaving it empty keeps any
+  // existing `wars.team_role_id` (the bot's own role still wins until the team sets one).
+  if (teamRoleId) await mirrorTeamRoleToWar(supabase, warChannelId, teamRoleId)
 }
 
 /**
@@ -409,15 +479,35 @@ export async function saveTeam(
       team_role_id: teamRoleId,
     })
     .eq('id', team.id)
-  throwIfError(error, 'Could not save the team')
+  throwTeamWriteError(error, 'Could not save the team')
 
-  if (warChannelId) {
-    const { error: warError } = await supabase
-      .from('wars')
-      .update({ team_role_id: teamRoleId })
-      .eq('channel_id', warChannelId)
-    if (warError) {
-      throw new Error(`Team saved, but the war role could not be synced: ${warError.message}`)
+  await mirrorTeamRoleToWar(supabase, warChannelId, teamRoleId)
+}
+
+/**
+ * The War page's "Save Team Role" control. It writes the war row the bot reads and mirrors the
+ * value onto the owning team row, so `teams.team_role_id` stays the single source of truth.
+ */
+export async function saveWarTeamRole(
+  supabase: SupabaseClient,
+  channelId: string,
+  teamId: number | null,
+  teamRoleId: string | null,
+): Promise<void> {
+  const cleanRole = cleanSnowflake(teamRoleId)
+  const { error } = await supabase
+    .from('wars')
+    .update({ team_role_id: cleanRole })
+    .eq('channel_id', channelId)
+  throwIfError(error, 'Could not save the team role')
+
+  if (teamId !== null) {
+    const { error: teamError } = await supabase
+      .from('teams')
+      .update({ team_role_id: cleanRole })
+      .eq('id', teamId)
+    if (teamError) {
+      throw new Error(`Team role saved to the war, but the team could not be updated: ${teamError.message}`)
     }
   }
 }
@@ -461,7 +551,7 @@ export async function addTeamCaptain(
       { team_id: teamId, discord_id: cleanId },
       { onConflict: 'team_id,discord_id', ignoreDuplicates: true },
     )
-  throwIfError(error, 'Could not add the captain')
+  throwCaptainWriteError(error, 'Could not add the captain')
 }
 
 export async function removeTeamCaptain(
@@ -560,7 +650,11 @@ export interface TeamSnapshot {
   captains: TeamCaptain[]
   war: War | null
   race: RaceState | null
-  warLogs: WarLog[]
+  /**
+   * Newest `war_logs` row only, used for the "last attack" label. Raw log rows stay on the
+   * staff/captain War page; the Overview never ships the whole log to members.
+   */
+  lastWarLog: WarLog | null
   raceLogs: RaceLog[]
 }
 
@@ -623,12 +717,16 @@ export async function getTeamsOverview(
       const raceChannel = team.race_channel_id !== null ? String(team.race_channel_id) : null
       const war = warChannel ? warByChannel.get(warChannel) ?? null : null
       const race = raceChannel ? raceByChannel.get(raceChannel) ?? null : null
-      const windowStart = war?.war_start ?? sevenDaysAgo
+      // The race half of the rating looks at the active war's window; without an active war
+      // it falls back to the last seven days.
+      const windowStart = war?.is_active ? war.war_start ?? sevenDaysAgo : sevenDaysAgo
 
-      const [warLogs, raceLogs] = await Promise.all([
+      const [lastWarLog, raceLogs] = await Promise.all([
         warChannel
-          ? listWarLogs(supabase, warChannel, war?.war_start ?? null, 50).catch(() => [])
-          : Promise.resolve<WarLog[]>([]),
+          ? listWarLogs(supabase, warChannel, war?.war_start ?? null, 1)
+              .then((rows) => rows[0] ?? null)
+              .catch(() => null)
+          : Promise.resolve<WarLog | null>(null),
         raceChannel
           ? listRaceLogs(supabase, guildId, raceChannel, windowStart).catch(() => [])
           : Promise.resolve<RaceLog[]>([]),
@@ -638,7 +736,7 @@ export async function getTeamsOverview(
         team,
         war,
         race,
-        warLogs,
+        lastWarLog,
         raceLogs,
         captains: captains.filter((captain) => Number(captain.team_id) === Number(team.id)),
       }

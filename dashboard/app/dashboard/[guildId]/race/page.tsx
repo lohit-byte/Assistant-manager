@@ -9,6 +9,7 @@ import { getRaceState, listAliases, listRaceLogs, saveRaceState } from '@/lib/da
 import { createClient } from '@/lib/supabase/client'
 import { NODES_PER_LAP } from '@/lib/constants'
 import { formatDateTime, percent } from '@/lib/format'
+import { parseNodeSheet } from '@/lib/node-sheet'
 import type { RaceLog, RaceState, Alias } from '@/lib/types'
 import { useNow } from '@/lib/hooks'
 
@@ -57,7 +58,7 @@ export default function RacePage() {
   const [logs, setLogs] = useState<RaceLog[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
-  const [feedback, setFeedback] = useState<{ tone: 'green' | 'red'; text: string } | null>(null)
+  const [feedback, setFeedback] = useState<{ tone: 'green' | 'amber' | 'red'; text: string } | null>(null)
 
   const [sheets, setSheets] = useState<{ name: string }[]>([])
   const [activeSheet, setActiveSheet] = useState<string | null>(null)
@@ -142,13 +143,43 @@ export default function RacePage() {
     if (!sheetName || !jsonInput) return
     setBusy('sheet')
     try {
-      const parsed = JSON.parse(jsonInput)
+      // Same validation as the bot's per-server upload: accept a `{nodes}` wrapper, skip
+      // malformed nodes with a warning, and only reject a payload that is not an object.
+      let payload: unknown
+      try {
+        payload = JSON.parse(jsonInput)
+      } catch {
+        throw new Error('Invalid JSON — check the brackets and quotes.')
+      }
+      const { nodes, warnings } = parseNodeSheet(payload)
+      const nodeCount = Object.keys(nodes).length
+      if (nodeCount === 0) {
+        throw new Error(
+          warnings[0] ?? 'No usable nodes found. Each node needs `lap.node` keys with ofa, dyp and je strings.',
+        )
+      }
+
       const supabase = createClient()
-      const { error } = await supabase.from('race_sheets').upsert({ guild_id: guildId, name: sheetName, data: parsed }, { onConflict: 'guild_id,name' })
+      const { error } = await supabase
+        .from('race_sheets')
+        .upsert({ guild_id: guildId, name: sheetName, data: nodes }, { onConflict: 'guild_id,name' })
       if (error) throw error
-      setFeedback({ tone: 'green', text: `Sheet "${sheetName}" uploaded!` })
-      setSheetName(''); load('refresh')
-    } catch (e) { setFeedback({ tone: 'red', text: 'Invalid JSON.' }) } finally { setBusy(null) }
+
+      if (warnings.length > 0) {
+        setFeedback({
+          tone: 'amber',
+          text: `Sheet "${sheetName}" uploaded with ${nodeCount} node${nodeCount === 1 ? '' : 's'}; ${warnings.length} skipped: ${warnings.slice(0, 3).join(' ')}`,
+        })
+      } else {
+        setFeedback({ tone: 'green', text: `Sheet "${sheetName}" uploaded with ${nodeCount} node${nodeCount === 1 ? '' : 's'}!` })
+      }
+      setSheetName('')
+      load('refresh')
+    } catch (e) {
+      setFeedback({ tone: 'red', text: e instanceof Error ? e.message : 'Could not upload the sheet.' })
+    } finally {
+      setBusy(null)
+    }
   }
 
   const selectSheet = async (value: string) => {
