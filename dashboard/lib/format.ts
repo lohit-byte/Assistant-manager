@@ -95,28 +95,36 @@ export interface WarWindow {
  */
 export function getWarWindow(war: War | null): WarWindow {
   if (!war) return { start: null, phaseEnd: null, warEnd: null, phase: 'unknown', active: false }
-  
+
   const start = toDate(war.war_start)
-  const rawPhase = (war.phase || '').toLowerCase()
-  const phase =
-    rawPhase === 'defence' || rawPhase === 'defense'
-      ? 'defence'
-      : rawPhase === 'attack'
-        ? 'attack'
-        : rawPhase === 'ended'
-          ? 'ended'
-          : 'unknown'
-
-  let phaseEnd: Date | null = null
-  let warEnd: Date | null = null
-
-  if (start) {
-    warEnd = new Date(start.getTime() + 48 * 3600_000)
-    if (phase === 'defence') phaseEnd = new Date(start.getTime() + 24 * 3600_000)
-    if (phase === 'attack') phaseEnd = warEnd
+  if (!start) {
+    // Rows written before war_start was stored can only fall back to the saved phase.
+    const raw = (war.phase || '').toLowerCase()
+    const phase = raw === 'attack' ? 'attack' : raw === 'ended' ? 'ended' : 'unknown'
+    return { start: null, phaseEnd: null, warEnd: null, phase, active: false }
   }
 
-  return { start, phaseEnd, warEnd, phase, active: Boolean(war.is_active) && phase !== 'ended' }
+  // The timeline is fixed: defence for the first 24h, attack for the last 24h.
+  // Deriving the phase from war_start keeps the dashboard honest even when the
+  // bot was offline during the switch or the stored phase is stale.
+  const defenceEnd = new Date(start.getTime() + 24 * 3600_000)
+  const warEnd = new Date(start.getTime() + 48 * 3600_000)
+  const now = Date.now()
+
+  const phase =
+    !war.is_active || now >= warEnd.getTime()
+      ? 'ended'
+      : now >= defenceEnd.getTime()
+        ? 'attack'
+        : 'defence'
+
+  return {
+    start,
+    phaseEnd: phase === 'defence' ? defenceEnd : warEnd,
+    warEnd,
+    phase,
+    active: Boolean(war.is_active) && phase !== 'ended',
+  }
 }
 
 export function warPhaseLabel(phase: WarWindow['phase']): string {

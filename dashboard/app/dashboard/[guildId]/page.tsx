@@ -254,7 +254,12 @@ export default function OverviewPage() {
                     </Badge>
                     {warWindow.phaseEnd ? (
                       <span className="text-xs text-slate-500">
-                        Ends {formatDateTime(warWindow.phaseEnd)}
+                        Phase ends {formatDateTime(warWindow.phaseEnd)}
+                      </span>
+                    ) : null}
+                    {warWindow.warEnd ? (
+                      <span className="text-xs text-slate-600">
+                        · War ends {formatDateTime(warWindow.warEnd)}
                       </span>
                     ) : null}
                   </div>

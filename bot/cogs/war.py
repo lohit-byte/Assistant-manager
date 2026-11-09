@@ -25,6 +25,18 @@ def to_utc(s: str) -> datetime:
     dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
+def phase_at(start: datetime, now: datetime) -> str:
+    """Fixed war timeline: defence for the first 24h, attack for the last 24h."""
+    if not start: return "unknown"
+    if now >= start + WAR: return "ended"
+    return "attack" if now >= start + PHASE else "defence"
+
+
+def phase_bounds(start: datetime, phase: str):
+    """(start, end) of the phase that is running at ``phase``."""
+    if phase == "defence": return start, start + PHASE
+    return start + PHASE, start + WAR
+
 def join_names(items, limit=1000):
     text = ", ".join(i["name"] for i in items)
     return text if len(text) <= limit else text[:limit - 3] + "..."
@@ -63,6 +75,7 @@ class WarTracker(commands.Cog):
         self.ping_tasks = {}
         self.done_replies = {}  
         self.locks = defaultdict(asyncio.Lock)
+        self.end_reminded = set()
 
     async def cog_load(self):
         self.bot.loop.create_task(self.restore_events())
@@ -75,27 +88,28 @@ class WarTracker(commands.Cog):
         await self.bot.wait_until_ready()
         try:
             res = await asyncio.to_thread(supabase.table("wars").select("*").eq("is_active", True).execute)
+            now = datetime.now(timezone.utc)
             for war in res.data:
-                if not war.get("war_start") or war.get("phase") == "ended": continue
-                guild = self.bot.get_guild(war["guild_id"])
+                start = to_utc(war.get("war_start"))
                 channel = self.bot.get_channel(war.get("channel_id"))
-                if not guild or not channel: continue
-                
-                start = to_utc(war["war_start"])
-                now = datetime.now(timezone.utc)
-                end = start + timedelta(hours=24 if war["phase"] in DEFENCE else 48)
-                
-                if end > now:
-                    self.status_tasks[war["channel_id"]] = asyncio.create_task(self.status_updater(war["channel_id"], channel))
-                elif war["phase"] in DEFENCE:
-                    await asyncio.to_thread(supabase.table("wars").update({"phase": "attack"}).eq("channel_id", war["channel_id"]).execute)
-                    attack_end = start + timedelta(hours=48)
-                    if attack_end > now:
-                        self.status_tasks[war["channel_id"]] = asyncio.create_task(self.status_updater(war["channel_id"], channel))
-                    else:
-                        await self.finish_war(war["channel_id"], channel)
-                else:
+                if not start or not channel:
+                    continue
+
+                current = phase_at(start, now)
+                if current == "ended":
                     await self.finish_war(war["channel_id"], channel)
+                    continue
+
+                # The bot may have been offline during the defence -> attack switch.
+                if current == "attack" and (war.get("phase") or "").lower() in DEFENCE:
+                    await asyncio.to_thread(
+                        supabase.table("wars").update({"phase": "attack"})
+                        .eq("channel_id", war["channel_id"]).execute
+                    )
+
+                self.status_tasks[war["channel_id"]] = asyncio.create_task(
+                    self.status_updater(war["channel_id"], channel)
+                )
         except Exception as e:
             print(f"Error restoring wars: {e}")
 
@@ -127,24 +141,32 @@ class WarTracker(commands.Cog):
 
     async def start_timer(self, ctx, phase, time_str):
         td = parse_time(time_str)
-        if not td: return await ctx.send("❌ Invalid time. Use `24h`.")
-        if td > timedelta(hours=24): return await ctx.send("❌ Phase cannot exceed 24 hours.")
+        if not td: return await ctx.send("❌ Invalid time. Use `20h` or `1h30m`.")
+        if td > PHASE: return await ctx.send("❌ Time left in a phase cannot exceed 24 hours.")
 
         existing_war = await get_war(ctx.channel.id)
         if not existing_war or not existing_war.get("is_active"):
             if not await check_team_limit(ctx.guild.id):
                 return await ctx.send("❌ **Team limit reached!** Your server's plan only allows a certain number of active teams. Upgrade on the dashboard to add more.")
 
-        now = ctx.message.created_at 
-        end_time = now + td
-        war_start = end_time - timedelta(hours=24 if phase in DEFENCE else 48)
+        # The war timeline is fixed: defence 24h -> attack 24h. The command argument
+        # is the time left in the phase the staff member names, so the war start is
+        # back-dated accordingly (works even if tracking begins mid-war).
+        now = datetime.now(timezone.utc)
+        if phase in DEFENCE:
+            war_start = now + td - PHASE
+        else:
+            war_start = now + td - WAR
+
+        current_phase = phase_at(war_start, now)
+        war_end = war_start + WAR
 
         try:
             war_data = {
                 "guild_id": ctx.guild.id,
-                "channel_id": ctx.channel.id, 
+                "channel_id": ctx.channel.id,
                 "war_start": war_start.isoformat(),
-                "phase": phase,
+                "phase": current_phase,
                 "is_active": True,
                 "status_message_id": None,
             }
@@ -154,55 +176,167 @@ class WarTracker(commands.Cog):
                 war_data["attack_counts"] = {}
 
             await asyncio.to_thread(supabase.table("wars").upsert(war_data, on_conflict="channel_id").execute)
-            
+
             if ctx.channel.id in self.status_tasks: self.status_tasks[ctx.channel.id].cancel()
-            
+            self.end_reminded.discard(ctx.channel.id)
             self.status_tasks[ctx.channel.id] = asyncio.create_task(
                 self.status_updater(ctx.channel.id, ctx.channel)
             )
-            await ctx.send(f"✅ War timer started for this channel. Check the live status embed below.")
+
+            embed = discord.Embed(title="✅ War tracking started", color=discord.Color.blue())
+            embed.add_field(name="Current phase", value=current_phase.title(), inline=True)
+            embed.add_field(name="War ends", value=f"<t:{int(war_end.timestamp())}:R>", inline=True)
+            embed.add_field(name="Phase ends", value=f"<t:{int((war_start + PHASE if current_phase == 'defence' else war_end).timestamp())}:R>", inline=True)
+            embed.set_footer(text="Defence lasts 24h, then the attack phase starts automatically.")
+            await ctx.send(embed=embed)
         except Exception as e:
             await ctx.send(f"❌ Error: {e}")
 
+    async def _send_ping(self, channel, content, embed=None):
+        try:
+            perms = channel.permissions_for(channel.guild.me)
+            if perms.mention_everyone:
+                await channel.send(
+                    content="@everyone " + content,
+                    embed=embed,
+                    allowed_mentions=discord.AllowedMentions(everyone=True),
+                )
+            else:
+                await channel.send(content=content, embed=embed)
+        except Exception as e:
+            print(f"War announcement failed in {getattr(channel, 'id', '?')}: {e}")
+
     async def status_updater(self, channel_id, channel):
+        """Watches one war and drives the defence -> attack -> ended timeline."""
         try:
             while True:
                 war = await get_war(channel_id)
-                if not war or not war.get("is_active"): return
-                start = to_utc(war["war_start"])
-                if datetime.now(timezone.utc) >= start + WAR:
+                if not war or not war.get("is_active"):
+                    return
+
+                start = to_utc(war.get("war_start"))
+                if not start:
+                    return
+
+                now = datetime.now(timezone.utc)
+                current = phase_at(start, now)
+
+                if current == "ended":
                     await self.finish_war(channel_id, channel)
                     return
-                # Just purely loop for now, the actual embed is sent on demand via !war status
-                await asyncio.sleep(60)
+
+                stored = (war.get("phase") or "").lower()
+                if current == "attack" and stored in DEFENCE:
+                    await asyncio.to_thread(
+                        supabase.table("wars").update({"phase": "attack"})
+                        .eq("channel_id", channel_id).execute
+                    )
+                    await self.announce_attack(channel, start, war)
+
+                war_end = start + WAR
+                if channel_id not in self.end_reminded and 0 < (war_end - now).total_seconds() <= 3600:
+                    self.end_reminded.add(channel_id)
+                    await self.announce_war_ending(channel, war_end, war)
+
+                await asyncio.sleep(30)
         except asyncio.CancelledError:
             pass
 
+    async def announce_attack(self, channel, start, war):
+        missing = war.get("missing_list") or []
+        embed = discord.Embed(
+            title="⚔️ Attack phase has begun!",
+            color=discord.Color.red(),
+            description=(
+                f"Defence is over. The war ends <t:{int((start + WAR).timestamp())}:R>.\n"
+                f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}\n\n"
+                "Use `attacks done` after attacking, and `!war status` for the live board."
+            ),
+        )
+        await self._send_ping(channel, "⚔️ **Attack phase started!**", embed)
+
+    async def announce_war_ending(self, channel, war_end, war):
+        missing = war.get("missing_list") or []
+        embed = discord.Embed(
+            title="⏰ 1 hour left in the war!",
+            color=discord.Color.orange(),
+            description=(
+                f"War ends <t:{int(war_end.timestamp())}:R>.\n"
+                f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}"
+            ),
+        )
+        await self._send_ping(channel, "⏰ **One hour left in the war!**", embed)
+
     async def finish_war(self, channel_id, channel):
         task = self.status_tasks.pop(channel_id, None)
-        if task: task.cancel()
+        if task and task is not asyncio.current_task():
+            task.cancel()
+        self.end_reminded.discard(channel_id)
+
+        missing = []
         try:
-            await asyncio.to_thread(supabase.table("wars").update({"is_active": False, "phase": "ended"}).eq("channel_id", channel_id).execute)
-            await channel.send(embed=discord.Embed(title="🏁 The War Has Ended!", description="Use `!war report` to view final stats.", color=discord.Color.red()))
-        except Exception: pass
+            war = await get_war(channel_id)
+            missing = war.get("missing_list") or [] if war else []
+            await asyncio.to_thread(
+                supabase.table("wars").update({"is_active": False, "phase": "ended"})
+                .eq("channel_id", channel_id).execute
+            )
+            embed = discord.Embed(
+                title="🏁 The War Has Ended!",
+                description=(
+                    f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}\n"
+                    "Use `!war report` to view the final stats."
+                ),
+                color=discord.Color.red(),
+            )
+            await self._send_ping(channel, "🏁 **The war has ended!**", embed)
+        except Exception as e:
+            print(f"Could not finish war in {channel_id}: {e}")
 
     async def build_status_embed(self, channel_id):
         war = await get_war(channel_id)
-        if not war or not war.get("is_active"): return discord.Embed(title="No Active War", color=discord.Color.light_grey())
-        
-        start = to_utc(war["war_start"])
+        if not war or not war.get("is_active"):
+            return discord.Embed(title="No Active War", color=discord.Color.light_grey())
+
+        start = to_utc(war.get("war_start"))
         now = datetime.now(timezone.utc)
         missing, absent = war.get("missing_list") or [], war.get("absent_list") or []
-        
-        if war["phase"] in DEFENCE:
-            end = start + timedelta(hours=24)
-            bar = progress_bar((now - start).total_seconds(), 86400)
-            embed = discord.Embed(title="🛡️ DEFENCE PHASE", color=discord.Color.blue(), description=f"{bar}\n**Time left:** {fmt_td(end - now)}\n**Ends:** <t:{int(end.timestamp())}:R>")
+
+        current = phase_at(start, now)
+        if current == "unknown":
+            return discord.Embed(title="No Active War", color=discord.Color.light_grey())
+
+        if current == "ended":
+            return discord.Embed(
+                title="🏁 War finished",
+                description=f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}",
+                color=discord.Color.red(),
+            )
+
+        phase_start, phase_end = phase_bounds(start, current)
+        elapsed = (now - phase_start).total_seconds()
+        bar = progress_bar(elapsed, 86400)
+        war_end = start + WAR
+
+        if current == "defence":
+            embed = discord.Embed(
+                title="🛡️ DEFENCE PHASE",
+                color=discord.Color.blue(),
+                description=(
+                    f"{bar}\n**Phase ends:** <t:{int(phase_end.timestamp())}:R>\n"
+                    f"**War ends:** <t:{int(war_end.timestamp())}:R>"
+                ),
+            )
         else:
-            end = start + timedelta(hours=48)
-            bar = progress_bar((now - (start + timedelta(hours=24))).total_seconds(), 86400)
-            embed = discord.Embed(title="⚔️ ATTACK PHASE", color=discord.Color.red(), description=f"{bar}\n**Time left:** {fmt_td(end - now)}\n**Ends:** <t:{int(end.timestamp())}:R>")
-            
+            embed = discord.Embed(
+                title="⚔️ ATTACK PHASE",
+                color=discord.Color.red(),
+                description=(
+                    f"{bar}\n**Phase ends:** <t:{int(phase_end.timestamp())}:R>\n"
+                    f"**War ends:** <t:{int(war_end.timestamp())}:R>"
+                ),
+            )
+
         embed.add_field(name=f"⚠️ Missing ({len(missing)})", value=join_names(missing) or "None", inline=False)
         embed.add_field(name=f"🏖️ Excused ({len(absent)})", value=join_names(absent) or "None", inline=False)
         return embed
@@ -401,6 +535,16 @@ class WarTracker(commands.Cog):
     async def show_help(self, ctx):
         is_staff = is_staff_member(ctx.author)
         embed = discord.Embed(title="🛡️ War Commands", color=discord.Color.blue())
+        embed.add_field(
+            name="Timeline",
+            value=(
+                "Every war is defence **24h** then attack **24h** (48h total). "
+                "`<time>` is the time left in the phase you name — tracking can start at any point:\n"
+                "`!war defence ends 20h` → 20h of defence left, war ends in 44h\n"
+                "`!war attack ends 20h` → 20h of attack left, war ends in 20h"
+            ),
+            inline=False,
+        )
         embed.add_field(name="Public", value="`!war status`\n`!war missing list`\n`attacks done`", inline=False)
         if is_staff: embed.add_field(name="Staff", value="`!war defence ends <time>`\n`!war attack ends <time>`\n`!war cancel`\n`!war missing add|remove <name>`\n`!war absent add|remove <name>`\n`!war attacks <name> | <count>`\n`!war check`\n`!war warning`", inline=False)
         await ctx.send(embed=embed)
