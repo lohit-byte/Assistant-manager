@@ -135,7 +135,7 @@ export default function Landing() {
             className={buttonClass('primary', 'sm')}
           >
             <DiscordIcon className="h-3.5 w-3.5" />
-            {loading ? 'Redirecting…' : 'Sign in'}
+            {loading ? 'Redirecting…' : 'Start free trial'}
           </button>
         </div>
         <button
@@ -204,11 +204,9 @@ export default function Landing() {
                 <span className="live-dot" aria-hidden />
                 {hero.stamp}
               </p>
-              <h1 className="display mt-5 text-[clamp(2.7rem,6.7vw,5.5rem)] text-slate-50">
-                {hero.title.split('48-hour')[0]}
-                <span className="whitespace-nowrap">
-                  48-hour{hero.title.split('48-hour')[1]}
-                </span>
+              <h1 className="display mt-5 text-[clamp(2.2rem,4.4vw,3.6rem)] text-slate-50">
+                {hero.title.replace(hero.titleAccent, '')}
+                <span className="block text-accent-500">{hero.titleAccent}</span>
               </h1>
               <p className="mt-6 max-w-[46ch] text-[17px] leading-relaxed text-slate-400">
                 {hero.lede}
@@ -228,7 +226,8 @@ export default function Landing() {
                   {error}
                 </Alert>
               ) : null}
-              <ul className="mt-7 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500">
+              <p className="mt-4 text-[13px] leading-relaxed text-slate-500">{hero.effortNote}</p>
+              <ul className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500">
                 {hero.highlights.map((item) => (
                   <li key={item} className="inline-flex items-center gap-1.5">
                     <Check className="h-3.5 w-3.5 text-sage-400" aria-hidden />
@@ -486,7 +485,7 @@ export default function Landing() {
                 Assistant
               </p>
               <p className="mt-4 max-w-[44ch] text-sm leading-relaxed text-slate-500">
-                A war board for Monster Legends alliance staff. Built to replace the pinned
+                The alliance board for Monster Legends staff. Built to replace the pinned
                 spreadsheet, not the conversation.
               </p>
             </div>

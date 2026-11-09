@@ -11,17 +11,21 @@ export const site = {
   name: 'Legends Assistant',
   url: 'https://drlohithealth.com',
   description:
-    'Track the 48-hour alliance war, missing attacks, race nodes and maze discounts for your Monster Legends alliance, from one board.',
+    'Track alliance wars, race nodes (OFA, DYP and JE), maze island discounts and player aliases for your Monster Legends alliance, from one dashboard.',
   supportEmail: 'warbot.support@gmail.com',
 } as const
 
 export const hero = {
   stamp: 'Alliance operations, tracked',
-  title: 'One board for the 48-hour war.',
+  title: "Run your alliance's wars, races and mazes without spreadsheets.",
+  // Rendered in the accent colour inside the headline.
+  titleAccent: 'without spreadsheets.',
   lede:
-    'Phase timers, missing attacks, race nodes and maze discounts for Monster Legends alliances. The board keeps the clock so your staff does not have to.',
-  primaryCta: 'Continue with Discord',
+    'One dashboard for war phase timers, missing attacks, race nodes (OFA, DYP and JE), maze island discounts and player aliases. The board keeps the clock so your staff does not have to.',
+  primaryCta: 'Start my free trial',
   secondaryCta: 'See what it tracks',
+  // Quantified effort: remove the "how long will this take?" objection before it forms.
+  effortNote: 'Live in about a minute: sign in with Discord, pick your server, the board fills.',
   highlights: ['7-day free trial', 'No card required', 'Admins and managers only'],
   scopeNote:
     'We request identify and guilds only. No messages or member data are read by the dashboard.',
@@ -164,8 +168,8 @@ export const faq = {
 export const finale = {
   title: 'Put it on the board.',
   body:
-    'Sign in with Discord, start the trial and run the next war from one place.',
-  cta: 'Continue with Discord',
+    'Sign in with Discord, start the trial and run the next war, race and maze from one place.',
+  cta: 'Start my free trial',
 } as const
 
 export const footer = {

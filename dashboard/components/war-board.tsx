@@ -234,7 +234,7 @@ export function WarBoard() {
         </div>
       </div>
       <figcaption className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <span className="mono-label text-slate-500">Fig. 01 / live sample, not a screenshot</span>
+        <span className="mono-label text-slate-500">Fig. 01 / live sample of one of six tools</span>
         <span className="mono-label text-slate-600">Sample players and counts</span>
       </figcaption>
     </figure>

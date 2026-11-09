@@ -6,7 +6,8 @@ import { ShieldCheck, ArrowRight, Sparkles, Check, Mail, Loader2, ShieldAlert, X
 import { useGuild } from '@/components/guild-shell'
 import { Card, CardBody, CardHeader, Badge, ProgressBar, Alert, PageHeader } from '@/components/ui'
 import { formatDate, toDate } from '@/lib/format'
-import { PRICING_PLANS, PLAN_FEATURES, formatPrice, detectCurrency, Currency } from '@/lib/pricing'
+import { PRICING_PLANS, PLAN_FEATURES, formatPrice, detectCurrency, perMonthPrice, yearlySavings, Currency } from '@/lib/pricing'
+import { TRIAL_DAYS } from '@/lib/constants'
 import { load as loadCashfree } from '@cashfreepayments/cashfree-js'
 import { initializePaddle, Paddle } from '@paddle/paddle-js'
 
@@ -73,6 +74,10 @@ export default function BillingPage() {
     daysLeft = Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / 86_400_000))
     if (daysLeft <= 0) trialExpired = true
   }
+
+  // Price-anchor baseline: what the same year would cost on the monthly plan.
+  const proMonthlyPrice =
+    PRICING_PLANS.find((plan) => plan.id === 'pro_monthly')?.price[currency] ?? 0
 
   const supportEmail = 'warbot.support@gmail.com'
   const supportHref = `mailto:${supportEmail}?subject=Billing%20Enquiry%20for%20Server%20${guildId}`
@@ -160,13 +165,26 @@ export default function BillingPage() {
                     <h4 className="text-lg font-bold text-slate-50">{plan.name}</h4>
                     <p className="text-xs text-slate-400 mt-1">{plan.description}</p>
                   </div>
-                  {plan.badge && <Badge tone="purple">{plan.badge}</Badge>}
+                  {plan.badge && (
+                    <Badge tone="purple" className="whitespace-nowrap">
+                      {plan.id === 'elite_yearly' ? `Save ${yearlySavings(currency)}%` : plan.badge}
+                    </Badge>
+                  )}
                 </div>
                 <div className="mt-auto pt-6">
                   <p className="text-3xl font-extrabold text-slate-50">
                     {formatPrice(plan.price[currency], currency)}
                     <span className="text-sm font-normal text-slate-400"> / {plan.cadence}</span>
                   </p>
+                  {plan.cadence === 'year' ? (
+                    <p className="mt-1 text-xs text-slate-500">
+                      <s className="text-slate-600">{formatPrice(proMonthlyPrice * 12, currency)}</s>{' '}
+                      billed monthly · save {yearlySavings(currency)}% ·{' '}
+                      {formatPrice(perMonthPrice(plan, currency), currency)}/month
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-slate-500">Billed monthly · cancel any time</p>
+                  )}
                   <button 
                     onClick={() => handlePayment(plan)}
                     disabled={loadingPlan === plan.id}
@@ -179,6 +197,11 @@ export default function BillingPage() {
             </Card>
           ))}
         </div>
+        <p className="mt-4 text-xs leading-relaxed text-slate-500">
+          Secure checkout via Paddle or Cashfree. Cancel any time; access continues to the end of
+          the paid period. Payments are non-refundable, as described in the{' '}
+          <a href="/legal#refund" className="inline-block py-1.5 text-accent-400 underline decoration-accent-500/40 underline-offset-4 hover:text-accent-300">refund policy</a>.
+        </p>
       </div>
     )
   }
@@ -222,11 +245,22 @@ export default function BillingPage() {
           </div>
           {!isPremium && (
             <div className="w-full sm:w-64">
-               <ProgressBar value={daysLeft} max={7} tone={daysLeft <= 2 ? 'red' : daysLeft <= 4 ? 'amber' : 'green'} label="Trial Progress" />
+               <ProgressBar value={daysLeft} max={TRIAL_DAYS} tone={daysLeft <= 2 ? 'red' : daysLeft <= 4 ? 'amber' : 'green'} label="Trial days left" />
             </div>
           )}
         </CardBody>
       </Card>
+
+      {isTrial && !trialExpired && daysLeft <= 2 ? (
+        <Alert
+          tone="red"
+          className="mb-6"
+          title={`Trial ends in ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'}`}
+        >
+          When the trial ends the board pauses and channel pings stop. Your war, race and maze
+          history stays — pick a plan below to keep tracking without a gap.
+        </Alert>
+      ) : null}
 
       <div className="grid gap-8 lg:grid-cols-[1fr_300px]">
         <div className="space-y-6">
@@ -244,13 +278,26 @@ export default function BillingPage() {
                       <h4 className="text-lg font-bold text-slate-50">{plan.name}</h4>
                       <p className="text-xs text-slate-400 mt-1">{plan.description}</p>
                     </div>
-                    {plan.badge && <Badge tone="purple">{plan.badge}</Badge>}
+                    {plan.badge && (
+                    <Badge tone="purple" className="whitespace-nowrap">
+                      {plan.id === 'elite_yearly' ? `Save ${yearlySavings(currency)}%` : plan.badge}
+                    </Badge>
+                  )}
                   </div>
                   <div className="mt-auto pt-6">
                     <p className="text-3xl font-extrabold text-slate-50">
                       {formatPrice(plan.price[currency], currency)}
                       <span className="text-sm font-normal text-slate-400"> / {plan.cadence}</span>
                     </p>
+                    {plan.cadence === 'year' ? (
+                      <p className="mt-1 text-xs text-slate-500">
+                        <s className="text-slate-600">{formatPrice(proMonthlyPrice * 12, currency)}</s>{' '}
+                        billed monthly · save {yearlySavings(currency)}% ·{' '}
+                        {formatPrice(perMonthPrice(plan, currency), currency)}/month
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-xs text-slate-500">Billed monthly · cancel any time</p>
+                    )}
                     <button 
                       onClick={() => handlePayment(plan)}
                       disabled={loadingPlan === plan.id}
@@ -267,9 +314,43 @@ export default function BillingPage() {
               </Card>
             ))}
           </div>
+          <p className="mt-4 text-xs leading-relaxed text-slate-500">
+            Secure checkout via Paddle or Cashfree. Cancel any time; access continues to the end
+            of the paid period. Payments are non-refundable, as described in the{' '}
+            <a href="/legal#refund" className="inline-block py-1.5 text-accent-400 underline decoration-accent-500/40 underline-offset-4 hover:text-accent-300">refund policy</a>.
+          </p>
         </div>
 
         <div className="space-y-4">
+          {!isPremium ? (
+            <Card>
+              <CardHeader title="What happens next" icon={<Clock className="w-5 h-5" />} />
+              <CardBody>
+                <ol className="space-y-4 text-sm leading-relaxed text-slate-300">
+                  <li>
+                    <span className="mono-label block text-accent-400">Today</span>
+                    <span className="mt-0.5 block">
+                      {daysLeft} of {TRIAL_DAYS} trial days left. All six tools unlocked, no card
+                      on file.
+                    </span>
+                  </li>
+                  <li>
+                    <span className="mono-label block text-steel-400">Day {TRIAL_DAYS}</span>
+                    <span className="mt-0.5 block">
+                      The trial ends and the board pauses. Nothing is deleted: war, race and maze
+                      history stays.
+                    </span>
+                  </li>
+                  <li>
+                    <span className="mono-label block text-slate-500">Any time</span>
+                    <span className="mt-0.5 block">
+                      Pick a plan and the board keeps running without a gap.
+                    </span>
+                  </li>
+                </ol>
+              </CardBody>
+            </Card>
+          ) : null}
           <Card>
             <CardHeader title="What's included" icon={<ShieldCheck className="w-5 h-5" />} />
             <CardBody>
@@ -284,7 +365,7 @@ export default function BillingPage() {
             </CardBody>
           </Card>
           <p className="text-xs text-slate-500 px-2 text-center">
-            By selecting a plan, you agree to our <a href="/legal" target="_blank" className="text-accent-400 hover:underline">Terms of Service</a>. All payments are strictly non-refundable.
+            By selecting a plan, you agree to our <a href="/legal" target="_blank" className="inline-block py-1.5 text-accent-400 underline decoration-accent-500/40 underline-offset-4 hover:text-accent-300">Terms of Service</a>. All payments are strictly non-refundable.
           </p>
         </div>
       </div>

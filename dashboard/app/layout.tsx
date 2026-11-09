@@ -6,7 +6,7 @@ import './globals.css'
 export const metadata: Metadata = {
   metadataBase: new URL(site.url),
   title: {
-    default: 'Legends Assistant | 48-hour war, race and maze tracking',
+    default: 'Legends Assistant | War, race and maze tracking for Monster Legends alliances',
     template: '%s | Legends Assistant',
   },
   description: site.description,
@@ -14,14 +14,14 @@ export const metadata: Metadata = {
   openGraph: {
     type: 'website',
     siteName: site.name,
-    title: 'Legends Assistant | One board for the 48-hour war',
+    title: 'Legends Assistant | Wars, races and mazes without spreadsheets',
     description: site.description,
     url: '/',
-    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'Legends Assistant war board' }],
+    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'Legends Assistant alliance board' }],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Legends Assistant | One board for the 48-hour war',
+    title: 'Legends Assistant | Wars, races and mazes without spreadsheets',
     description: site.description,
     images: ['/og.png'],
   },

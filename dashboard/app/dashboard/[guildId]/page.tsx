@@ -29,6 +29,7 @@ import {
   ProgressBar,
   Spinner,
   Stat,
+  buttonClass,
 } from '@/components/ui'
 import { getGuildSummary, type GuildSummary } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
@@ -134,6 +135,17 @@ export default function OverviewPage() {
     [moments],
   )
 
+  // Goal-gradient head start: the bot is already in this server (otherwise the dashboard could
+  // not load it), so setup is never a 0% state. Only the channel picks are left.
+  const setupSteps = [
+    { label: 'War channel', done: Boolean(guild.war_channel_id), href: `/dashboard/${guildId}/war` },
+    { label: 'Race channel', done: Boolean(guild.race_channel_id), href: `/dashboard/${guildId}/race` },
+    { label: 'Maze channel', done: Boolean(guild.maze_channel_id), href: `/dashboard/${guildId}/maze` },
+  ]
+  const setupDone = setupSteps.filter((step) => step.done).length
+  const setupPct = Math.round(((setupDone + 1) / (setupSteps.length + 1)) * 100)
+  const nextSetupSteps = setupSteps.filter((step) => !step.done).slice(0, 2)
+
   return (
     <div>
       <PageHeader
@@ -147,6 +159,32 @@ export default function OverviewPage() {
           </Button>
         }
       />
+
+      {setupDone < setupSteps.length ? (
+        <Card className="mb-6">
+          <CardBody className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="mono-label text-accent-400">
+                Setup / {setupDone} of {setupSteps.length} channels
+              </p>
+              <p className="mt-1.5 text-sm font-semibold text-slate-100">
+                {setupPct}% set up. The bot is already in the server.
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                Point each tool at a channel so it tracks and pings automatically.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {nextSetupSteps.map((step) => (
+                <Link key={step.href} href={step.href} className={buttonClass('secondary', 'sm')}>
+                  {step.label}
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              ))}
+            </div>
+          </CardBody>
+        </Card>
+      ) : null}
 
       {error ? (
         <Alert tone="red" className="mb-6" title="Could not refresh the snapshot">
