@@ -142,6 +142,45 @@ CREATE TABLE player_ping_settings (
     PRIMARY KEY (guild_id, discord_id)
 );
 
+-- 11. TEAMS (a team pairs one war channel with one race channel and owns captains)
+CREATE TABLE IF NOT EXISTS teams (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    war_channel_id BIGINT,
+    race_channel_id BIGINT,
+    team_role_id BIGINT, -- role pinged by this team's war announcements (synced to wars.team_role_id)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (guild_id, name)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS teams_guild_war_channel_key
+    ON teams (guild_id, war_channel_id) WHERE war_channel_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS teams_guild_race_channel_key
+    ON teams (guild_id, race_channel_id) WHERE race_channel_id IS NOT NULL;
+
+-- 12. TEAM CAPTAINS (a captain is staff for their team channels only)
+CREATE TABLE IF NOT EXISTS team_captains (
+    team_id BIGINT REFERENCES teams(id) ON DELETE CASCADE,
+    discord_id BIGINT REFERENCES users(discord_id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (team_id, discord_id)
+);
+
+-- 13. WAR LOGS (one row per attack report: button = +1, text = delta, undo = negative)
+CREATE TABLE IF NOT EXISTS war_logs (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    channel_id BIGINT NOT NULL,
+    war_start TIMESTAMP WITH TIME ZONE,
+    discord_id BIGINT,
+    player_name TEXT,
+    attacks INTEGER NOT NULL DEFAULT 1, -- signed delta
+    source TEXT DEFAULT 'self',         -- 'self' | 'staff' | 'undo'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS war_logs_channel_idx ON war_logs (channel_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS war_logs_guild_idx ON war_logs (guild_id, created_at DESC);
+
 -- ============================================================================
 -- MIGRATIONS for existing databases (safe to run repeatedly)
 -- ============================================================================
@@ -150,10 +189,33 @@ ALTER TABLE wars ADD COLUMN IF NOT EXISTS team_role_id BIGINT;
 ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS ping_mention TEXT DEFAULT 'here';
 ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS ping_role_id BIGINT;
 ALTER TABLE player_ping_settings ADD COLUMN IF NOT EXISTS maze_alert_mode TEXT DEFAULT 'here';
+ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS channel_id BIGINT;
+ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS lap INTEGER;
+ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS node INTEGER;
+CREATE INDEX IF NOT EXISTS race_logs_channel_idx ON race_logs (channel_id, created_at DESC);
 UPDATE player_ping_settings
    SET maze_alert_mode = 'off'
  WHERE maze_pings_enabled = FALSE AND maze_alert_mode = 'here';
 
 -- Security: the Python bot uses the service role key (bypasses RLS).
--- The dashboard reads with the anon key, so enable RLS and add policies that
--- let a user read only the guilds they manage through the Discord OAuth token.
+-- The dashboard reads and writes with the anon key, so the dashboard-facing tables
+-- need permissive RLS policies for signed-in users. The statements below are
+-- idempotent because this block is run by hand in the Supabase SQL editor.
+ALTER TABLE teams ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS teams_authenticated ON teams;
+CREATE POLICY teams_authenticated ON teams
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE team_captains ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS team_captains_authenticated ON team_captains;
+CREATE POLICY team_captains_authenticated ON team_captains
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE war_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS war_logs_read ON war_logs;
+CREATE POLICY war_logs_read ON war_logs
+    FOR SELECT TO authenticated USING (true);
+
+-- Legacy single-team channel columns (guilds.war_channel_id / race_channel_id) are no
+-- longer used by the bot; teams own those channels now. maze_channel_id and staff_role_id
+-- stay guild-level and are edited from the Overview setup card.

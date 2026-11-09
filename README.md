@@ -7,11 +7,13 @@ A unified Discord bot and web dashboard designed for Monster Legends alliances t
 ### ⚔️ War Tracker
 * **Dynamic Timers:** 48-hour phase timers (Defense & Attack) managed via Discord commands.
 * **Missing Attack Lists:** Track who missed attacks using an alias mapping system (no accidental `@mentions`).
+* **One-tap "I attacked":** A persistent button on the live board, phase announcement and reminders; every tap is recorded in `war_logs` and removes the player from the missing list at the required count. Typing `attacks done` still works.
 * **Approval Workflows:** Staff can approve/reject player self-logged attacks.
 * **Warning System:** Issue and track warnings with automatic DM notifications to players.
 
 ### 🏁 Race Tracker
 * **Node Tracking:** Full support for OFA (One For All), DYP (Do Your Part), and JE (Joint Effort).
+* **Bundled Node Sheet:** One `nodesheet.json` on the bot host is the default sheet for every server (`!race next`, `!race use default`); per-server uploads still override it.
 * **OCR Integration:** Built-in OCR to read race screenshots automatically via Discord.
 * **Dynamic Targets:** Set team lap targets and track live progress.
 * **Staff Overrides:** Manual contribution logging and corrections.
@@ -23,10 +25,12 @@ A unified Discord bot and web dashboard designed for Monster Legends alliances t
 * **Player Preferences:** Players can opt-in/opt-out of ping notifications.
 
 ### 📊 Web Dashboard
+* **One-stop Overview:** Server settings, teams, captains and the live per-team snapshot on one page.
+* **Teams & Captains:** Pair a war channel with a race channel, name the team, and assign captains who act as staff for that team only (bot commands + dashboard, never settings, billing or other teams).
+* **Activity Rating:** One war + race score and grade (A+ … D) per player, visible to members; the raw attack log and undo trail stay staff/captain-only.
 * **Discord OAuth2:** Secure login and server selection.
 * **Paywall & Trials:** 7-Day Free Trial system integrated with Cashfree subscriptions.
-* **Server Setup:** Intuitive dropdowns to map Discord channels and roles.
-* **Alias Management:** Player self-service alias creation with Staff override tables.
+* **Alias Management:** Player self-service alias creation, inline rename (live war lists move with the name) and Staff override tables.
 * **Local Timezones:** Automatic conversion of Maze discount times to the user's local time.
 
 ## 🛠️ Tech Stack
@@ -53,11 +57,46 @@ Set these as process environment variables (Fly secrets / Wispbyte env) or in a
 | `SUPABASE_SECRET_KEY` | yes | Service-role key (server-side only, bypasses RLS) |
 | `OCR_SPACE_API_KEY` | for race OCR | ocr.space key used by `!race newnode <image>` |
 | `DASHBOARD_URL` | optional | Link shown in billing notices |
+| `NODESHEET_PATH` | optional | Path to the bundled race node sheet. Defaults to `nodesheet.json` in the bot's working directory |
+
+## 🗂️ Race node sheet
+
+The bot reads one shared node sheet from disk and offers it as **default (bundled)** to every
+server. It is used by `!race next` when the channel has no active sheet and can be selected
+with `!race use default`. A per-server `!race uploadsheet` still overrides it.
+
+Create a `nodesheet.json` next to the bot (or point `NODESHEET_PATH` at it). The shape is the
+same JSON the race page and `!race uploadsheet` already accept — keyed by `lap.node`, nodes
+1–5, with the three task texts:
+
+```json
+{
+  "0.1": { "ofa": "OFA task text", "dyp": "DYP task text", "je": "JE task text" },
+  "0.2": { "ofa": "OFA task text", "dyp": "DYP task text", "je": "JE task text" }
+}
+```
+
+Upload the real file through the Wispbyte file manager (or `NODESHEET_PATH`). A bad top-level
+file is ignored; a single bad node is skipped — the rest of the sheet keeps working.
+`nodesheet.example.json` in the repo shows the format.
+
+## 🚀 Deploying this version
+
+1. **Supabase:** run the `MIGRATIONS` section of `shared/schema.sql` in the SQL editor. It
+   creates `teams`, `team_captains`, `war_logs`, adds `race_logs.channel_id/lap/node`, and
+   installs the idempotent RLS policies. Safe to re-run.
+2. **Bot:** upload `nodesheet.json` (optional) and redeploy. The bot keeps working without the
+   migration, but captain checks and the attack log need the new tables.
+3. **Dashboard:** redeploy (Vercel). Then open **Overview → Setup**, add each team (or import
+   the channels the bot already tracks), assign captains, and save.
+
 
 ## 🧪 Tests
 The bot tests run fully offline — no Discord/Supabase/OCR keys and no network
-access are needed (fake Discord context + in-memory, FK-aware Supabase stand-in):
+access are needed (fake Discord context + in-memory, FK-aware Supabase stand-in).
+On a fresh Debian/Ubuntu box install the two test-only system packages first:
 
 ```bash
-python -m pytest tests -q
+apt install -y python3-pytest python3-discord
+python3 -m pytest tests -q
 ```
