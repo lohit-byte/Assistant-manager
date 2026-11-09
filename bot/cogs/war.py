@@ -183,11 +183,13 @@ class WarTracker(commands.Cog):
                 self.status_updater(ctx.channel.id, ctx.channel)
             )
 
+            phase_end = war_start + PHASE if current_phase == "defence" else war_end
             embed = discord.Embed(title="✅ War tracking started", color=discord.Color.blue())
-            embed.add_field(name="Current phase", value=current_phase.title(), inline=True)
+            embed.add_field(name="War clock", value=f"{fmt_td(war_end - now)} left (48h → 0h)", inline=True)
+            embed.add_field(name=current_phase.title(), value=f"{fmt_td(phase_end - now)} left", inline=True)
+            embed.add_field(name="Phase ends", value=f"<t:{int(phase_end.timestamp())}:R>", inline=True)
             embed.add_field(name="War ends", value=f"<t:{int(war_end.timestamp())}:R>", inline=True)
-            embed.add_field(name="Phase ends", value=f"<t:{int((war_start + PHASE if current_phase == 'defence' else war_end).timestamp())}:R>", inline=True)
-            embed.set_footer(text="Defence lasts 24h, then the attack phase starts automatically.")
+            embed.set_footer(text="Defence = 48h → 24h left · Attack = 24h → 0h left.")
             await ctx.send(embed=embed)
         except Exception as e:
             await ctx.send(f"❌ Error: {e}")
@@ -248,7 +250,8 @@ class WarTracker(commands.Cog):
             title="⚔️ Attack phase has begun!",
             color=discord.Color.red(),
             description=(
-                f"Defence is over. The war ends <t:{int((start + WAR).timestamp())}:R>.\n"
+                f"Defence is over — the war clock is now {fmt_td(start + WAR - datetime.now(timezone.utc))} from 0h. "
+                f"War ends <t:{int((start + WAR).timestamp())}:R>.\n"
                 f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}\n\n"
                 "Use `attacks done` after attacking, and `!war status` for the live board."
             ),
@@ -318,24 +321,25 @@ class WarTracker(commands.Cog):
         bar = progress_bar(elapsed, 86400)
         war_end = start + WAR
 
-        if current == "defence":
-            embed = discord.Embed(
-                title="🛡️ DEFENCE PHASE",
-                color=discord.Color.blue(),
-                description=(
-                    f"{bar}\n**Phase ends:** <t:{int(phase_end.timestamp())}:R>\n"
-                    f"**War ends:** <t:{int(war_end.timestamp())}:R>"
-                ),
-            )
-        else:
-            embed = discord.Embed(
-                title="⚔️ ATTACK PHASE",
-                color=discord.Color.red(),
-                description=(
-                    f"{bar}\n**Phase ends:** <t:{int(phase_end.timestamp())}:R>\n"
-                    f"**War ends:** <t:{int(war_end.timestamp())}:R>"
-                ),
-            )
+        # The in-game war clock runs 48h -> 0h: defence covers 48h -> 24h left,
+        # attack covers 24h -> 0h left, and the war ends at 0h.
+        war_left = fmt_td(war_end - now)
+        phase_left = fmt_td(phase_end - now)
+        label = "Defence" if current == "defence" else "Attack"
+        color = discord.Color.blue() if current == "defence" else discord.Color.red()
+        title = "🛡️ DEFENCE PHASE" if current == "defence" else "⚔️ ATTACK PHASE"
+
+        embed = discord.Embed(
+            title=title,
+            color=color,
+            description=(
+                f"{bar}\n"
+                f"**War clock:** {war_left} left (48h → 0h)\n"
+                f"**{label}:** {phase_left} left\n"
+                f"**Phase ends:** <t:{int(phase_end.timestamp())}:R> · "
+                f"**War ends:** <t:{int(war_end.timestamp())}:R>"
+            ),
+        )
 
         embed.add_field(name=f"⚠️ Missing ({len(missing)})", value=join_names(missing) or "None", inline=False)
         embed.add_field(name=f"🏖️ Excused ({len(absent)})", value=join_names(absent) or "None", inline=False)
@@ -538,7 +542,8 @@ class WarTracker(commands.Cog):
         embed.add_field(
             name="Timeline",
             value=(
-                "Every war is defence **24h** then attack **24h** (48h total). "
+                "The in-game war clock runs **48h → 0h**: defence covers 48h → 24h left, "
+                "attack covers 24h → 0h left, war ends at 0h. "
                 "`<time>` is the time left in the phase you name — tracking can start at any point:\n"
                 "`!war defence ends 20h` → 20h of defence left, war ends in 44h\n"
                 "`!war attack ends 20h` → 20h of attack left, war ends in 20h"

@@ -272,11 +272,30 @@ export default function OverviewPage() {
                         tone="amber"
                         label="Phase elapsed"
                       />
-                      <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+                      <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
                         <Clock className="h-3.5 w-3.5" />
-                        {warWindow.phaseEnd
-                          ? `${formatDuration(warWindow.phaseEnd.getTime() - now.getTime())} remaining`
-                          : 'No timer'}
+                        {warWindow.phaseEnd ? (
+                          <span>
+                            <span className="font-semibold text-slate-300">
+                              {formatDuration(warWindow.phaseEnd.getTime() - now.getTime())}
+                            </span>{' '}
+                            left in {warPhaseLabel(warWindow.phase).toLowerCase()}
+                          </span>
+                        ) : (
+                          <span>No timer</span>
+                        )}
+                        {warWindow.warEnd ? (
+                          <>
+                            <span className="text-slate-700">·</span>
+                            <span>
+                              war clock{' '}
+                              <span className="font-semibold text-slate-300">
+                                {formatDuration(warWindow.warEnd.getTime() - now.getTime())}
+                              </span>{' '}
+                              left (48h → 0h)
+                            </span>
+                          </>
+                        ) : null}
                       </p>
                     </div>
                   ) : null}
