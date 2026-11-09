@@ -75,7 +75,23 @@ class MazeTracker(commands.Cog):
                 )
 
     async def ping_discount_at_time(self, guild_id, channel, pct, delay):
-        # ... (keep the sleep and database check here) ...
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+        # The event may have been cancelled or pings disabled while we slept.
+        try:
+            res = await asyncio.to_thread(
+                supabase.table("maze_schedules")
+                .select("ping_enabled_global")
+                .eq("guild_id", guild_id)
+                .limit(1)
+                .execute
+            )
+            if not res.data or res.data[0].get("ping_enabled_global") is False:
+                return
+        except Exception as e:
+            print(f"Maze ping check failed for {guild_id}: {e}")
+            return
 
         embed = discord.Embed(
             title="🗺️ Maze Island Discount!",

@@ -249,13 +249,18 @@ class WarTracker(commands.Cog):
                 await ctx.send(f"✅ Removed `{name}` from missing.")
 
     async def war_absent(self, ctx, subaction, args):
-        sub = (subaction or "").lower()
+        sub = (subaction or "list").lower()
         if not is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
+        args = (args or "").strip()
         async with self.locks[ctx.channel.id]:
             war = await get_war(ctx.channel.id)
             if not war: return await ctx.send("ℹ️ No war data found.")
             absent, missing = war.get("absent_list") or [], war.get("missing_list") or []
-            name = args.strip().lower()
+            if sub == "list":
+                if not absent: return await ctx.send("✅ The excused list is empty.")
+                return await ctx.send("🏖️ **Excused:** " + join_names(absent))
+            if not args: return await ctx.send("❌ Provide a name.")
+            name = args.lower()
             if sub == "add":
                 if not any(a["name"].lower() == name for a in absent):
                     absent.append({"name": name})
@@ -269,11 +274,14 @@ class WarTracker(commands.Cog):
 
     async def war_attacks(self, ctx, args):
         if not is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
+        args = (args or "").strip()
+        if not args: return await ctx.send("Usage: `!war attacks <name> <count>`")
         if "|" in args:
             name_part, count_part = args.split("|", 1)
             name, count = name_part.strip().lower(), count_part.strip()
         else:
             parts = args.rsplit(maxsplit=1)
+            if len(parts) != 2: return await ctx.send("Usage: `!war attacks <name> <count>` (or `name | count`)")
             name, count = parts[0].strip().lower(), parts[1].strip()
         if not count.isdigit(): return await ctx.send("❌ Count must be a number.")
         cfg = await get_settings(ctx.guild.id)

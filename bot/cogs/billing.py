@@ -2,7 +2,17 @@ import discord
 from discord.ext import commands, tasks
 from datetime import datetime, timezone
 import asyncio
+import math
+import os
 from database import supabase
+
+# Set DASHBOARD_URL in the bot environment (e.g. https://<your-app>.vercel.app).
+# When unset the messages simply omit the link instead of pointing at a wrong site.
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "").rstrip("/")
+
+
+def dashboard_link(label: str) -> str:
+    return f"[{label}]({DASHBOARD_URL})" if DASHBOARD_URL else label
 
 def to_utc(s: str) -> datetime:
     if not s: return None
@@ -42,8 +52,10 @@ class BillingManager(commands.Cog):
                     continue
                     
                 diff = ends_at - now
-                days_left = diff.days
-                
+                total_hours = diff.total_seconds() / 3600
+                expired = total_hours <= 0
+                days_left = max(1, math.ceil(total_hours / 24))
+
                 guild = self.bot.get_guild(guild_id)
                 if not guild:
                     continue
@@ -55,49 +67,64 @@ class BillingManager(commands.Cog):
                     channel = guild.system_channel
                 if not channel:
                     channel = guild.text_channels[0] if guild.text_channels else None
-                    
+
                 if not channel:
                     continue
 
+                owner_ping = guild.owner.mention if guild.owner else ""
+
+                async def send_notice(embed):
+                    try:
+                        await channel.send(content=owner_ping, embed=embed)
+                    except discord.HTTPException as e:
+                        print(f"Billing notice failed in {guild_id}: {e}")
+
                 # --- LOGIC FOR EXPIRY ---
-                if days_left <= 0 and last_ping != -1:
-                    # 1. Expired (NO parentheses after .execute here)
+                if expired:
+                    if last_ping == -1:
+                        continue
                     await asyncio.to_thread(
                         supabase.table("guilds").update({
                             "premium_status": "expired",
                             "last_renewal_ping": -1
                         }).eq("guild_id", guild_id).execute
                     )
-                    embed = discord.Embed(
-                        title="🚨 Premium Expired", 
-                        description="Your premium subscription has ended. The bot is now paused.\n[Reactivate on the Dashboard](https://drlohithealth.com/dashboard)",
+                    await send_notice(discord.Embed(
+                        title="🚨 Premium Expired",
+                        description=(
+                            "Your premium subscription has ended. The bot is now paused.\n"
+                            f"{dashboard_link('Reactivate on the Dashboard')}."
+                        ),
                         color=discord.Color.red()
-                    )
-                    await channel.send(content=guild.owner.mention if guild.owner else "", embed=embed)
-                    
-                elif 0 < days_left <= 1 and (last_ping > 1 or last_ping == 0):
-                    # 2. 1 Day Warning (NO parentheses after .execute here)
+                    ))
+
+                elif total_hours <= 24 and last_ping not in (1, -1):
+                    # 2. 1 Day Warning
                     await asyncio.to_thread(
                         supabase.table("guilds").update({"last_renewal_ping": 1}).eq("guild_id", guild_id).execute
                     )
-                    embed = discord.Embed(
-                        title="⚠️ Premium Expires Tomorrow", 
-                        description="Your premium subscription ends in less than 24 hours.\n[Renew on the Dashboard](https://drlohithealth.com/dashboard) to keep the bot online.",
+                    await send_notice(discord.Embed(
+                        title="⚠️ Premium Expires Tomorrow",
+                        description=(
+                            f"Your premium subscription ends in about {int(total_hours)} hours.\n"
+                            f"{dashboard_link('Renew on the Dashboard')} to keep the bot online."
+                        ),
                         color=discord.Color.orange()
-                    )
-                    await channel.send(content=guild.owner.mention if guild.owner else "", embed=embed)
+                    ))
 
-                elif 1 < days_left <= 3 and (last_ping > 3 or last_ping == 0):
-                    # 3. 3 Day Warning (NO parentheses after .execute here)
+                elif total_hours <= 72 and last_ping not in (1, 3, -1):
+                    # 3. 3 Day Warning
                     await asyncio.to_thread(
                         supabase.table("guilds").update({"last_renewal_ping": 3}).eq("guild_id", guild_id).execute
                     )
-                    embed = discord.Embed(
-                        title="⏳ Premium Expiring Soon", 
-                        description=f"Your premium subscription ends in {days_left} days.\n[Renew on the Dashboard](https://drlohithealth.com/dashboard) to avoid interruption.",
+                    await send_notice(discord.Embed(
+                        title="⏳ Premium Expiring Soon",
+                        description=(
+                            f"Your premium subscription ends in {days_left} days.\n"
+                            f"{dashboard_link('Renew on the Dashboard')} to avoid interruption."
+                        ),
                         color=discord.Color.yellow()
-                    )
-                    await channel.send(content=guild.owner.mention if guild.owner else "", embed=embed)
+                    ))
 
         except Exception as e:
             print(f"Error in billing check loop: {e}")
