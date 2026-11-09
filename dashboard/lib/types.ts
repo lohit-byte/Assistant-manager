@@ -67,6 +67,9 @@ export interface RaceState {
   active_race_sheet: string | null
 }
 
+/** Who the automatic maze discount pings mention (`maze_schedules.ping_mention`). */
+export type MazePingMention = 'here' | 'everyone' | 'role' | 'none'
+
 export interface MazeSchedule {
   id: Id
   guild_id: Id
@@ -75,6 +78,8 @@ export interface MazeSchedule {
   maze_type: '7d' | '3d' | string | null
   channel_id: Id | null
   ping_enabled_global: boolean | null
+  ping_mention: MazePingMention | string | null
+  ping_role_id: Id | null
   discount_schedule?: unknown
 }
 

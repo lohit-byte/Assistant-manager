@@ -5,14 +5,22 @@ import { CalendarClock, Clock3, Map, RefreshCw, Save, Trash2 } from 'lucide-reac
 import { useGuild } from '@/components/guild-shell'
 import {
   Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState,
-  Field, PageHeader, Spinner, TextInput, Toggle
+  Field, PageHeader, Select, Spinner, TextInput, Toggle
 } from '@/components/ui'
 import { deleteMazeSchedule, getMazeSchedule, saveMazeSchedule } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
 import { MAZE_SCHEDULES, MAZE_TYPE_META } from '@/lib/constants'
 import { discountMoments, formatDateTime, formatRelative, fromDateTimeLocal, isSnowflake, nextDiscount, toDate, toDateTimeLocal } from '@/lib/format'
 import { useNow } from '@/lib/hooks'
-import type { MazeSchedule } from '@/lib/types'
+import type { MazePingMention, MazeSchedule } from '@/lib/types'
+
+/** Who the bot mentions on automatic maze discount pings. */
+const PING_MENTIONS: Array<{ value: MazePingMention; label: string }> = [
+  { value: 'here', label: '@here' },
+  { value: 'everyone', label: '@everyone' },
+  { value: 'role', label: 'A role' },
+  { value: 'none', label: 'No mention' },
+]
 
 interface Draft {
   event_start: string
@@ -20,6 +28,8 @@ interface Draft {
   maze_type: '7d' | '3d'
   channel_id: string
   ping_enabled_global: boolean
+  ping_mention: MazePingMention
+  ping_role_id: string
 }
 
 function defaultDraft(): Draft {
@@ -32,6 +42,8 @@ function defaultDraft(): Draft {
     maze_type: '7d',
     channel_id: '',
     ping_enabled_global: true,
+    ping_mention: 'here',
+    ping_role_id: '',
   }
 }
 
@@ -40,17 +52,23 @@ function draftFromRow(row: MazeSchedule | null): Draft {
   const type = row.maze_type === '3d' ? '3d' : '7d'
   const start = toDate(row.event_start)
   const end = toDate(row.event_end)
+  const mention: MazePingMention =
+    row.ping_mention === 'everyone' || row.ping_mention === 'role' || row.ping_mention === 'none'
+      ? row.ping_mention
+      : 'here'
   return {
     event_start: toDateTimeLocal(start),
     event_end: toDateTimeLocal(end),
     maze_type: type,
     channel_id: row.channel_id ? String(row.channel_id) : '',
     ping_enabled_global: row.ping_enabled_global ?? true,
+    ping_mention: mention,
+    ping_role_id: row.ping_role_id ? String(row.ping_role_id) : '',
   }
 }
 
 export default function MazePage() {
-  const { guildId } = useGuild()
+  const { guildId, readOnly } = useGuild()
   const now = useNow(30_000)
   const [draft, setDraft] = useState<Draft>(() => defaultDraft())
   const [existing, setExisting] = useState<MazeSchedule | null>(null)
@@ -100,12 +118,19 @@ export default function MazePage() {
     const isoStart = fromDateTimeLocal(draft.event_start)
     const isoEnd = fromDateTimeLocal(draft.event_end)
     if (!isoStart || !isoEnd) return setFeedback({ tone: 'red', text: 'Choose a valid start and end time.' })
+
+    const roleId = draft.ping_role_id.trim()
+    if (draft.ping_mention === 'role' && !isSnowflake(roleId)) {
+      return setFeedback({ tone: 'red', text: 'Enter a valid Discord role ID (17–20 digits) for the role ping.' })
+    }
     
     setBusy('save'); setFeedback(null)
     try {
       await saveMazeSchedule(createClient(), guildId, {
         event_start: isoStart, event_end: isoEnd, maze_type: draft.maze_type,
         channel_id: draft.channel_id.trim() || null, ping_enabled_global: draft.ping_enabled_global,
+        ping_mention: draft.ping_mention,
+        ping_role_id: draft.ping_mention === 'role' ? roleId : null,
       })
       setExisting(await getMazeSchedule(createClient(), guildId))
       setFeedback({ tone: 'green', text: 'Maze schedule saved.' })
@@ -137,7 +162,7 @@ export default function MazePage() {
         actions={
           <>
             <Button variant="secondary" onClick={() => load('refresh')}><RefreshCw className="h-4 w-4" /> Refresh</Button>
-            {existing && <Button variant="danger" onClick={remove} loading={busy === 'delete'}><Trash2 className="h-4 w-4" /> Delete</Button>}
+            {!readOnly && existing && <Button variant="danger" onClick={remove} loading={busy === 'delete'}><Trash2 className="h-4 w-4" /> Delete</Button>}
           </>
         }
       />
@@ -146,12 +171,12 @@ export default function MazePage() {
 
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <Card>
-          <CardHeader title="Schedule" description="Maze type, timing and ping channel" icon={<Map className="h-5 w-5" />} />
+          <CardHeader title="Schedule" description={readOnly ? 'View only — staff manage this schedule.' : 'Maze type, timing and ping channel'} icon={<Map className="h-5 w-5" />} />
           <CardBody className="space-y-5">
             <Field label="Maze type">
               <div className="grid grid-cols-2 gap-2">
                 {(['7d', '3d'] as const).map((type) => (
-                  <button key={type} type="button" onClick={() => changeType(type)} className={`rounded-xl border px-4 py-3 text-left transition-colors ${draft.maze_type === type ? 'border-accent-500/60 bg-accent-500/10' : 'border-slate-700 bg-slate-950/60 hover:border-slate-600'}`}>
+                  <button key={type} type="button" disabled={readOnly} onClick={() => changeType(type)} className={`rounded-xl border px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${draft.maze_type === type ? 'border-accent-500/60 bg-accent-500/10' : 'border-slate-700 bg-slate-950/60 hover:border-slate-600'}`}>
                     <p className="text-sm font-semibold text-slate-50">{MAZE_TYPE_META[type].label}</p>
                   </button>
                 ))}
@@ -160,25 +185,39 @@ export default function MazePage() {
 
             <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
               <Field label="Event start" hint="Your local timezone." className="min-w-0">
-                <TextInput className="w-full min-w-0 appearance-none" type="datetime-local" value={draft.event_start} onChange={(event) => setStartAndDuration(event.target.value)} />
+                <TextInput className="w-full min-w-0 appearance-none" type="datetime-local" value={draft.event_start} disabled={readOnly} onChange={(event) => setStartAndDuration(event.target.value)} />
               </Field>
               <Field label="Event end" hint={`Suggested: start + ${meta.days} days.`} className="min-w-0">
-                <TextInput className="w-full min-w-0 appearance-none" type="datetime-local" value={draft.event_end} onChange={(event) => setDraft((current) => ({ ...current, event_end: event.target.value }))} />
+                <TextInput className="w-full min-w-0 appearance-none" type="datetime-local" value={draft.event_end} disabled={readOnly} onChange={(event) => setDraft((current) => ({ ...current, event_end: event.target.value }))} />
               </Field>
             </div>
 
             {/* QUICK SET BUTTONS */}
             <div className="flex gap-2">
-              <Button size="sm" variant="secondary" onClick={() => setStartAndDuration(toDateTimeLocal(new Date()))}>Starts Now</Button>
-              <Button size="sm" variant="secondary" onClick={() => setStartAndDuration(toDateTimeLocal(new Date(Date.now() + 86400000)))}>Starts Tomorrow</Button>
+              <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => setStartAndDuration(toDateTimeLocal(new Date()))}>Starts Now</Button>
+              <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => setStartAndDuration(toDateTimeLocal(new Date(Date.now() + 86400000)))}>Starts Tomorrow</Button>
             </div>
 
             <Field label="Ping channel ID" hint="Optional.">
-              <TextInput value={draft.channel_id} onChange={(event) => setDraft((current) => ({ ...current, channel_id: event.target.value }))} placeholder="e.g. 123456789012345678" inputMode="numeric" />
+              <TextInput value={draft.channel_id} disabled={readOnly} onChange={(event) => setDraft((current) => ({ ...current, channel_id: event.target.value }))} placeholder="e.g. 123456789012345678" inputMode="numeric" />
             </Field>
 
+            <Field label="Ping mention" hint="Who the automatic maze discount pings mention.">
+              <Select value={draft.ping_mention} disabled={readOnly} onChange={(event) => setDraft((current) => ({ ...current, ping_mention: event.target.value as MazePingMention }))}>
+                {PING_MENTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </Select>
+            </Field>
+
+            {draft.ping_mention === 'role' ? (
+              <Field label="Ping role ID" hint="Right-click the role in Discord → Copy ID.">
+                <TextInput value={draft.ping_role_id} disabled={readOnly} onChange={(event) => setDraft((current) => ({ ...current, ping_role_id: event.target.value }))} placeholder="e.g. 123456789012345678" inputMode="numeric" />
+              </Field>
+            ) : null}
+
             <div className="border-t border-slate-800 pt-5">
-              <Toggle checked={draft.ping_enabled_global} onChange={(value) => setDraft((current) => ({ ...current, ping_enabled_global: value }))} label="Maze pings enabled" description="Players can still opt out individually." />
+              <Toggle checked={draft.ping_enabled_global} disabled={readOnly} onChange={(value) => setDraft((current) => ({ ...current, ping_enabled_global: value }))} label="Maze pings enabled" description="Players can still opt out individually." />
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm">
@@ -190,7 +229,9 @@ export default function MazePage() {
               ) : <p className="text-slate-500">Choose a start and end time to preview.</p>}
             </div>
 
-            <Button onClick={save} loading={busy === 'save'} className="w-full"><Save className="h-4 w-4" /> Save schedule</Button>
+            {readOnly ? null : (
+              <Button onClick={save} loading={busy === 'save'} className="w-full"><Save className="h-4 w-4" /> Save schedule</Button>
+            )}
           </CardBody>
         </Card>
 

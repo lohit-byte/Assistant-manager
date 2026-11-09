@@ -12,10 +12,10 @@ import {
   Server,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { canManageGuild, DiscordApiError, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
+import { canManageGuild, DiscordApiError, discordIdFromSession, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
 import { BOT_INVITE_URL, DISCORD_GUILD_ICON, PLAN_META } from '@/lib/constants'
 import { Wordmark } from '@/components/brand'
-import { getGuild } from '@/lib/data'
+import { getGuild, isAliasMember } from '@/lib/data'
 import { toDate } from '@/lib/format'
 import type { Guild } from '@/lib/types'
 import {
@@ -33,6 +33,8 @@ import {
 interface GuildCard {
   guild: DiscordGuild
   row: Guild | null
+  /** Alias member of a premium server: dashboard opens in read-only mode. */
+  readOnly: boolean
 }
 
 type LoadError =
@@ -71,23 +73,37 @@ export default function ServerPicker() {
       }
 
       const guilds = (await fetchDiscordGuilds(session.provider_token))
-        .filter(canManageGuild)
         .sort((a, b) => a.name.localeCompare(b.name))
+      const discordId = discordIdFromSession(session.user)
 
       const rows = await Promise.allSettled(
         guilds.map(async (guild) => ({ guild, row: await getGuild(supabase, guild.id) })),
       )
 
-      const resolved: GuildCard[] = rows
-        .filter((item): item is PromiseFulfilledResult<GuildCard> => item.status === 'fulfilled')
+      const resolved = rows
+        .filter((item): item is PromiseFulfilledResult<Omit<GuildCard, 'readOnly'>> => item.status === 'fulfilled')
         .map((item) => item.value)
 
-      resolved.sort((a, b) => {
+      // Managers see their servers. A premium server's alias members also see it,
+      // read-only — same rule as the guild dashboard itself.
+      const visible: GuildCard[] = []
+      for (const card of resolved) {
+        if (canManageGuild(card.guild)) {
+          visible.push({ ...card, readOnly: false })
+          continue
+        }
+        if (!discordId || card.row?.premium_status !== 'premium') continue
+        if (await isAliasMember(supabase, card.guild.id, discordId)) {
+          visible.push({ ...card, readOnly: true })
+        }
+      }
+
+      visible.sort((a, b) => {
         if (Boolean(a.row) !== Boolean(b.row)) return a.row ? -1 : 1
         return a.guild.name.localeCompare(b.guild.name)
       })
 
-      setCards(resolved)
+      setCards(visible)
     } catch (caught) {
       if (caught instanceof DiscordApiError) {
         setError({ kind: 'discord', message: caught.message })
@@ -116,6 +132,7 @@ export default function ServerPicker() {
   }, [cards, query])
 
   const botServers = cards.filter((card) => card.row).length
+  const memberViews = cards.filter((card) => card.readOnly).length
 
   const signOut = async () => {
     await createClient().auth.signOut()
@@ -144,7 +161,7 @@ export default function ServerPicker() {
         <PageHeader
           eyebrow="00 / Server selection"
           title="Choose a server"
-          description={`You can manage ${cards.length} ${cards.length === 1 ? 'server' : 'servers'}. ${botServers} ${botServers === 1 ? 'has' : 'have'} the bot installed.`}
+          description={`You have access to ${cards.length} ${cards.length === 1 ? 'server' : 'servers'}${memberViews ? ` (${memberViews} read-only)` : ''}. ${botServers} ${botServers === 1 ? 'has' : 'have'} the bot installed.`}
           actions={
             <a
               href={BOT_INVITE_URL}
@@ -199,7 +216,7 @@ export default function ServerPicker() {
                   </p>
                   <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">
                     {cards.length === 0
-                      ? 'You need the Manage Server or Administrator permission in a Discord server to see it here.'
+                      ? 'You need the Manage Server or Administrator permission, or an alias in a premium server, to see it here.'
                       : 'Try a different search term.'}
                   </p>
                   {cards.length === 0 ? (
@@ -217,7 +234,7 @@ export default function ServerPicker() {
               </Card>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {filtered.map(({ guild, row }) => {
+                {filtered.map(({ guild, row, readOnly }) => {
                   const meta = PLAN_META[row?.premium_status ?? ''] ?? null
                   const daysLeft =
                     row?.premium_status === 'trial' && row.trial_ends_at
@@ -269,6 +286,7 @@ export default function ServerPicker() {
                         ) : (
                           <Badge tone="slate">Unknown plan</Badge>
                         )}
+                        {readOnly ? <Badge tone="slate">Read-only</Badge> : null}
                         {daysLeft !== null ? (
                           <span className="text-xs text-slate-500">{daysLeft}d left</span>
                         ) : null}

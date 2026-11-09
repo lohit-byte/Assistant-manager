@@ -18,6 +18,7 @@ import {
   ChevronsUpDown,
   CreditCard,
   ExternalLink,
+  Eye,
   LayoutDashboard,
   LifeBuoy,
   LogOut,
@@ -34,9 +35,9 @@ import {
   X,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { canManageGuild, DiscordApiError, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
+import { canManageGuild, DiscordApiError, discordIdFromSession, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
 import { BOT_INVITE_URL, DISCORD_GUILD_ICON, PLAN_META, SUPPORT_EMAIL } from '@/lib/constants'
-import { getGuild } from '@/lib/data'
+import { getGuild, isAliasMember } from '@/lib/data'
 import { cn, toDate } from '@/lib/format'
 import type { Guild } from '@/lib/types'
 import { Badge, Button, Card, CardBody, Spinner, buttonClass } from '@/components/ui'
@@ -45,6 +46,8 @@ import { BrandMark } from '@/components/brand'
 interface GuildContextValue {
   guildId: string
   guild: Guild
+  /** True when the viewer is a premium server's alias member, not server staff. */
+  readOnly: boolean
   refresh: () => Promise<void>
 }
 
@@ -82,6 +85,10 @@ const NAV_GROUPS = [
   },
 ]
 
+// Pages that change server state. Read-only members never see these in the nav and
+// render a "Staff only" panel if they open the URL directly.
+const STAFF_ONLY_SEGMENTS = new Set(['/aliases', '/settings', '/billing'])
+
 type AccessError =
   | { kind: 'discord'; message: string }
   | { kind: 'forbidden'; message: string }
@@ -113,6 +120,7 @@ export default function GuildShell({
   const pathname = usePathname()
   const [loading, setLoading] = useState(true)
   const [guild, setGuild] = useState<Guild | null>(null)
+  const [readOnly, setReadOnly] = useState(false)
   const [discordGuild, setDiscordGuild] = useState<DiscordGuild | null>(null)
   const [error, setError] = useState<AccessError | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -124,6 +132,7 @@ export default function GuildShell({
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
+    setReadOnly(false)
     const supabase = createClient()
 
     try {
@@ -143,29 +152,8 @@ export default function GuildShell({
           'Account',
       )
 
-      if (!session.provider_token) {
-        setError({
-          kind: 'discord',
-          message:
-            'Discord access has expired. Sign out and sign in again to refresh your server permissions.',
-        })
-        return
-      }
-
-      const guilds = await fetchDiscordGuilds(session.provider_token)
-      const match = guilds.find((item) => item.id === guildId)
-
-      if (!match || !canManageGuild(match)) {
-        setError({
-          kind: 'forbidden',
-          message:
-            'You need the Manage Server or Administrator permission in this server to open its dashboard.',
-        })
-        return
-      }
-
-      setDiscordGuild(match)
-
+      // Load the guild row first: without it there is no dashboard at all, so the
+      // "bot not added" state must win before we reason about Discord permissions.
       const row = await getGuild(supabase, guildId)
       if (!row) {
         setError({
@@ -176,7 +164,63 @@ export default function GuildShell({
         return
       }
 
-      setGuild(row)
+      const discordId = discordIdFromSession(session.user)
+
+      // A premium server's alias members may view its dashboard read-only. This is
+      // also the fallback when the Discord guild list cannot be loaded (expired token).
+      const allowReadOnly = async (): Promise<boolean> => {
+        if (row.premium_status !== 'premium' || !discordId) return false
+        return isAliasMember(supabase, guildId, discordId)
+      }
+
+      const enterReadOnly = () => {
+        setGuild(row)
+        setReadOnly(true)
+      }
+
+      if (!session.provider_token) {
+        if (await allowReadOnly()) {
+          enterReadOnly()
+          return
+        }
+        setError({
+          kind: 'discord',
+          message:
+            'Discord access has expired. Sign out and sign in again to refresh your server permissions.',
+        })
+        return
+      }
+
+      let guilds: DiscordGuild[]
+      try {
+        guilds = await fetchDiscordGuilds(session.provider_token)
+      } catch (caught) {
+        // Discord being unreachable must not lock out a premium server's alias members.
+        if (await allowReadOnly()) {
+          enterReadOnly()
+          return
+        }
+        throw caught
+      }
+
+      const match = guilds.find((item) => item.id === guildId) ?? null
+      setDiscordGuild(match)
+
+      if (match && canManageGuild(match)) {
+        setGuild(row)
+        return
+      }
+
+      if (await allowReadOnly()) {
+        enterReadOnly()
+        return
+      }
+
+      setError({
+        kind: 'forbidden',
+        message:
+          'You need the Manage Server or Administrator permission in this server to open its dashboard.',
+      })
     } catch (caught) {
       if (caught instanceof DiscordApiError) {
         setError({ kind: 'discord', message: caught.message })
@@ -257,8 +301,8 @@ export default function GuildShell({
   }, [guildId])
 
   const context = useMemo<GuildContextValue | null>(
-    () => (guild ? { guildId, guild, refresh } : null),
-    [guild, guildId, refresh],
+    () => (guild ? { guildId, guild, readOnly, refresh } : null),
+    [guild, guildId, readOnly, refresh],
   )
 
   const signOut = async () => {
@@ -293,6 +337,12 @@ export default function GuildShell({
   const allItems = NAV_GROUPS.flatMap((group) => group.items)
   const activeItem =
     allItems.find((item) => pathname === `/dashboard/${guildId}${item.segment}`) ?? allItems[0]
+  const navGroups = context.readOnly
+    ? NAV_GROUPS.map((group) => ({
+        ...group,
+        items: group.items.filter((item) => !STAFF_ONLY_SEGMENTS.has(item.segment)),
+      })).filter((group) => group.items.length > 0)
+    : NAV_GROUPS
   const initials = userLabel.slice(0, 2).toUpperCase()
 
   return (
@@ -365,7 +415,7 @@ export default function GuildShell({
           </div>
 
           <nav className="mt-5 flex-1 space-y-5 overflow-y-auto px-3 pb-4">
-            {NAV_GROUPS.map((group) => (
+            {navGroups.map((group) => (
               <div key={group.label}>
                 <p className="mono-label mb-1.5 px-3 text-[10px] text-slate-600">
                   {group.label}
@@ -405,7 +455,7 @@ export default function GuildShell({
           </nav>
 
           <div className="border-t border-white/[0.06] p-3">
-            {activeGuild.premium_status !== 'premium' ? (
+            {!context.readOnly && activeGuild.premium_status !== 'premium' ? (
               <Link
                 href={`/dashboard/${guildId}/billing`}
                 className="mb-3 block rounded-sm border border-accent-500/30 bg-accent-500/[0.05] p-3 transition-colors hover:border-accent-500/60"
@@ -473,6 +523,11 @@ export default function GuildShell({
                 </span>
               </div>
               <div className="flex items-center gap-2">
+                {context.readOnly ? (
+                  <Badge tone="blue" dot>
+                    Read-only member access
+                  </Badge>
+                ) : null}
                 <Badge tone={meta.tone} dot>
                   {meta.label}
                 </Badge>
@@ -505,7 +560,23 @@ export default function GuildShell({
             <Badge tone={meta.tone}>{meta.label}</Badge>
           </header>
 
-          <main id="main" className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-10 lg:py-9">{children}</main>
+          <main id="main" className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-10 lg:py-9">
+            {context.readOnly ? (
+              <div className="mb-6 flex items-start gap-2.5 rounded-sm border border-steel-500/30 bg-steel-500/[0.06] px-4 py-3">
+                <Eye className="mt-0.5 h-4 w-4 shrink-0 text-steel-300" aria-hidden />
+                <div>
+                  <p className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-steel-300">
+                    Read-only member access
+                  </p>
+                  <p className="mt-0.5 text-sm text-slate-400">
+                    Staff added an alias for you on this premium server, so you can view its
+                    dashboard. Editing is limited to staff.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+            {children}
+          </main>
         </div>
       </div>
     </GuildContext.Provider>

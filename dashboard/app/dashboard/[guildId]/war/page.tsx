@@ -52,7 +52,7 @@ function LiveTimer({ endTime }: { endTime: Date | null }) {
 }
 
 export default function WarPage() {
-  const { guildId } = useGuild()
+  const { guildId, readOnly } = useGuild()
   const router = useRouter()
   const searchParams = useSearchParams()
   
@@ -239,14 +239,16 @@ export default function WarPage() {
                   <Card>
                     <CardHeader title="Attack Log" description={`Required: ${required} attacks per player`} icon={<Swords className="h-5 w-5" />} />
                     <CardBody className="space-y-4">
-                      <div className="flex flex-col gap-2 sm:flex-row">
-                        <TextInput placeholder="Player alias" value={missingInput} onChange={(e) => setMissingInput(e.target.value)} className="sm:flex-1" />
-                        <Button onClick={() => {
-                          if(!missingInput || !war) return
-                          const nextMissing = [...missing, { name: missingInput.toLowerCase() }]
-                          updateWar(createClient(), channelId, { missing_list: nextMissing }).then(() => { setMissingInput(''); load('refresh') })
-                        }}>Add Missing</Button>
-                      </div>
+                      {readOnly ? null : (
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <TextInput placeholder="Player alias" value={missingInput} onChange={(e) => setMissingInput(e.target.value)} className="sm:flex-1" />
+                          <Button onClick={() => {
+                            if(!missingInput || !war) return
+                            const nextMissing = [...missing, { name: missingInput.toLowerCase() }]
+                            updateWar(createClient(), channelId, { missing_list: nextMissing }).then(() => { setMissingInput(''); load('refresh') })
+                          }}>Add Missing</Button>
+                        </div>
+                      )}
                       <div className="max-h-[300px] overflow-y-auto">
                         <table className="w-full text-left text-sm">
                           <tbody className="divide-y divide-slate-800">
@@ -275,6 +277,18 @@ export default function WarPage() {
 
         {/* RIGHT COLUMN: GLOBAL SETTINGS & WARNINGS */}
         <div className="space-y-6">
+           {readOnly ? (
+            <Card>
+              <CardHeader title="War Settings (Global)" icon={<Save className="h-5 w-5" />} />
+              <CardBody className="space-y-2">
+                <p className="text-sm text-slate-300">
+                  Required attacks per player:{' '}
+                  <span className="font-semibold text-slate-50">{settings.attacks_required}</span>
+                </p>
+                <p className="text-xs text-slate-500">Only staff can change war settings.</p>
+              </CardBody>
+            </Card>
+          ) : (
            <Card>
             <CardHeader title="War Settings (Global)" icon={<Save className="h-5 w-5" />} />
             <CardBody className="space-y-6">
@@ -287,32 +301,35 @@ export default function WarPage() {
               <Button onClick={saveSettings} loading={busy === 'settings'} className="w-full">Save Settings</Button>
             </CardBody>
           </Card>
+          )}
 
           <Card>
-            <CardHeader title="Warnings (Global)" description="Manage player warnings" icon={<AlertTriangle className="h-5 w-5" />} />
+            <CardHeader title="Warnings (Global)" description={readOnly ? 'Recorded warnings — staff manage these' : 'Manage player warnings'} icon={<AlertTriangle className="h-5 w-5" />} />
             <CardBody className="space-y-4">
               
               {/* NEW ALIAS DROPDOWN */}
-              <div className="space-y-3">
-                <select 
-                  value={warningId} 
-                  onChange={(e) => setWarningId(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-50 focus:border-accent-500"
-                >
-                  <option value="" disabled>Select a player (alias)...</option>
-                  {aliases.map(a => (
-                    <option key={a.id} value={String(a.discord_id)}>
-                      {a.alias_name} ({a.discord_id})
-                    </option>
-                  ))}
-                </select>
-                
-                <TextInput placeholder="Reason for warning..." value={warningReason} onChange={e => setWarningReason(e.target.value)} />
-                
-                <Button onClick={submitWarning} loading={busy === 'warning'} className="w-full">
-                  <Plus className="h-4 w-4 mr-2" /> Add Warning
-                </Button>
-              </div>
+              {readOnly ? null : (
+                <div className="space-y-3">
+                  <select 
+                    value={warningId} 
+                    onChange={(e) => setWarningId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-50 focus:border-accent-500"
+                  >
+                    <option value="" disabled>Select a player (alias)...</option>
+                    {aliases.map(a => (
+                      <option key={a.id} value={String(a.discord_id)}>
+                        {a.alias_name} ({a.discord_id})
+                      </option>
+                    ))}
+                  </select>
+                  
+                  <TextInput placeholder="Reason for warning..." value={warningReason} onChange={e => setWarningReason(e.target.value)} />
+                  
+                  <Button onClick={submitWarning} loading={busy === 'warning'} className="w-full">
+                    <Plus className="h-4 w-4 mr-2" /> Add Warning
+                  </Button>
+                </div>
+              )}
 
               <div className="mt-6 space-y-2">
                 <h4 className="text-sm font-semibold text-slate-300 mb-2">Recorded Warnings</h4>
@@ -328,7 +345,9 @@ export default function WarPage() {
                           <p className="text-sm font-semibold text-slate-50">{displayName}</p>
                           <p className="text-xs text-slate-500">{w.reason}</p>
                         </div>
-                        <button onClick={() => removeWarning(w.id)} className="text-slate-500 hover:text-danger-400"><Trash2 className="h-4 w-4" /></button>
+                        {readOnly ? null : (
+                          <button onClick={() => removeWarning(w.id)} className="text-slate-500 hover:text-danger-400"><Trash2 className="h-4 w-4" /></button>
+                        )}
                       </li>
                     )
                   })

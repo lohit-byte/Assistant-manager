@@ -4,12 +4,19 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Plus, RefreshCw, Search, Trash2, UserRound, Users } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
 import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, PageHeader, Spinner, TextInput } from '@/components/ui'
+import { StaffOnlyPanel } from '@/components/staff-only'
 import { addAlias, deleteAlias, listAliases } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
 import { isSnowflake } from '@/lib/format'
 import type { Alias } from '@/lib/types'
 
 export default function AliasesPage() {
+  const { readOnly } = useGuild()
+  if (readOnly) return <StaffOnlyPanel area="Alias management" />
+  return <AliasesContent />
+}
+
+function AliasesContent() {
   const { guildId } = useGuild()
   const [aliases, setAliases] = useState<Alias[]>([])
   const [loading, setLoading] = useState(true)

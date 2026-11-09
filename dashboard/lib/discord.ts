@@ -1,4 +1,6 @@
+import type { Session } from '@supabase/supabase-js'
 import { PERMISSION_ADMINISTRATOR, PERMISSION_MANAGE_GUILD } from './constants'
+import { isSnowflake } from './format'
 
 export interface DiscordGuild {
   id: string
@@ -48,4 +50,22 @@ export function canManageGuild(guild: DiscordGuild): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * The Discord user id behind the Supabase session. GoTrue exposes it as
+ * `user_metadata.provider_id` (and `sub`); older sessions only carry it on the
+ * provider identity, so fall back to the Discord identity id.
+ */
+export function discordIdFromSession(user: Session['user'] | null | undefined): string | null {
+  if (!user) return null
+  const metadata = (user.user_metadata ?? {}) as Record<string, unknown>
+  const identityId = user.identities?.find((identity) => identity.provider === 'discord')?.id
+  const candidates: unknown[] = [metadata.provider_id, metadata.sub, identityId, user.identities?.[0]?.id]
+
+  for (const candidate of candidates) {
+    const value = typeof candidate === 'number' ? String(candidate) : candidate
+    if (typeof value === 'string' && isSnowflake(value)) return value.trim()
+  }
+  return null
 }

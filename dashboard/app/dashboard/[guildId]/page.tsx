@@ -64,7 +64,7 @@ function Metric({
 }
 
 export default function OverviewPage() {
-  const { guildId, guild } = useGuild()
+  const { guildId, guild, readOnly } = useGuild()
   const now = useNow()
   const [summary, setSummary] = useState<GuildSummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -272,7 +272,7 @@ export default function OverviewPage() {
                   href={`/dashboard/${guildId}/war`}
                   className="-my-1 inline-flex items-center gap-1 py-1.5 text-xs font-semibold text-accent-300 transition-colors hover:text-accent-200"
                 >
-                  Manage <ArrowRight className="h-3.5 w-3.5" />
+                  {readOnly ? 'Open' : 'Manage'} <ArrowRight className="h-3.5 w-3.5" />
                 </Link>
               }
             />
@@ -354,7 +354,7 @@ export default function OverviewPage() {
                   href={`/dashboard/${guildId}/race`}
                   className="-my-1 inline-flex items-center gap-1 py-1.5 text-xs font-semibold text-accent-300 transition-colors hover:text-accent-200"
                 >
-                  Manage <ArrowRight className="h-3.5 w-3.5" />
+                  {readOnly ? 'Open' : 'Manage'} <ArrowRight className="h-3.5 w-3.5" />
                 </Link>
               }
             />
@@ -442,7 +442,7 @@ export default function OverviewPage() {
                   href={`/dashboard/${guildId}/maze`}
                   className="-my-1 inline-flex items-center gap-1 py-1.5 text-xs font-semibold text-accent-300 transition-colors hover:text-accent-200"
                 >
-                  Manage <ArrowRight className="h-3.5 w-3.5" />
+                  {readOnly ? 'Open' : 'Manage'} <ArrowRight className="h-3.5 w-3.5" />
                 </Link>
               }
             />
@@ -515,20 +515,32 @@ export default function OverviewPage() {
             />
             <CardBody className="space-y-4">
               <div className="grid grid-cols-2 gap-2.5">
-                <Link
-                  href={`/dashboard/${guildId}/aliases`}
-                  className="group rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:border-white/[0.12] hover:bg-white/[0.04]"
-                >
-                  <p className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-slate-500">
-                    <Users className="h-3.5 w-3.5" /> Aliases
-                  </p>
-                  <p className="mt-1.5 text-2xl font-bold tracking-tight text-slate-50">
-                    {summary?.aliasCount ?? 0}
-                  </p>
-                  <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-accent-300">
-                    Manage <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
-                  </p>
-                </Link>
+                {readOnly ? (
+                  <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+                    <p className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-slate-500">
+                      <Users className="h-3.5 w-3.5" /> Aliases
+                    </p>
+                    <p className="mt-1.5 text-2xl font-bold tracking-tight text-slate-50">
+                      {summary?.aliasCount ?? 0}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">Staff managed</p>
+                  </div>
+                ) : (
+                  <Link
+                    href={`/dashboard/${guildId}/aliases`}
+                    className="group rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:border-white/[0.12] hover:bg-white/[0.04]"
+                  >
+                    <p className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-slate-500">
+                      <Users className="h-3.5 w-3.5" /> Aliases
+                    </p>
+                    <p className="mt-1.5 text-2xl font-bold tracking-tight text-slate-50">
+                      {summary?.aliasCount ?? 0}
+                    </p>
+                    <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-accent-300">
+                      Manage <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+                    </p>
+                  </Link>
+                )}
                 <Link
                   href={`/dashboard/${guildId}/war`}
                   className="group rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:border-white/[0.12] hover:bg-white/[0.04]"

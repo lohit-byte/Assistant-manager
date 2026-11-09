@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from 'next/navigation'
 import { ShieldCheck, ArrowRight, Sparkles, Check, Mail, Loader2, ShieldAlert, X, Clock } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
 import { Card, CardBody, CardHeader, Badge, ProgressBar, Alert, PageHeader } from '@/components/ui'
+import { StaffOnlyPanel } from '@/components/staff-only'
 import { formatDate, toDate } from '@/lib/format'
 import { PRICING_PLANS, PLAN_FEATURES, formatPrice, detectCurrency, perMonthPrice, yearlySavings, Currency } from '@/lib/pricing'
 import { TRIAL_DAYS } from '@/lib/constants'
@@ -26,6 +27,12 @@ function formatRemainingTime(endDate: Date | null) {
 }
 
 export default function BillingPage() {
+  const { readOnly } = useGuild()
+  if (readOnly) return <StaffOnlyPanel area="Billing" />
+  return <BillingContent />
+}
+
+function BillingContent() {
   const params = useParams()
   const searchParams = useSearchParams()
   const guildId = params.guildId as string

@@ -3,6 +3,7 @@ import { DEFAULT_ATTACKS_REQUIRED } from './constants'
 import type {
   Alias,
   Guild,
+  MazePingMention,
   MazeSchedule,
   RaceState,
   War,
@@ -162,6 +163,8 @@ export async function saveMazeSchedule(
     maze_type: '7d' | '3d'
     channel_id: string | null
     ping_enabled_global: boolean
+    ping_mention: MazePingMention
+    ping_role_id: string | null
   },
 ): Promise<void> {
   const { error } = await supabase.from('maze_schedules').upsert(
@@ -172,6 +175,9 @@ export async function saveMazeSchedule(
       maze_type: values.maze_type,
       channel_id: values.channel_id,
       ping_enabled_global: values.ping_enabled_global,
+      ping_mention: values.ping_mention,
+      // The role is only meaningful while the mention mode is 'role'; clear it otherwise.
+      ping_role_id: values.ping_mention === 'role' ? values.ping_role_id : null,
     },
     { onConflict: 'guild_id' },
   )
@@ -187,6 +193,32 @@ export async function deleteMazeSchedule(
 }
 
 /* ---------------------------------------------------------------- aliases */
+
+/**
+ * True when this Discord user has an alias row for the guild. Staff create those rows
+ * with `!alias add`, so the dashboard uses this as the membership proof that lets a
+ * regular member view a premium server read-only.
+ */
+export async function isAliasMember(
+  supabase: SupabaseClient,
+  guildId: string,
+  discordId: string,
+): Promise<boolean> {
+  const cleanId = discordId.replace(/\D/g, '')
+  if (!cleanId) return false
+
+  const { data, error } = await supabase
+    .from('aliases')
+    .select('id')
+    .eq('guild_id', guildId)
+    .eq('discord_id', cleanId)
+    .limit(1)
+    .maybeSingle()
+
+  // A failed lookup means "no membership" rather than a broken dashboard.
+  if (error) return false
+  return Boolean(data)
+}
 
 export async function listAliases(supabase: SupabaseClient, guildId: string): Promise<Alias[]> {
   const { data, error } = await supabase

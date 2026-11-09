@@ -31,7 +31,7 @@ function emptyRace(guildId: string, channelId: string): RaceState {
 }
 
 export default function RacePage() {
-  const { guildId } = useGuild()
+  const { guildId, readOnly } = useGuild()
   const router = useRouter()
   const searchParams = useSearchParams()
   
@@ -182,7 +182,7 @@ export default function RacePage() {
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <Stat label="Current Node" value={`Lap ${lap}.${node}`} hint={activeSheet ? `Sheet: ${activeSheet}` : 'No active sheet'} icon={<Flag className="h-4 w-4" />} tone="purple" />
-        <Stat label="Lap Target" value={targetLaps > 0 ? targetLaps : 'Not set'} hint={targetLaps > 0 ? `${percent(lap, targetLaps).toFixed(0)}% of target` : 'Set a target below'} icon={<Target className="h-4 w-4" />} tone="green" />
+        <Stat label="Lap Target" value={targetLaps > 0 ? targetLaps : 'Not set'} hint={targetLaps > 0 ? `${percent(lap, targetLaps).toFixed(0)}% of target` : readOnly ? 'Staff managed' : 'Set a target below'} icon={<Target className="h-4 w-4" />} tone="green" />
         <Stat label="Recent Activity" value={logs.length > 0 ? `${logs.length} actions` : 'Quiet'} hint="See the feed below" icon={<Activity className="h-4 w-4" />} tone="amber" />
       </div>
 
@@ -227,6 +227,7 @@ export default function RacePage() {
             </CardBody>
           </Card>
 
+          {readOnly ? null : (
           <Card>
             <CardHeader title="Race Automation" description="Upload a community JSON sheet." icon={<ChevronRight className="h-5 w-5" />} />
             <CardBody className="space-y-6">
@@ -261,6 +262,7 @@ export default function RacePage() {
               </div>
             </CardBody>
           </Card>
+          )}
         </div>
 
         <div>

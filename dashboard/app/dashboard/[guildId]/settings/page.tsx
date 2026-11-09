@@ -4,9 +4,16 @@ import { useState } from 'react'
 import { useGuild } from '@/components/guild-shell'
 import { createClient } from '@/lib/supabase/client'
 import { PageHeader, Card, CardBody, CardHeader, Field, TextInput, Button, Alert } from '@/components/ui'
+import { StaffOnlyPanel } from '@/components/staff-only'
 import { Save, Settings } from 'lucide-react'
 
 export default function ServerSettingsPage() {
+  const { readOnly } = useGuild()
+  if (readOnly) return <StaffOnlyPanel area="Server settings" />
+  return <ServerSettingsContent />
+}
+
+function ServerSettingsContent() {
   const { guildId, guild, refresh } = useGuild()
   
   const [warChannel, setWarChannel] = useState(guild.war_channel_id?.toString() || '')
