@@ -103,12 +103,14 @@ export default function OverviewPage() {
   const warMissing = summary?.war?.missing_list?.length ?? 0
   const warExcused = summary?.war?.absent_list?.length ?? 0
   const warLogged = Object.keys(summary?.war?.attack_counts ?? {}).length
-  const phaseElapsed = useMemo(() => {
-    if (!warWindow.active || !warWindow.start || !warWindow.phaseEnd) return null
-    const attackStart = warWindow.phase === 'attack' ? warWindow.start.getTime() + 24 * 3600_000 : warWindow.start.getTime()
+  // Progress across the whole 48h war, matching the War page's "Total War
+  // Progress" bar. The phase bar reset every 24h, which made 9% look wrong next
+  // to a 21h countdown drawn from the 48h war clock.
+  const warProgress = useMemo(() => {
+    if (!warWindow.active || !warWindow.start || !warWindow.warEnd) return null
     return {
-      value: now.getTime() - attackStart,
-      max: Math.max(1, warWindow.phaseEnd.getTime() - attackStart),
+      value: now.getTime() - warWindow.start.getTime(),
+      max: Math.max(1, warWindow.warEnd.getTime() - warWindow.start.getTime()),
     }
   }, [warWindow, now])
 
@@ -173,13 +175,13 @@ export default function OverviewPage() {
           label="War"
           value={warWindow.active ? warPhaseLabel(warWindow.phase) : 'Idle'}
           hint={
-            warWindow.active && warWindow.phaseEnd ? formatRelative(warWindow.phaseEnd, now) : 'No active war'
+            warWindow.active && warWindow.warEnd ? formatRelative(warWindow.warEnd, now) : 'No active war'
           }
           icon={<Swords className="h-4 w-4" />}
           tone={warWindow.active ? 'amber' : 'slate'}
           footer={
-            phaseElapsed ? (
-              <ProgressBar value={phaseElapsed.value} max={phaseElapsed.max} tone="amber" size="sm" />
+            warProgress ? (
+              <ProgressBar value={warProgress.value} max={warProgress.max} tone="amber" size="sm" />
             ) : undefined
           }
         />
@@ -264,38 +266,26 @@ export default function OverviewPage() {
                     ) : null}
                   </div>
 
-                  {phaseElapsed ? (
+                  {warProgress ? (
                     <div>
                       <ProgressBar
-                        value={phaseElapsed.value}
-                        max={phaseElapsed.max}
+                        value={warProgress.value}
+                        max={warProgress.max}
                         tone="amber"
-                        label="Phase elapsed"
+                        label="Total War Progress"
                       />
-                      <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+                      <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
                         <Clock className="h-3.5 w-3.5" />
-                        {warWindow.phaseEnd ? (
+                        {warWindow.warEnd ? (
                           <span>
                             <span className="font-semibold text-slate-300">
-                              {formatDuration(warWindow.phaseEnd.getTime() - now.getTime())}
+                              {formatDuration(warWindow.warEnd.getTime() - now.getTime())}
                             </span>{' '}
-                            left in {warPhaseLabel(warWindow.phase).toLowerCase()}
+                            left in the war
                           </span>
                         ) : (
                           <span>No timer</span>
                         )}
-                        {warWindow.warEnd ? (
-                          <>
-                            <span className="text-slate-700">·</span>
-                            <span>
-                              war clock{' '}
-                              <span className="font-semibold text-slate-300">
-                                {formatDuration(warWindow.warEnd.getTime() - now.getTime())}
-                              </span>{' '}
-                              left (48h → 0h)
-                            </span>
-                          </>
-                        ) : null}
                       </p>
                     </div>
                   ) : null}
