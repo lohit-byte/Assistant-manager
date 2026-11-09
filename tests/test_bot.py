@@ -826,3 +826,16 @@ def test_billing_expiry_dms_the_owner(clean_db):
 
     assert db.one("guilds", guild_id=GUILD)["premium_status"] == "expired"
     assert guild.owner.dms, "the owner should receive a premium-expiry DM"
+
+
+def test_war_board_stop_disables_auto_board(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(), phase="defence")
+    ctx = make_ctx(channel_id=CHANNEL)
+    tracker = war_cog()
+
+    run(call(WarTracker.war_group, tracker, ctx, "board"))
+    run(call(WarTracker.war_group, tracker, ctx, "board", "stop"))
+
+    assert db.one("wars", channel_id=CHANNEL)["status_message_id"] == -1

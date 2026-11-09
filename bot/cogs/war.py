@@ -276,7 +276,7 @@ class WarTracker(commands.Cog):
         if sub in ("stop", "off", "remove", "delete"):
             if war:
                 await asyncio.to_thread(
-                    supabase.table("wars").update({"status_message_id": None})
+                    supabase.table("wars").update({"status_message_id": -1})
                     .eq("channel_id", ctx.channel.id).execute
                 )
                 message_id = war.get("status_message_id")
@@ -394,7 +394,8 @@ class WarTracker(commands.Cog):
                 # every second client-side; refresh it about once a minute to stay
                 # well below Discord's edit rate limit.
                 last = self.board_updated.get(channel_id, 0.0)
-                if changed or time.monotonic() - last >= 55:
+                board_disabled = war.get("status_message_id") == -1
+                if not board_disabled and (changed or time.monotonic() - last >= 55):
                     await self.upsert_board(channel_id, channel, war)
                     self.board_updated[channel_id] = time.monotonic()
 

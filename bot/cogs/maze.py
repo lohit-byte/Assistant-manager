@@ -254,6 +254,11 @@ class MazeTracker(commands.Cog):
                 except Exception:
                     user = None
             if user is None:
+                try:
+                    user = await self.bot.fetch_user(discord_id)
+                except Exception:
+                    user = None
+            if user is None:
                 continue
             try:
                 await user.send(embed=discord.Embed(

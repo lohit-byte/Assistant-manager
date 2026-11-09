@@ -72,7 +72,7 @@ CREATE TABLE wars (
     missing_list JSONB DEFAULT '[]'::jsonb, -- [{ "name": "sam" }]; id is optional when known
     absent_list JSONB DEFAULT '[]'::jsonb,
     attack_counts JSONB DEFAULT '{}'::jsonb, -- { "sam": 6 }
-    status_message_id BIGINT, -- live war board message (edited in place)
+    status_message_id BIGINT, -- live war board message; NULL = auto-create, -1 = stopped by staff
     sent_pings JSONB DEFAULT '[]'::jsonb, -- reminder keys already sent, e.g. ["hours_12"]
     is_active BOOLEAN DEFAULT TRUE
 );
