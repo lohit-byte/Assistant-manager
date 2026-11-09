@@ -54,7 +54,7 @@ def parse_node_args(args):
     for c in chunks:
         m = re.match(r'([\d.,]+)\s*([KMB](?![a-z]))?\s*(.*)', c, re.IGNORECASE)
         if not m: raise ValueError(f"can't read: {c}")
-        val = f"{m.group(1).replace(',', '.')} {(m.group(2) or '').upper()}".strip()
+        val = f"{m.group(1)} {(m.group(2) or '').upper()}".strip()
         out.append((val, m.group(3).strip()))
     return out
 
@@ -71,11 +71,16 @@ async def log_race_action(guild_id, user_id, player_name, action_type):
     try:
         await asyncio.to_thread(supabase.table("race_logs").insert({
             "guild_id": guild_id, "discord_id": user_id, "player_name": player_name, "action_type": action_type
-        }).execute())
+        }).execute)
     except Exception as e:
         print(f"Failed to log race action: {e}")
 
-async def check_team_limit(guild_id):
+def _race_channel_in_use(row):
+    # Only a cleared channel frees its team slot; a target-only row still counts.
+    return bool(row.get("is_event_active")) or row.get("task_description") != "No Active Node"
+
+
+async def check_team_limit(guild_id, exclude_channel_id=None):
     res = await asyncio.to_thread(supabase.table("guilds").select("max_teams").eq("guild_id", guild_id).execute)
     max_teams = (res.data[0].get("max_teams") if res.data else None) or 1
     active = await asyncio.to_thread(
@@ -84,13 +89,11 @@ async def check_team_limit(guild_id):
         .eq("guild_id", guild_id)
         .execute
     )
-
-    def in_use(row):
-        # A channel whose node was cleared ("No Active Node") no longer uses a
-        # team slot, so a server can start tracking another team afterwards.
-        return bool(row.get("is_event_active")) or row.get("task_description") not in (None, "No Active Node")
-
-    return sum(1 for row in active.data if in_use(row)) < max_teams
+    used = [
+        row for row in active.data
+        if str(row.get("channel_id")) != str(exclude_channel_id) and _race_channel_in_use(row)
+    ]
+    return len(used) < max_teams
 
 class RaceTracker(commands.Cog):
     def __init__(self, bot):
@@ -118,18 +121,19 @@ class RaceTracker(commands.Cog):
             return await self.handle_task(ctx, action, subaction, args)
 
         # STAFF ONLY
-        if not is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
+        if not await is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
 
         if action == "uploadsheet": return await self.upload_sheet(ctx, args)
         if action == "use": return await self.use_sheet(ctx, args)
         if action == "next": return await self.advance_node_auto(ctx)
         
-        # TEAM LIMIT CHECK (For starting new tracking)
-        if action in ("target", "newnode"):
-            existing = await get_race(ctx.channel.id)
-            if not existing or existing.get("task_description") == "No Active Node":
-                if not await check_team_limit(ctx.guild.id):
-                    return await ctx.send("❌ **Team limit reached!** Your server's plan only allows a certain number of active teams. Upgrade on the dashboard to add more.")
+        # TEAM LIMIT CHECK: starting/activating a team in this channel consumes a
+        # paid slot (the channel's own existing row is excluded from the count).
+        starts_team = action in ("target", "newnode")
+        if action == "set" and subaction == "desc" and args and len(args.split(maxsplit=1)) > 1:
+            starts_team = True
+        if starts_team and not await check_team_limit(ctx.guild.id, exclude_channel_id=ctx.channel.id):
+            return await ctx.send("❌ **Team limit reached!** Your server's plan only allows a certain number of active teams. Upgrade on the dashboard to add more.")
 
         if action == "target":
             if not args or not args.isdigit(): return await ctx.send("Usage: `!race target 20`")
@@ -139,7 +143,7 @@ class RaceTracker(commands.Cog):
         if action == "clear":
             await asyncio.to_thread(supabase.table("race_state").upsert({
                 "channel_id": ctx.channel.id, "guild_id": ctx.guild.id,
-                "task_description": "No Active Node", 
+                "task_description": "No Active Node", "is_event_active": False, 
                 "ofa_holder_id": None, "ofa_target": None, "ofa_done": False, 
                 "dyp_progress": 0, "dyp_target": 0, "dyp_contributors": [], 
                 "je_progress": "0", "je_target": "0", "je_done": False, 
@@ -290,7 +294,7 @@ class RaceTracker(commands.Cog):
 
             if action == "ofa":
                 if subaction in ("cancel", "release"):
-                    if not is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
+                    if not await is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
                     fields = {"pending_ofa_message_id": None, "pending_ofa_user_id": None}
                     if subaction == "release":
                         # Let staff hand the OFA slot back without losing the node.
@@ -299,7 +303,7 @@ class RaceTracker(commands.Cog):
                     return await ctx.send("✅ OFA released." if subaction == "release" else "✅ Pending OFA claim cancelled.")
                     
                 if subaction == "done":
-                    if not state.get('ofa_holder_id') or (ctx.author.id != state['ofa_holder_id'] and not is_staff_member(ctx.author)): 
+                    if not state.get('ofa_holder_id') or (ctx.author.id != state['ofa_holder_id'] and not await is_staff_member(ctx.author)): 
                         return await ctx.send("❌ You don't hold OFA.")
                     await asyncio.to_thread(supabase.table("race_state").update({"ofa_done": True}).eq("channel_id", ctx.channel.id).execute)
                     await log_race_action(ctx.guild.id, ctx.author.id, display_name, "ofa_done")
@@ -340,18 +344,30 @@ class RaceTracker(commands.Cog):
                 if args.startswith("+"):
                     try:
                         amt = parse_amount(args[1:])
-                        curr = parse_amount(state.get('je_progress', '0'))
-                        targ = parse_amount(state.get('je_target', '0'))
-                        if targ <= 0:
-                            return await ctx.send("❌ JE target isn't set for this node. Staff can set it with `!race set je <target>`.")
-                        new_val = min(curr + amt, targ)
+                    except ValueError:
+                        return await ctx.send("❌ Invalid amount. Use `!race je +500k`.")
+                    try:
+                        curr = parse_amount(state.get('je_progress') or '0')
+                    except ValueError:
+                        curr = 0
+                    try:
+                        targ = parse_amount(state.get('je_target') or '0')
+                    except ValueError:
+                        targ = 0
+                    new_val = curr + amt
+                    if targ > 0:
+                        new_val = min(new_val, targ)
                         done = new_val >= targ
-                        await asyncio.to_thread(supabase.table("race_state").update({"je_progress": format_amount(new_val), "je_done": done}).eq("channel_id", ctx.channel.id).execute)
-                        await log_race_action(ctx.guild.id, ctx.author.id, display_name, "je_add")
-                        await ctx.send(f"✅ JE logged for **{display_name}**. Progress: `{format_amount(new_val)}/{state['je_target']}`")
-                        if done: await ctx.send("🎉 **JE Target Reached!**")
-                    except ValueError: 
-                        await ctx.send("❌ Invalid amount. Use `+500k`.")
+                        target_label = format_amount(targ)
+                    else:
+                        # Sheet-loaded nodes often store task text ("Breed 36 C")
+                        # instead of a number: track progress, never auto-complete.
+                        done = False
+                        target_label = str(state.get('je_target') or "target not set")
+                    await asyncio.to_thread(supabase.table("race_state").update({"je_progress": format_amount(new_val), "je_done": done}).eq("channel_id", ctx.channel.id).execute)
+                    await log_race_action(ctx.guild.id, ctx.author.id, display_name, "je_add")
+                    await ctx.send(f"✅ JE logged for **{display_name}**. Progress: `{format_amount(new_val)}/{target_label}`")
+                    if done: await ctx.send("🎉 **JE Target Reached!**")
 
     async def show_status(self, ctx):
         state = await get_race(ctx.channel.id)
@@ -404,7 +420,7 @@ class RaceTracker(commands.Cog):
         await ctx.send(embed=embed)
 
     async def show_help(self, ctx):
-        is_staff = is_staff_member(ctx.author)
+        is_staff = await is_staff_member(ctx.author)
         embed = discord.Embed(title="🏁 Race Commands", color=discord.Color.green())
         embed.add_field(name="Public Commands", value=(
             "`!race status`\n"
@@ -434,7 +450,7 @@ class RaceTracker(commands.Cog):
         
         guild = self.bot.get_guild(payload.guild_id)
         reactor = guild.get_member(payload.user_id) if guild else None
-        if not reactor or not is_staff_member(reactor): return
+        if not reactor or not await is_staff_member(reactor): return
 
         is_premium = await asyncio.to_thread(check_premium_status, guild.id)
         if not is_premium: return
@@ -445,6 +461,8 @@ class RaceTracker(commands.Cog):
             if not state or state.get('pending_ofa_message_id') != payload.message_id: return
             
             channel = self.bot.get_channel(payload.channel_id)
+            if channel is None:
+                return
             user_id = state.get('pending_ofa_user_id')
             if not user_id:
                 return

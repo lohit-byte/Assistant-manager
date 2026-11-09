@@ -76,7 +76,7 @@ class Help(commands.Cog):
     @commands.command(name="help")
     @commands.guild_only()
     async def help_command(self, ctx, topic: str = None):
-        staff = is_staff_member(ctx.author)
+        staff = await is_staff_member(ctx.author)
         if not topic:
             return await ctx.send(embed=build_overview(staff))
         e = build_topic(topic.lower(), staff)

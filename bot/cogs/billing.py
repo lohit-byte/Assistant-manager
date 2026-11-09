@@ -64,6 +64,14 @@ class BillingManager(commands.Cog):
         expired = total_hours <= 0
         days_left = max(1, math.ceil(total_hours / 24))
 
+        # A renewal can happen without the payment webhook resetting the marker;
+        # -1 ("expired notice sent") must not mute all future renewal warnings.
+        if last_ping == -1 and not expired:
+            await asyncio.to_thread(
+                supabase.table("guilds").update({"last_renewal_ping": 0}).eq("guild_id", guild_id).execute
+            )
+            last_ping = 0
+
         guild = self.bot.get_guild(guild_id)
         if not guild:
             return
@@ -90,12 +98,11 @@ class BillingManager(commands.Cog):
         if expired:
             if last_ping == -1:
                 return
-            await asyncio.to_thread(
-                supabase.table("guilds").update({
-                    "premium_status": "expired",
-                    "last_renewal_ping": -1
-                }).eq("guild_id", guild_id).execute
-            )
+            if not await self._update_if_unchanged(guild_id, ends_at_str, {
+                "premium_status": "expired",
+                "last_renewal_ping": -1,
+            }):
+                return  # renewed between the SELECT and this UPDATE
             await send_notice(discord.Embed(
                 title="🚨 Premium Expired",
                 description=(
@@ -107,9 +114,8 @@ class BillingManager(commands.Cog):
 
         elif total_hours <= 24 and last_ping not in (1, -1):
             # 2. 1 Day Warning
-            await asyncio.to_thread(
-                supabase.table("guilds").update({"last_renewal_ping": 1}).eq("guild_id", guild_id).execute
-            )
+            if not await self._update_if_unchanged(guild_id, ends_at_str, {"last_renewal_ping": 1}):
+                return
             await send_notice(discord.Embed(
                 title="⚠️ Premium Expires Tomorrow",
                 description=(
@@ -121,9 +127,8 @@ class BillingManager(commands.Cog):
 
         elif total_hours <= 72 and last_ping not in (1, 3, -1):
             # 3. 3 Day Warning
-            await asyncio.to_thread(
-                supabase.table("guilds").update({"last_renewal_ping": 3}).eq("guild_id", guild_id).execute
-            )
+            if not await self._update_if_unchanged(guild_id, ends_at_str, {"last_renewal_ping": 3}):
+                return
             await send_notice(discord.Embed(
                 title="⏳ Premium Expiring Soon",
                 description=(
@@ -132,6 +137,14 @@ class BillingManager(commands.Cog):
                 ),
                 color=discord.Color.yellow()
             ))
+
+    async def _update_if_unchanged(self, guild_id, ends_at_str, payload):
+        """Only write if premium_ends_at still matches what the sweep read."""
+        res = await asyncio.to_thread(
+            supabase.table("guilds").update(payload)
+            .eq("guild_id", guild_id).eq("premium_ends_at", ends_at_str).execute
+        )
+        return bool(res.data)
 
     @check_expirations.before_loop
     async def before_check(self):

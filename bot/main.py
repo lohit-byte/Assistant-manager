@@ -56,8 +56,12 @@ async def on_ready():
         print(f"❌ Supabase connection failed: {e}")
         
     for g in bot.guilds:
-        await asyncio.to_thread(get_or_create_guild, g.id)
-        
+        # One bad guild must not abort the backfill for every later guild.
+        try:
+            await asyncio.to_thread(get_or_create_guild, g.id)
+        except Exception as e:
+            print(f"❌ Could not initialise guild {g.id}: {e}")
+
     print("🚀 Bot is ready.")
 
 @bot.event
@@ -94,7 +98,9 @@ async def premium_gate(ctx):
         return True
 
     if ctx.guild is None:
-        return False
+        # Let the command's own guild-only check raise NoPrivateMessage, which
+        # is answered in on_command_error (global checks run before those).
+        return True
 
     ok = await asyncio.to_thread(check_premium_status, ctx.guild.id)
     if not ok:
@@ -110,7 +116,13 @@ async def force_command(ctx, action: str = None):
     if action and action.lower() == "premium":
         try:
             await asyncio.to_thread(
-                supabase.table("guilds").update({"premium_status": "premium"}).eq("guild_id", ctx.guild.id).execute
+                supabase.table("guilds").update({
+                    "premium_status": "premium",
+                    # An expired subscription keeps its past end date; clear it or
+                    # check_premium_status will still deny everyone.
+                    "premium_ends_at": None,
+                    "last_renewal_ping": 0,
+                }).eq("guild_id", ctx.guild.id).execute
             )
             await ctx.send("✅ **Server force-upgraded to Premium!** You can now use all commands.")
         except Exception as e:

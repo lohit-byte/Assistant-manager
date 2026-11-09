@@ -208,7 +208,7 @@ class MazeTracker(commands.Cog):
 
         # `status` is informational, so members may use it. Everything else
         # changes shared server state and stays staff-only.
-        if action != "status" and not is_staff_member(ctx.author):
+        if action != "status" and not await is_staff_member(ctx.author):
             return await ctx.send("❌ You must be an Admin or Staff to use Maze commands.")
 
         if action == "status":
@@ -272,8 +272,11 @@ class MazeTracker(commands.Cog):
                 days = 3 if duration == "3d" else 7
                 end_time = start_time + timedelta(days=days)
 
-                # If the event has already passed entirely, roll to next year
-                if end_time < now:
+                # If the event has already passed entirely, roll forward until it
+                # is in the future (a fixed +1 year is not enough for old dates).
+                for _ in range(20):
+                    if end_time >= now:
+                        break
                     try:
                         start_time = start_time.replace(year=start_time.year + 1)
                     except ValueError:  # 29 Feb -> next year isn't a leap year

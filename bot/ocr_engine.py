@@ -1,4 +1,5 @@
 import aiohttp
+import asyncio
 import re
 import io
 import os
@@ -23,6 +24,22 @@ def clean_val(v_str):
         return 0.0
 
 
+def _prepare_jpeg(image_bytes):
+    """Decode, crop to the race columns and compress to a <1MB JPEG."""
+    # `with` guarantees the decoded bitmap is released even on error.
+    with Image.open(io.BytesIO(image_bytes)) as source:
+        w, h = source.size
+        img = source.crop((int(w * 0.55), 0, w, h)).convert('RGB')
+        best = b""
+        for quality in (90, 80, 70, 60, 50):
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=quality)
+            best = buf.getvalue()
+            if len(best) < 1_000_000:
+                break
+        return best
+
+
 async def process_race_image(image_bytes):
     try:
         api_key = os.environ.get("OCR_SPACE_API_KEY")
@@ -30,23 +47,14 @@ async def process_race_image(image_bytes):
             print("❌ Missing OCR_SPACE_API_KEY in environment variables.")
             return None
 
-        # `with` guarantees the decoded bitmap is released even on error.
-        with Image.open(io.BytesIO(image_bytes)) as source:
-            w, h = source.size
-            img = source.crop((int(w * 0.55), 0, w, h)).convert('RGB')
-        
-        buf = io.BytesIO()
-        for quality in (90, 80, 70, 60, 50):
-            buf = io.BytesIO()
-            img.save(buf, format='JPEG', quality=quality)
-            if buf.tell() < 1_000_000:
-                break
-                
+        # Pillow decode/crop/encode is CPU work: keep it off the event loop.
+        jpeg = await asyncio.to_thread(_prepare_jpeg, image_bytes)
+
         payload = {'language': 'eng', 'isOverlayRequired': 'true', 'isTable': 'false', 'OCREngine': '2'}
         headers = {'apikey': api_key}
         
         form = aiohttp.FormData()
-        form.add_field('file', buf.getvalue(), filename='scan.jpg', content_type='image/jpeg')
+        form.add_field('file', jpeg, filename='scan.jpg', content_type='image/jpeg')
         for k, v in payload.items():
             form.add_field(k, v)
 

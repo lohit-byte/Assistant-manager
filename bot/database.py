@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 from datetime import datetime, timezone
@@ -90,14 +91,17 @@ def get_staff_role_ids(guild_id: int) -> set:
                 if v:
                     ids.add(int(v))
     except Exception as e:
+        # Do not cache a failed lookup as "no staff roles" for the next minute.
         print(f"Role lookup failed: {e}")
+        return set()
     _role_cache[guild_id] = (now, ids)
     return ids
 
-def is_staff_member(m) -> bool:
+async def is_staff_member(m) -> bool:
     p = m.guild_permissions
     if p.administrator or p.manage_guild:
         return True
-    role_ids = get_staff_role_ids(m.guild.id)
+    # Role lookup hits Supabase (cached for 60s): keep it off the event loop.
+    role_ids = await asyncio.to_thread(get_staff_role_ids, m.guild.id)
     return any(r.id in role_ids for r in m.roles)
 

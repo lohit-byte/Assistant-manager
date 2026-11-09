@@ -455,3 +455,153 @@ def test_maze_status_is_public(clean_db):
     run(call(MazeTracker.maze_group, MazeTracker(FakeBot()), ctx, "status"))
 
     assert any(embed is not None for _content, embed in ctx.sent)
+
+
+# ------------------------------------------------- audit round 2 regressions
+
+
+def test_team_limit_blocks_second_team_via_set_desc(clean_db):
+    db = clean_db
+    db.one("guilds", guild_id=GUILD)["max_teams"] = 1
+    db.seed("race_state", {"channel_id": 20, "guild_id": GUILD,
+                           "task_description": "Team A", "is_event_active": False})
+    ctx = make_ctx(channel_id=CHANNEL)
+    race = race_cog()
+
+    run(call(RaceTracker.race_group, race, ctx, "set", args="desc Team B"))
+    assert db.one("race_state", channel_id=CHANNEL) is None
+    assert any("Team limit" in text for text in ctx.texts)
+
+    run(call(RaceTracker.race_group, race, ctx, "target", args="20"))
+    assert db.one("race_state", channel_id=CHANNEL) is None
+    assert sum("Team limit" in text for text in ctx.texts) == 2
+
+
+def test_war_attacks_resolves_a_mention(clean_db):
+    db = clean_db
+    seed_war(db, missing_list=[{"name": "sam"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL)
+    member = FakeMember(200, "Sam", administrator=False, guild=ctx.guild)
+    ctx.guild.members.append(member)
+    ctx.message.mentions = [member]
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "attacks", "<@200>", args="6"))
+
+    row = db.one("wars", channel_id=CHANNEL)
+    assert row["attack_counts"]["sam"] == 6
+    assert row["missing_list"] == []
+
+
+def test_war_attacks_lowering_count_readds_to_missing(clean_db):
+    db = clean_db
+    seed_war(db, missing_list=[], attack_counts={"sam": 5})
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "attacks", "Sam", args="2"))
+
+    row = db.one("wars", channel_id=CHANNEL)
+    assert row["attack_counts"]["sam"] == 2
+    assert any(m["name"] == "sam" for m in row["missing_list"])
+
+
+def test_race_je_accepts_text_target_from_sheet(clean_db):
+    db = clean_db
+    seed_race(db, je_target="Breed 36 C", je_progress="0", je_done=False)
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(race_cog().handle_task(ctx, "je", "+500k", "+500k"))
+
+    row = db.one("race_state", channel_id=CHANNEL)
+    assert row["je_progress"] == "500 K"
+    assert row["je_done"] is False
+    assert not any("Invalid amount" in text for text in ctx.texts)
+
+
+def test_race_log_insert_does_not_report_failure(clean_db, capsys):
+    db = clean_db
+    seed_race(db, dyp_target=5, dyp_progress=0, dyp_contributors=[])
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(race_cog().handle_task(ctx, "dyp", None, None))
+
+    assert db.rows("race_logs"), "race action should be logged"
+    assert "Failed to log race action" not in capsys.readouterr().out
+
+
+def test_force_premium_clears_a_past_expiry(clean_db):
+    db = clean_db
+    db.reset()
+    db.seed("guilds", {"guild_id": GUILD, "premium_status": "premium",
+                       "premium_ends_at": "2020-01-01T00:00:00+00:00",
+                       "trial_ends_at": "2020-01-01T00:00:00+00:00"})
+    import main as botmain
+    from database import check_premium_status
+
+    ctx = make_ctx(author_id=botmain.DEVELOPER_ID)
+    run(botmain.force_command.callback(ctx, "premium"))
+
+    assert db.one("guilds", guild_id=GUILD)["premium_ends_at"] is None
+    assert check_premium_status(GUILD) is True
+
+
+def test_premium_gate_defers_dm_to_guild_only_check(clean_db):
+    import main as botmain
+
+    ctx = make_ctx()
+    ctx.guild = None
+    ctx.command = types.SimpleNamespace(name="war")
+    assert run(botmain.premium_gate(ctx)) is True
+
+
+def test_parse_node_args_keeps_thousands_separator():
+    parsed = parse_node_args("1,200 hatch | 10 breed | 5 craft")
+    assert [value for value, _task in parsed] == ["1,200", "10", "5"]
+    from cogs.race import clean_val
+    assert clean_val("1,200") == 1200
+
+
+def test_maze_old_date_rolls_into_the_future(clean_db):
+    db = clean_db
+    bot, _guild, channel = _maze_bot()
+    tracker = MazeTracker(bot)
+    ctx = make_ctx(channel_id=CHANNEL)
+    ctx.channel = channel
+
+    run(call(MazeTracker.maze_group, tracker, ctx, "start", "7d", arg2="01/01/2020"))
+
+    row = db.one("maze_schedules", guild_id=GUILD)
+    end = datetime.fromisoformat(row["event_end"].replace("Z", "+00:00"))
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    assert end > datetime.now(timezone.utc)
+
+    async def cleanup():
+        for task in tracker.timers.get(GUILD, []):
+            task.cancel()
+
+    run(cleanup())
+
+
+def test_billing_renewal_resets_expired_marker(clean_db):
+    from cogs.billing import BillingManager
+
+    db = clean_db
+    bot, _guild, _channel = _maze_bot()
+    manager = object.__new__(BillingManager)
+    manager.bot = bot
+    row = db.one("guilds", guild_id=GUILD)
+    row.update({"premium_status": "premium",
+                "premium_ends_at": "2099-01-01T00:00:00+00:00",
+                "last_renewal_ping": -1})
+
+    run(manager._process_guild(dict(row), datetime.now(timezone.utc)))
+
+    assert db.one("guilds", guild_id=GUILD)["last_renewal_ping"] == 0
+
+
+def test_non_staff_denied_through_async_role_lookup(clean_db):
+    ctx = make_ctx(administrator=False)
+
+    run(call(Admin.alias_group, admin_cog(), ctx, "list"))
+
+    assert any("Only Admins" in text for text in ctx.texts)

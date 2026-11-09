@@ -11,7 +11,7 @@ class Admin(commands.Cog):
     @commands.guild_only()
     async def alias_group(self, ctx, action: str = None, *, args: str = None):
         """Manage player aliases. Usage: !alias add @user Sam | !alias remove Sam | !alias list"""
-        if not is_staff_member(ctx.author):
+        if not await is_staff_member(ctx.author):
             return await ctx.send("❌ Only Admins can manage aliases.")
 
         action = (action or "").lower()
@@ -96,7 +96,7 @@ class Admin(commands.Cog):
     @commands.guild_only()
     async def ids_command(self, ctx, *, query: str = None):
         """Staff: show IDs. Usage: !ids | !ids roles | !ids members [search] | !ids @user"""
-        if not is_staff_member(ctx.author):
+        if not await is_staff_member(ctx.author):
             return await ctx.send("❌ Staff only.")
 
         q = (query or "").strip()
