@@ -17,6 +17,7 @@ import {
   ChevronRight,
   ChevronsUpDown,
   CreditCard,
+  Crown,
   ExternalLink,
   Eye,
   LayoutDashboard,
@@ -26,7 +27,6 @@ import {
   Menu,
   RefreshCw,
   Server,
-  Settings,
   ShieldAlert,
   Sparkles,
   Swords,
@@ -37,17 +37,29 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import { canManageGuild, DiscordApiError, discordIdFromSession, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
 import { BOT_INVITE_URL, DISCORD_GUILD_ICON, PLAN_META, SUPPORT_EMAIL } from '@/lib/constants'
-import { getGuild, isAliasMember } from '@/lib/data'
+import { getGuild, isAliasMember, listTeamCaptains, listTeams } from '@/lib/data'
 import { cn, toDate } from '@/lib/format'
-import type { Guild } from '@/lib/types'
+import type { Guild, Team } from '@/lib/types'
 import { Badge, Button, Card, CardBody, Spinner, buttonClass } from '@/components/ui'
 import { BrandMark } from '@/components/brand'
 
 interface GuildContextValue {
   guildId: string
   guild: Guild
-  /** True when the viewer is a premium server's alias member, not server staff. */
+  /** True when the viewer has Discord Manage Server/Administrator here. */
+  isStaff: boolean
+  /**
+   * True when the viewer can edit nothing (no staff, no captain teams): a premium server's
+   * alias member, or a captain of nothing. Captains get write on their own team channels only,
+   * so they are not read-only; `canManageChannel` decides each control.
+   */
   readOnly: boolean
+  /** The guild's teams, loaded once so every page can scope edits and links. */
+  teams: Team[]
+  /** Ids of the teams this viewer captains (empty for staff). */
+  captainTeamIds: number[]
+  /** Staff everywhere, captains on their team's war/race channels. */
+  canManageChannel(channelId: string | null | undefined): boolean
   refresh: () => Promise<void>
 }
 
@@ -74,10 +86,7 @@ const NAV_GROUPS = [
   },
   {
     label: 'Manage',
-    items: [
-      { name: 'Aliases', segment: '/aliases', icon: Users },
-      { name: 'Settings', segment: '/settings', icon: Settings },
-    ],
+    items: [{ name: 'Aliases', segment: '/aliases', icon: Users }],
   },
   {
     label: 'Account',
@@ -87,7 +96,10 @@ const NAV_GROUPS = [
 
 // Pages that change server state. Read-only members never see these in the nav and
 // render a "Staff only" panel if they open the URL directly.
-const STAFF_ONLY_SEGMENTS = new Set(['/aliases', '/settings', '/billing'])
+const STAFF_ONLY_SEGMENTS = new Set(['/aliases', '/billing'])
+
+// Captains can only act on their own team's channels: Overview, War and Race.
+const CAPTAIN_SEGMENTS = new Set(['', '/war', '/race'])
 
 type AccessError =
   | { kind: 'discord'; message: string }
@@ -120,7 +132,10 @@ export default function GuildShell({
   const pathname = usePathname()
   const [loading, setLoading] = useState(true)
   const [guild, setGuild] = useState<Guild | null>(null)
+  const [isStaff, setIsStaff] = useState(false)
   const [readOnly, setReadOnly] = useState(false)
+  const [teams, setTeams] = useState<Team[]>([])
+  const [captainTeamIds, setCaptainTeamIds] = useState<number[]>([])
   const [discordGuild, setDiscordGuild] = useState<DiscordGuild | null>(null)
   const [error, setError] = useState<AccessError | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -128,11 +143,16 @@ export default function GuildShell({
   const [userLabel, setUserLabel] = useState('Account')
   const asideRef = useRef<HTMLElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
+  /** Discord id of the viewer, kept so `refresh` can re-check captain rows. */
+  const discordIdRef = useRef<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
+    setIsStaff(false)
     setReadOnly(false)
+    setTeams([])
+    setCaptainTeamIds([])
     const supabase = createClient()
 
     try {
@@ -165,6 +185,47 @@ export default function GuildShell({
       }
 
       const discordId = discordIdFromSession(session.user)
+      discordIdRef.current = discordId
+
+      // Teams and captains are additive: if the migration has not been run (or the lookup
+      // fails) the dashboard must still open with no teams, exactly as before.
+      let guildTeams: Team[] = []
+      try {
+        guildTeams = await listTeams(supabase, guildId)
+      } catch {
+        guildTeams = []
+      }
+
+      const guildTeamIds = new Set(guildTeams.map((team) => Number(team.id)))
+      let myCaptainTeamIds: number[] = []
+      if (discordId && guildTeams.length > 0) {
+        try {
+          const captainRows = await listTeamCaptains(supabase, guildTeams.map((team) => team.id))
+          myCaptainTeamIds = Array.from(
+            new Set(
+              captainRows
+                .filter(
+                  (captain) =>
+                    String(captain.discord_id) === discordId &&
+                    guildTeamIds.has(Number(captain.team_id)),
+                )
+                .map((captain) => Number(captain.team_id)),
+            ),
+          )
+        } catch {
+          myCaptainTeamIds = []
+        }
+      }
+      // A `team_captains` row is an access grant on any plan, with no alias row required.
+      const isCaptain = myCaptainTeamIds.length > 0
+
+      const enter = (staff: boolean, readOnlyAccess: boolean) => {
+        setGuild(row)
+        setTeams(guildTeams)
+        setCaptainTeamIds(myCaptainTeamIds)
+        setIsStaff(staff)
+        setReadOnly(readOnlyAccess)
+      }
 
       // A premium server's alias members may view its dashboard read-only. This is
       // also the fallback when the Discord guild list cannot be loaded (expired token).
@@ -173,14 +234,13 @@ export default function GuildShell({
         return isAliasMember(supabase, guildId, discordId)
       }
 
-      const enterReadOnly = () => {
-        setGuild(row)
-        setReadOnly(true)
-      }
-
       if (!session.provider_token) {
+        if (isCaptain) {
+          enter(false, false)
+          return
+        }
         if (await allowReadOnly()) {
-          enterReadOnly()
+          enter(false, true)
           return
         }
         setError({
@@ -195,9 +255,13 @@ export default function GuildShell({
       try {
         guilds = await fetchDiscordGuilds(session.provider_token)
       } catch (caught) {
-        // Discord being unreachable must not lock out a premium server's alias members.
+        // Discord being unreachable must not lock out captains or premium alias members.
+        if (isCaptain) {
+          enter(false, false)
+          return
+        }
         if (await allowReadOnly()) {
-          enterReadOnly()
+          enter(false, true)
           return
         }
         throw caught
@@ -207,12 +271,17 @@ export default function GuildShell({
       setDiscordGuild(match)
 
       if (match && canManageGuild(match)) {
-        setGuild(row)
+        enter(true, false)
+        return
+      }
+
+      if (isCaptain) {
+        enter(false, false)
         return
       }
 
       if (await allowReadOnly()) {
-        enterReadOnly()
+        enter(false, true)
         return
       }
 
@@ -292,17 +361,81 @@ export default function GuildShell({
   }, [menuOpen])
 
   const refresh = useCallback(async () => {
+    const supabase = createClient()
     try {
-      const row = await getGuild(createClient(), guildId)
+      const row = await getGuild(supabase, guildId)
       if (row) setGuild(row)
     } catch {
       // Keep the previous snapshot; the page-level error handling reports it.
     }
+
+    // Teams and captain rows are edited from the Overview setup card; reload them so a
+    // session that just created a team can manage its channels without a full page reload.
+    let nextTeams: Team[] = []
+    try {
+      nextTeams = await listTeams(supabase, guildId)
+    } catch {
+      nextTeams = []
+    }
+    setTeams(nextTeams)
+
+    const viewerId = discordIdRef.current
+    if (viewerId && nextTeams.length > 0) {
+      try {
+        const captainRows = await listTeamCaptains(
+          supabase,
+          nextTeams.map((team) => team.id),
+        )
+        const teamIds = new Set(nextTeams.map((team) => Number(team.id)))
+        setCaptainTeamIds(
+          Array.from(
+            new Set(
+              captainRows
+                .filter(
+                  (captain) =>
+                    String(captain.discord_id) === viewerId && teamIds.has(Number(captain.team_id)),
+                )
+                .map((captain) => Number(captain.team_id)),
+            ),
+          ),
+        )
+      } catch {
+        setCaptainTeamIds([])
+      }
+    } else {
+      setCaptainTeamIds([])
+    }
   }, [guildId])
 
+  const canManageChannel = useCallback(
+    (channelId: string | null | undefined): boolean => {
+      if (!channelId) return false
+      if (isStaff) return true
+      const id = String(channelId)
+      return teams.some(
+        (team) =>
+          captainTeamIds.includes(Number(team.id)) &&
+          (String(team.war_channel_id) === id || String(team.race_channel_id) === id),
+      )
+    },
+    [captainTeamIds, isStaff, teams],
+  )
+
   const context = useMemo<GuildContextValue | null>(
-    () => (guild ? { guildId, guild, readOnly, refresh } : null),
-    [guild, guildId, readOnly, refresh],
+    () =>
+      guild
+        ? {
+            guildId,
+            guild,
+            isStaff,
+            readOnly,
+            teams,
+            captainTeamIds,
+            canManageChannel,
+            refresh,
+          }
+        : null,
+    [canManageChannel, captainTeamIds, guild, guildId, isStaff, readOnly, refresh, teams],
   )
 
   const signOut = async () => {
@@ -337,12 +470,19 @@ export default function GuildShell({
   const allItems = NAV_GROUPS.flatMap((group) => group.items)
   const activeItem =
     allItems.find((item) => pathname === `/dashboard/${guildId}${item.segment}`) ?? allItems[0]
-  const navGroups = context.readOnly
-    ? NAV_GROUPS.map((group) => ({
+  const isCaptain = !context.isStaff && context.captainTeamIds.length > 0
+  // Staff see everything; captains only Overview/War/Race; read-only alias members lose the
+  // staff-only pages but keep their read-only Maze view.
+  const navGroups = context.isStaff
+    ? NAV_GROUPS
+    : NAV_GROUPS.map((group) => ({
         ...group,
-        items: group.items.filter((item) => !STAFF_ONLY_SEGMENTS.has(item.segment)),
+        items: group.items.filter((item) =>
+          isCaptain
+            ? CAPTAIN_SEGMENTS.has(item.segment)
+            : !STAFF_ONLY_SEGMENTS.has(item.segment),
+        ),
       })).filter((group) => group.items.length > 0)
-    : NAV_GROUPS
   const initials = userLabel.slice(0, 2).toUpperCase()
 
   return (
@@ -455,7 +595,7 @@ export default function GuildShell({
           </nav>
 
           <div className="border-t border-white/[0.06] p-3">
-            {!context.readOnly && activeGuild.premium_status !== 'premium' ? (
+            {context.isStaff && activeGuild.premium_status !== 'premium' ? (
               <Link
                 href={`/dashboard/${guildId}/billing`}
                 className="mb-3 block rounded-sm border border-accent-500/30 bg-accent-500/[0.05] p-3 transition-colors hover:border-accent-500/60"
@@ -527,6 +667,10 @@ export default function GuildShell({
                   <Badge tone="blue" dot>
                     Read-only member access
                   </Badge>
+                ) : isCaptain ? (
+                  <Badge tone="blue" dot>
+                    Team captain
+                  </Badge>
                 ) : null}
                 <Badge tone={meta.tone} dot>
                   {meta.label}
@@ -571,6 +715,19 @@ export default function GuildShell({
                   <p className="mt-0.5 text-sm text-slate-400">
                     Staff added an alias for you on this premium server, so you can view its
                     dashboard. Editing is limited to staff.
+                  </p>
+                </div>
+              </div>
+            ) : isCaptain ? (
+              <div className="mb-6 flex items-start gap-2.5 rounded-sm border border-steel-500/30 bg-steel-500/[0.06] px-4 py-3">
+                <Crown className="mt-0.5 h-4 w-4 shrink-0 text-steel-300" aria-hidden />
+                <div>
+                  <p className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-steel-300">
+                    Team captain access
+                  </p>
+                  <p className="mt-0.5 text-sm text-slate-400">
+                    You can manage your own team&apos;s war and race channels. Server settings,
+                    aliases, maze and other teams stay staff-only.
                   </p>
                 </div>
               </div>

@@ -2,21 +2,31 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Activity, ChevronRight, ChevronDown, Flag, Hand, RefreshCw, Sparkles, Target, Trophy, Users, Check } from 'lucide-react'
+import { Activity, Check, ChevronDown, ChevronRight, Flag, Hand, RefreshCw, Sparkles, Target, Trophy, Users } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
-import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, PageHeader, ProgressBar, Spinner, Stat, TextInput, Divider } from '@/components/ui'
-import { getRaceState, saveRaceState, listAliases } from '@/lib/data'
+import { Alert, Badge, Button, Card, CardBody, CardHeader, Divider, EmptyState, Field, PageHeader, ProgressBar, Spinner, Stat, TextInput } from '@/components/ui'
+import { getRaceState, listAliases, listRaceLogs, saveRaceState } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
 import { NODES_PER_LAP } from '@/lib/constants'
-import { percent } from '@/lib/format'
-import type { RaceState, Alias } from '@/lib/types'
+import { formatDateTime, percent } from '@/lib/format'
+import type { RaceLog, RaceState, Alias } from '@/lib/types'
 import { useNow } from '@/lib/hooks'
 
-interface RaceLog {
-  id: number;
-  player_name: string;
-  action_type: string;
-  created_at: string;
+/** "default" and empty both mean the bundled nodesheet.json shipped with the bot. */
+const BUNDLED_SHEET = '__bundled__'
+
+const ACTION_META: Record<string, { label: string; color: string }> = {
+  ofa_claim: { label: 'Claimed OFA', color: 'text-accent-300' },
+  ofa_done: { label: 'Completed OFA', color: 'text-sage-400' },
+  dyp_done: { label: 'Logged DYP', color: 'text-steel-300' },
+  je_done: { label: 'Completed JE', color: 'text-warn-300' },
+  je_add: { label: 'Added JE', color: 'text-warn-300' },
+}
+
+function isBundledSheet(name: string | null | undefined): boolean {
+  if (!name) return true
+  const clean = name.trim().toLowerCase()
+  return clean === '' || clean === 'default' || clean === 'bundled'
 }
 
 function emptyRace(guildId: string, channelId: string): RaceState {
@@ -31,14 +41,17 @@ function emptyRace(guildId: string, channelId: string): RaceState {
 }
 
 export default function RacePage() {
-  const { guildId, readOnly } = useGuild()
+  const { guildId, isStaff, canManageChannel } = useGuild()
   const router = useRouter()
   const searchParams = useSearchParams()
-  
+
   const channelId = searchParams.get('channel')
+  // Staff edit everywhere; captains only on the race channel of the team they captain.
+  const canManage = canManageChannel(channelId)
+
   const [availableChannels, setAvailableChannels] = useState<string[]>([])
-  
-  const now = useNow(15000) 
+
+  const now = useNow(15000)
   const [draft, setDraft] = useState<RaceState | null>(null)
   const [aliases, setAliases] = useState<Alias[]>([])
   const [logs, setLogs] = useState<RaceLog[]>([])
@@ -46,7 +59,7 @@ export default function RacePage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<{ tone: 'green' | 'red'; text: string } | null>(null)
 
-  const [sheets, setSheets] = useState<any[]>([])
+  const [sheets, setSheets] = useState<{ name: string }[]>([])
   const [activeSheet, setActiveSheet] = useState<string | null>(null)
   const [jsonInput, setJsonInput] = useState(`{\n  "0.1": { "ofa": "Hatch 19", "dyp": "15 Collect 20k food", "je": "Breed 36 C" }\n}`)
   const [sheetName, setSheetName] = useState('')
@@ -76,13 +89,14 @@ export default function RacePage() {
           getRaceState(supabase, channelId),
           listAliases(supabase, guildId),
           supabase.from('race_sheets').select('name').eq('guild_id', guildId),
-          supabase.from('race_logs').select('*').eq('guild_id', guildId).order('created_at', { ascending: false }).limit(15)
+          // Only this channel's activity: per-team feed, not the whole server.
+          listRaceLogs(supabase, guildId, channelId, null).catch(() => []),
         ])
-        
+
         setAliases(aliasData)
         setSheets(sheetData.data || [])
-        setLogs(logData.data || [])
-        
+        setLogs(logData)
+
         const state = row ?? emptyRace(guildId, channelId)
         setDraft(state)
         setActiveSheet(state.active_race_sheet || null)
@@ -137,14 +151,25 @@ export default function RacePage() {
     } catch (e) { setFeedback({ tone: 'red', text: 'Invalid JSON.' }) } finally { setBusy(null) }
   }
 
-  const selectSheet = async (name: string) => {
+  const selectSheet = async (value: string) => {
     if (!channelId) return
     setBusy('select')
-    const supabase = createClient()
-    await supabase.from('race_state').upsert({ channel_id: channelId, guild_id: guildId, active_race_sheet: name }, { onConflict: 'channel_id' })
-    setActiveSheet(name)
-    setFeedback({ tone: 'green', text: `Now using sheet: ${name}` })
-    setBusy(null)
+    try {
+      if (value === BUNDLED_SHEET) {
+        // Empty `active_race_sheet` is exactly what the bot reads as "use the bundled sheet".
+        await saveRaceState(createClient(), channelId, guildId, { active_race_sheet: null })
+        setActiveSheet(null)
+        setFeedback({ tone: 'green', text: 'Now using the default (bundled) node sheet.' })
+      } else {
+        await saveRaceState(createClient(), channelId, guildId, { active_race_sheet: value })
+        setActiveSheet(value)
+        setFeedback({ tone: 'green', text: `Now using sheet: ${value}` })
+      }
+    } catch (e) {
+      setFeedback({ tone: 'red', text: 'Could not select the sheet.' })
+    } finally {
+      setBusy(null)
+    }
   }
 
   if (loading) return <div><PageHeader title="Race Tracker" /><Spinner label="Loading…" /></div>
@@ -157,6 +182,7 @@ export default function RacePage() {
   const dypTarget = draft.dyp_target ?? 0
   const jeProgress = draft.je_progress ?? '0'
   const jeTarget = draft.je_target ?? '0'
+  const bundled = isBundledSheet(activeSheet)
 
   return (
     <div>
@@ -181,9 +207,15 @@ export default function RacePage() {
       {feedback && <Alert tone={feedback.tone} className="mb-6" onDismiss={() => setFeedback(null)}>{feedback.text}</Alert>}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
-        <Stat label="Current Node" value={`Lap ${lap}.${node}`} hint={activeSheet ? `Sheet: ${activeSheet}` : 'No active sheet'} icon={<Flag className="h-4 w-4" />} tone="purple" />
-        <Stat label="Lap Target" value={targetLaps > 0 ? targetLaps : 'Not set'} hint={targetLaps > 0 ? `${percent(lap, targetLaps).toFixed(0)}% of target` : readOnly ? 'Staff managed' : 'Set a target below'} icon={<Target className="h-4 w-4" />} tone="green" />
-        <Stat label="Recent Activity" value={logs.length > 0 ? `${logs.length} actions` : 'Quiet'} hint="See the feed below" icon={<Activity className="h-4 w-4" />} tone="amber" />
+        <Stat
+          label="Current Node"
+          value={`Lap ${lap}.${node}`}
+          hint={bundled ? 'Sheet: default (bundled)' : `Sheet: ${activeSheet}`}
+          icon={<Flag className="h-4 w-4" />}
+          tone="purple"
+        />
+        <Stat label="Lap Target" value={targetLaps > 0 ? targetLaps : 'Not set'} hint={targetLaps > 0 ? `${percent(lap, targetLaps).toFixed(0)}% of target` : canManage ? 'Set a target below' : 'Staff managed'} icon={<Target className="h-4 w-4" />} tone="green" />
+        <Stat label="Recent Activity" value={logs.length > 0 ? `${logs.length} actions` : 'Quiet'} hint="This channel only" icon={<Activity className="h-4 w-4" />} tone="amber" />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1fr_350px]">
@@ -227,66 +259,84 @@ export default function RacePage() {
             </CardBody>
           </Card>
 
-          {readOnly ? null : (
-          <Card>
-            <CardHeader title="Race Automation" description="Upload a community JSON sheet." icon={<ChevronRight className="h-5 w-5" />} />
-            <CardBody className="space-y-6">
-              <div className="flex items-end gap-3">
-                <Field label="Team Lap Target" className="flex-1">
-                  <TextInput type="number" value={String(targetLaps)} onChange={(e) => setDraft({...draft, target_laps: parseInt(e.target.value) || 0})} />
-                </Field>
-                <Button onClick={updateTargetLaps} loading={busy === 'target'} className="mb-0.5">Save Target</Button>
-              </div>
-
-              <Divider />
-
-              <div className="space-y-4">
-                <Field label="Active Node Sheet">
-                  <select value={activeSheet || ''} onChange={(e) => selectSheet(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-slate-50">
-                    <option value="" disabled>Select a sheet...</option>
-                    {sheets.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
-                  </select>
-                </Field>
-
-                <div className="grid gap-4 sm:grid-cols-[1fr_2fr]">
-                  <Field label="Sheet Name">
-                    <TextInput value={sheetName} onChange={e => setSheetName(e.target.value)} placeholder="e.g. Godzilla" />
+          {canManage ? (
+            <Card>
+              <CardHeader title="Race Automation" description="Choose the node sheet and, for staff, upload a community JSON sheet." icon={<ChevronRight className="h-5 w-5" />} />
+              <CardBody className="space-y-6">
+                <div className="flex items-end gap-3">
+                  <Field label="Team Lap Target" className="flex-1">
+                    <TextInput type="number" value={String(targetLaps)} onChange={(e) => setDraft({...draft, target_laps: parseInt(e.target.value) || 0})} />
                   </Field>
-                  <Field label="Paste JSON Data">
-                    <textarea value={jsonInput} onChange={e => setJsonInput(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm font-mono text-slate-300 h-24" />
-                  </Field>
+                  <Button onClick={updateTargetLaps} loading={busy === 'target'} className="mb-0.5">Save Target</Button>
                 </div>
-                <Button onClick={uploadSheet} loading={busy === 'sheet'} disabled={!sheetName || !jsonInput} className="w-full">
-                  Upload Sheet to Server
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
-          )}
+
+                <Divider />
+
+                <div className="space-y-4">
+                  <Field
+                    label="Active Node Sheet"
+                    hint="“default (bundled)” is the sheet shipped with the bot. Server sheets override it."
+                  >
+                    <select
+                      value={bundled ? BUNDLED_SHEET : activeSheet ?? BUNDLED_SHEET}
+                      onChange={(e) => void selectSheet(e.target.value)}
+                      disabled={busy === 'select'}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-slate-50"
+                    >
+                      <option value={BUNDLED_SHEET}>default (bundled)</option>
+                      {sheets.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+                    </select>
+                  </Field>
+
+                  {isStaff ? (
+                    <>
+                      <div className="grid gap-4 sm:grid-cols-[1fr_2fr]">
+                        <Field label="Sheet Name">
+                          <TextInput value={sheetName} onChange={e => setSheetName(e.target.value)} placeholder="e.g. Godzilla" />
+                        </Field>
+                        <Field label="Paste JSON Data">
+                          <textarea value={jsonInput} onChange={e => setJsonInput(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm font-mono text-slate-300 h-24" />
+                        </Field>
+                      </div>
+                      <Button onClick={uploadSheet} loading={busy === 'sheet'} disabled={!sheetName || !jsonInput} className="w-full">
+                        Upload Sheet to Server
+                      </Button>
+                    </>
+                  ) : (
+                    <p className="text-xs text-slate-500">
+                      Uploading a guild-wide sheet is limited to staff. Captains pick the sheet for
+                      their team.
+                    </p>
+                  )}
+                </div>
+              </CardBody>
+            </Card>
+          ) : null}
         </div>
 
         <div>
           <Card className="h-full">
-            <CardHeader title="Live Activity" description="Recent Discord commands." icon={<Activity className="h-5 w-5" />} />
+            <CardHeader title="Live Activity" description="Recent actions in this channel." icon={<Activity className="h-5 w-5" />} />
             <CardBody className="p-0">
               {logs.length === 0 ? (
                 <div className="p-8 text-center text-sm text-slate-500">No activity yet.</div>
               ) : (
-                <ul className="divide-y divide-slate-800/50">
-                  {logs.map((log) => {
-                    const actionMap: Record<string, { label: string, color: string }> = {
-                      ofa_claim: { label: 'Claimed OFA', color: 'text-accent-300' },
-                      ofa_done: { label: 'Completed OFA', color: 'text-sage-400' },
-                      dyp_done: { label: 'Logged DYP', color: 'text-steel-300' },
-                      je_done: { label: 'Logged JE', color: 'text-warn-300' },
-                    }
-                    const action = actionMap[log.action_type] || { label: log.action_type, color: 'text-slate-300' }
+                <ul className="divide-y divide-slate-800/50 max-h-[560px] overflow-y-auto">
+                  {logs.slice(0, 20).map((log) => {
+                    const action = ACTION_META[log.action_type] || { label: log.action_type, color: 'text-slate-300' }
+                    const nodeLabel =
+                      log.lap !== null && log.lap !== undefined && log.node !== null && log.node !== undefined
+                        ? `lap ${log.lap}.${log.node}`
+                        : null
                     return (
                       <li key={log.id} className="p-4 flex items-start gap-3 hover:bg-slate-800/20 transition-colors">
                         <div className={`mt-0.5 p-1.5 rounded-full bg-slate-800 ${action.color}`}><Check className="w-3 h-3" /></div>
                         <div>
-                          <p className="text-sm"><strong className="text-slate-50">{log.player_name}</strong> <span className="text-slate-400"> {action.label}</span></p>
-                          <p className="text-xs text-slate-500 mt-0.5">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                          <p className="text-sm"><strong className="text-slate-50">{log.player_name || `User ${log.discord_id ?? '—'}`}</strong> <span className="text-slate-400"> {action.label}</span></p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {formatDateTime(log.created_at)}
+                            {nodeLabel ? ` · ${nodeLabel}` : ''}
+                          </p>
                         </div>
                       </li>
                     )
@@ -296,6 +346,12 @@ export default function RacePage() {
             </CardBody>
           </Card>
         </div>
+      </div>
+
+      <div className="mt-6 flex flex-wrap gap-4 text-xs text-slate-600">
+        <span>{NODES_PER_LAP} nodes per lap</span>
+        <span className="flex items-center gap-1.5"><Activity className="h-3.5 w-3.5" /> Auto-refreshes every 15 seconds</span>
+        <span>Updated {now.toLocaleTimeString()}</span>
       </div>
     </div>
   )

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CalendarClock, Clock3, Map, RefreshCw, Save, Trash2 } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
+import { StaffOnlyPanel } from '@/components/staff-only'
 import {
   Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState,
   Field, PageHeader, Select, Spinner, TextInput, Toggle
@@ -68,7 +69,7 @@ function draftFromRow(row: MazeSchedule | null): Draft {
 }
 
 export default function MazePage() {
-  const { guildId, readOnly } = useGuild()
+  const { guildId, isStaff, readOnly } = useGuild()
   const now = useNow(30_000)
   const [draft, setDraft] = useState<Draft>(() => defaultDraft())
   const [existing, setExisting] = useState<MazeSchedule | null>(null)
@@ -150,6 +151,10 @@ export default function MazePage() {
       setFeedback({ tone: 'red', text: 'Could not delete maze schedule.' })
     } finally { setBusy(null) }
   }
+
+  // Maze is guild-level: staff manage it and read-only alias members may still view it, but
+  // a team captain never gets maze access (it is not their team's channel).
+  if (!isStaff && !readOnly) return <StaffOnlyPanel area="Maze scheduling" />
 
   if (loading) return <div><PageHeader title="Maze" /><Spinner label="Loading…" /></div>
 

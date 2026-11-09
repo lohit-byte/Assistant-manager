@@ -1,18 +1,30 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, RefreshCw, Search, Trash2, UserRound, Users } from 'lucide-react'
+import { Check, Pencil, Plus, RefreshCw, Search, Trash2, UserRound, Users, X } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
-import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, PageHeader, Spinner, TextInput } from '@/components/ui'
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  EmptyState,
+  Field,
+  PageHeader,
+  Spinner,
+  TextInput,
+} from '@/components/ui'
 import { StaffOnlyPanel } from '@/components/staff-only'
-import { addAlias, deleteAlias, listAliases } from '@/lib/data'
+import { addAlias, deleteAlias, listAliases, renameAlias } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
 import { isSnowflake } from '@/lib/format'
 import type { Alias } from '@/lib/types'
 
 export default function AliasesPage() {
-  const { readOnly } = useGuild()
-  if (readOnly) return <StaffOnlyPanel area="Alias management" />
+  const { isStaff } = useGuild()
+  if (!isStaff) return <StaffOnlyPanel area="Alias management" />
   return <AliasesContent />
 }
 
@@ -27,10 +39,13 @@ function AliasesContent() {
   const [aliasName, setAliasName] = useState('')
   const [discordId, setDiscordId] = useState('')
 
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editName, setEditName] = useState('')
+
   const load = useCallback(async (mode: 'initial' | 'refresh' = 'initial') => {
     if (mode === 'initial') setLoading(true)
-    try { setAliases(await listAliases(createClient(), guildId)) } 
-    catch (caught) { setFeedback({ tone: 'red', text: 'Could not load aliases.' }) } 
+    try { setAliases(await listAliases(createClient(), guildId)) }
+    catch (caught) { setFeedback({ tone: 'red', text: 'Could not load aliases.' }) }
     finally { setLoading(false) }
   }, [guildId])
 
@@ -46,14 +61,14 @@ function AliasesContent() {
     const name = aliasName.trim().toLowerCase()
     if (!name) return setFeedback({ tone: 'red', text: 'Enter an alias.' })
     if (!isSnowflake(discordId)) return setFeedback({ tone: 'red', text: 'Enter a valid Discord ID (17–20 digits).' })
-    
+
     setBusy('add'); setFeedback(null)
     try {
       await addAlias(createClient(), guildId, discordId, name)
       setAliases(await listAliases(createClient(), guildId))
       setAliasName(''); setDiscordId('')
       setFeedback({ tone: 'green', text: `Alias “${name}” saved.` })
-    } catch (caught) { setFeedback({ tone: 'red', text: 'Could not save alias.' }) } 
+    } catch (caught) { setFeedback({ tone: 'red', text: 'Could not save alias.' }) }
     finally { setBusy(null) }
   }
 
@@ -63,8 +78,43 @@ function AliasesContent() {
     try {
       await deleteAlias(createClient(), alias.id)
       setAliases((current) => current.filter((item) => item.id !== alias.id))
-    } catch (caught) { setFeedback({ tone: 'red', text: 'Could not delete alias.' }) } 
+    } catch (caught) { setFeedback({ tone: 'red', text: 'Could not delete alias.' }) }
     finally { setBusy(null) }
+  }
+
+  const startRename = (alias: Alias) => {
+    setFeedback(null)
+    setEditingId(alias.id)
+    setEditName(alias.alias_name)
+  }
+
+  const cancelRename = () => {
+    setEditingId(null)
+    setEditName('')
+  }
+
+  const saveRename = async (alias: Alias) => {
+    const name = editName.trim()
+    if (!name) return setFeedback({ tone: 'red', text: 'Enter a new alias name.' })
+
+    setBusy(`rename-${alias.id}`); setFeedback(null)
+    try {
+      await renameAlias(createClient(), guildId, alias, name)
+      setAliases(await listAliases(createClient(), guildId))
+      cancelRename()
+      setFeedback({
+        tone: 'green',
+        text: `Renamed “${alias.alias_name}” to “${name.toLowerCase()}”. Live war counts, missing and absent lists were updated.`,
+      })
+    } catch (caught) {
+      // A duplicate name comes back as a user-facing message from renameAlias.
+      setFeedback({
+        tone: 'red',
+        text: caught instanceof Error ? caught.message : 'Could not rename the alias.',
+      })
+    } finally {
+      setBusy(null)
+    }
   }
 
   if (loading) return <div><PageHeader title="Aliases" /><Spinner label="Loading…" /></div>
@@ -74,7 +124,7 @@ function AliasesContent() {
       <PageHeader
         eyebrow="Roster"
         title="Aliases"
-        description="Map in-game names to Discord users. The bot uses these instead of pinging users."
+        description="Map in-game names to Discord users. The bot uses these instead of pinging users, and renaming keeps the player's live war data attached."
         actions={<Button variant="secondary" onClick={() => load('refresh')}><RefreshCw className="h-4 w-4" /> Refresh</Button>}
       />
 
@@ -98,7 +148,12 @@ function AliasesContent() {
       </Card>
 
       <Card>
-        <CardHeader title="Server aliases" description={`${aliases.length} recorded`} icon={<Users className="h-5 w-5" />} action={<Badge tone="purple">{filtered.length} shown</Badge>} />
+        <CardHeader
+          title="Server aliases"
+          description={`${aliases.length} recorded · rename with the pencil to keep war counts and lists`}
+          icon={<Users className="h-5 w-5" />}
+          action={<Badge tone="purple">{filtered.length} shown</Badge>}
+        />
         <CardBody className="space-y-4">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
@@ -118,17 +173,66 @@ function AliasesContent() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/70">
-                  {filtered.map((alias) => (
-                    <tr key={alias.id} className="hover:bg-slate-800/30">
-                      <td className="px-3 py-2.5"><span className="font-medium text-slate-200">{alias.alias_name}</span></td>
-                      <td className="px-3 py-2.5"><span className="font-mono text-xs text-slate-400">{String(alias.discord_id)}</span></td>
-                      <td className="px-3 py-2.5 text-right">
-                        <button type="button" onClick={() => remove(alias)} disabled={busy === `delete-${alias.id}`} className="rounded p-1.5 text-slate-500 hover:bg-danger-500/10 hover:text-danger-300">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {filtered.map((alias) => {
+                    const editing = editingId === alias.id
+                    return (
+                      <tr key={alias.id} className="hover:bg-slate-800/30">
+                        <td className="px-3 py-2.5">
+                          {editing ? (
+                            <div className="flex items-center gap-2">
+                              <TextInput
+                                value={editName}
+                                onChange={(event) => setEditName(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter') void saveRename(alias)
+                                  if (event.key === 'Escape') cancelRename()
+                                }}
+                                aria-label={`New alias name for ${alias.alias_name}`}
+                                className="max-w-[220px]"
+                                autoFocus
+                              />
+                              <button
+                                type="button"
+                                onClick={() => void saveRename(alias)}
+                                disabled={busy === `rename-${alias.id}`}
+                                className="rounded p-1.5 text-sage-300 hover:bg-sage-500/10"
+                                aria-label="Save alias name"
+                              >
+                                <Check className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={cancelRename}
+                                className="rounded p-1.5 text-slate-500 hover:bg-white/[0.06] hover:text-slate-200"
+                                aria-label="Cancel rename"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="font-medium text-slate-200">{alias.alias_name}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5"><span className="font-mono text-xs text-slate-400">{String(alias.discord_id)}</span></td>
+                        <td className="px-3 py-2.5 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => (editing ? cancelRename() : startRename(alias))}
+                              className="rounded p-1.5 text-slate-500 hover:bg-white/[0.06] hover:text-accent-300"
+                              aria-label={`Rename ${alias.alias_name}`}
+                              title="Rename — keeps live war counts and lists"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            <button type="button" onClick={() => remove(alias)} disabled={busy === `delete-${alias.id}`} className="rounded p-1.5 text-slate-500 hover:bg-danger-500/10 hover:text-danger-300" aria-label={`Delete ${alias.alias_name}`}>
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

@@ -5,14 +5,24 @@ import type {
   Guild,
   MazePingMention,
   MazeSchedule,
+  RaceLog,
   RaceState,
+  Team,
+  TeamCaptain,
   War,
+  WarLog,
   WarSettings,
   Warning,
 } from './types'
 
 function throwIfError(error: { message: string } | null, context: string): void {
   if (error) throw new Error(`${context}: ${error.message}`)
+}
+
+function cleanSnowflake(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null
+  const clean = String(value).trim()
+  return clean || null
 }
 
 /* ------------------------------------------------------------------ guild */
@@ -254,6 +264,414 @@ export async function addAlias(
 export async function deleteAlias(supabase: SupabaseClient, id: number): Promise<void> {
   const { error } = await supabase.from('aliases').delete().eq('id', id)
   throwIfError(error, 'Could not delete alias')
+}
+
+/**
+ * Rename an alias in place and migrate the guild's live war data, so a rename during an active
+ * war does not lose the player's attack counts or create a ghost missing entry.
+ * Throws a user-facing message when the new name is taken.
+ */
+export async function renameAlias(
+  supabase: SupabaseClient,
+  guildId: string,
+  alias: Alias,
+  newName: string,
+): Promise<void> {
+  const oldName = alias.alias_name.trim().toLowerCase()
+  const cleanName = newName.trim().toLowerCase()
+  if (!cleanName) throw new Error('Enter a new alias name.')
+  if (cleanName === oldName) return
+
+  // Aliases are stored lower-case; compare in JS so mixed-case rows are caught too.
+  const aliases = await listAliases(supabase, guildId)
+  const duplicate = aliases.find(
+    (item) => item.id !== alias.id && item.alias_name.trim().toLowerCase() === cleanName,
+  )
+  if (duplicate) throw new Error(`“${cleanName}” already exists.`)
+
+  const { error } = await supabase
+    .from('aliases')
+    .update({ alias_name: cleanName })
+    .eq('id', alias.id)
+  throwIfError(error, 'Could not rename the alias')
+
+  const { data, error: warsError } = await supabase
+    .from('wars')
+    .select('channel_id,attack_counts,missing_list,absent_list')
+    .eq('guild_id', guildId)
+  if (warsError) {
+    throw new Error(
+      `Alias renamed, but the live war data could not be migrated: ${warsError.message}`,
+    )
+  }
+
+  const renameEntries = (
+    entries: War['missing_list'],
+  ): { entries: War['missing_list']; changed: boolean } => {
+    if (!entries) return { entries, changed: false }
+    let changed = false
+    const next = entries.map((entry) => {
+      if (entry?.name && entry.name.trim().toLowerCase() === oldName) {
+        changed = true
+        return { ...entry, name: cleanName }
+      }
+      return entry
+    })
+    return { entries: next, changed }
+  }
+
+  for (const war of (data ?? []) as Pick<War, 'channel_id' | 'attack_counts' | 'missing_list' | 'absent_list'>[]) {
+    const counts: Record<string, number> = {}
+    let changed = false
+    for (const [name, value] of Object.entries(war.attack_counts ?? {})) {
+      if (name.trim().toLowerCase() === oldName) {
+        counts[cleanName] = value
+        changed = true
+      } else {
+        counts[name] = value
+      }
+    }
+    const missing = renameEntries(war.missing_list)
+    const absent = renameEntries(war.absent_list)
+    if (!changed && !missing.changed && !absent.changed) continue
+
+    const { error: updateError } = await supabase
+      .from('wars')
+      .update({
+        attack_counts: counts,
+        missing_list: missing.entries ?? [],
+        absent_list: absent.entries ?? [],
+      })
+      .eq('channel_id', war.channel_id)
+    throwIfError(updateError, 'Alias renamed, but a war could not be updated')
+  }
+}
+
+/* -------------------------------------------------------------------- teams */
+
+export interface TeamValues {
+  name: string
+  war_channel_id: string | null
+  race_channel_id: string | null
+  team_role_id: string | null
+}
+
+export async function listTeams(supabase: SupabaseClient, guildId: string): Promise<Team[]> {
+  const { data, error } = await supabase
+    .from('teams')
+    .select('*')
+    .eq('guild_id', guildId)
+    .order('created_at', { ascending: true })
+
+  throwIfError(error, 'Could not load teams')
+  return (data as Team[] | null) ?? []
+}
+
+export async function createTeam(
+  supabase: SupabaseClient,
+  guildId: string,
+  values: TeamValues,
+): Promise<void> {
+  const name = values.name.trim()
+  if (!name) throw new Error('Enter a team name.')
+
+  const { error } = await supabase.from('teams').insert({
+    guild_id: guildId,
+    name,
+    war_channel_id: cleanSnowflake(values.war_channel_id),
+    race_channel_id: cleanSnowflake(values.race_channel_id),
+    team_role_id: cleanSnowflake(values.team_role_id),
+  })
+  throwIfError(error, 'Could not create the team')
+}
+
+/**
+ * Save a team and keep the bot's announcement role in sync: the bot still reads
+ * `wars.team_role_id`, so mirror `teams.team_role_id` onto the team's war row when it exists.
+ */
+export async function saveTeam(
+  supabase: SupabaseClient,
+  team: Team,
+  values: TeamValues,
+): Promise<void> {
+  const name = values.name.trim()
+  if (!name) throw new Error('Enter a team name.')
+
+  const warChannelId = cleanSnowflake(values.war_channel_id)
+  const teamRoleId = cleanSnowflake(values.team_role_id)
+
+  const { error } = await supabase
+    .from('teams')
+    .update({
+      name,
+      war_channel_id: warChannelId,
+      race_channel_id: cleanSnowflake(values.race_channel_id),
+      team_role_id: teamRoleId,
+    })
+    .eq('id', team.id)
+  throwIfError(error, 'Could not save the team')
+
+  if (warChannelId) {
+    const { error: warError } = await supabase
+      .from('wars')
+      .update({ team_role_id: teamRoleId })
+      .eq('channel_id', warChannelId)
+    if (warError) {
+      throw new Error(`Team saved, but the war role could not be synced: ${warError.message}`)
+    }
+  }
+}
+
+export async function deleteTeam(supabase: SupabaseClient, teamId: number): Promise<void> {
+  const { error } = await supabase.from('teams').delete().eq('id', teamId)
+  throwIfError(error, 'Could not delete the team')
+}
+
+export async function listTeamCaptains(
+  supabase: SupabaseClient,
+  teamIds: number[],
+): Promise<TeamCaptain[]> {
+  if (teamIds.length === 0) return []
+  const { data, error } = await supabase
+    .from('team_captains')
+    .select('*')
+    .in('team_id', teamIds)
+
+  throwIfError(error, 'Could not load team captains')
+  return (data as TeamCaptain[] | null) ?? []
+}
+
+export async function addTeamCaptain(
+  supabase: SupabaseClient,
+  guildId: string,
+  teamId: number,
+  discordId: string,
+): Promise<void> {
+  const cleanId = discordId.replace(/\D/g, '')
+  if (cleanId.length < 17) throw new Error('Enter a valid Discord user ID (17–20 digits).')
+
+  // `team_captains.discord_id` references `users`, exactly like an alias row does.
+  await supabase
+    .from('users')
+    .upsert({ discord_id: cleanId }, { onConflict: 'discord_id', ignoreDuplicates: true })
+
+  const { error } = await supabase
+    .from('team_captains')
+    .upsert(
+      { team_id: teamId, discord_id: cleanId },
+      { onConflict: 'team_id,discord_id', ignoreDuplicates: true },
+    )
+  throwIfError(error, 'Could not add the captain')
+}
+
+export async function removeTeamCaptain(
+  supabase: SupabaseClient,
+  teamId: number,
+  discordId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('team_captains')
+    .delete()
+    .eq('team_id', teamId)
+    .eq('discord_id', String(discordId).replace(/\D/g, ''))
+  throwIfError(error, 'Could not remove the captain')
+}
+
+/**
+ * Every team this Discord user captains, across servers. A `team_captains` row is an access
+ * grant on any plan, so the server picker uses this to list captain servers. Lookup failures
+ * (table missing before the migration, network) mean "no captain teams", never a broken page.
+ */
+export async function listCaptainTeams(
+  supabase: SupabaseClient,
+  discordId: string,
+): Promise<Team[]> {
+  const cleanId = discordId.replace(/\D/g, '')
+  if (!cleanId) return []
+
+  const { data, error } = await supabase
+    .from('team_captains')
+    .select('team_id')
+    .eq('discord_id', cleanId)
+  if (error) return []
+
+  const teamIds = Array.from(
+    new Set(
+      (data ?? [])
+        .map((row) => Number((row as { team_id: number }).team_id))
+        .filter((id) => Number.isFinite(id)),
+    ),
+  )
+  if (teamIds.length === 0) return []
+
+  const { data: teams, error: teamsError } = await supabase
+    .from('teams')
+    .select('*')
+    .in('id', teamIds)
+  if (teamsError) return []
+  return (teams as Team[] | null) ?? []
+}
+
+/* -------------------------------------------------------------- activity logs */
+
+export async function listWarLogs(
+  supabase: SupabaseClient,
+  channelId: string,
+  sinceIso: string | null,
+  limit = 25,
+): Promise<WarLog[]> {
+  let query = supabase
+    .from('war_logs')
+    .select('*')
+    .eq('channel_id', channelId)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (sinceIso) query = query.gte('created_at', sinceIso)
+
+  const { data, error } = await query
+  throwIfError(error, 'Could not load the attack log')
+  return (data as WarLog[] | null) ?? []
+}
+
+export async function listRaceLogs(
+  supabase: SupabaseClient,
+  guildId: string,
+  channelId: string,
+  sinceIso: string | null,
+): Promise<RaceLog[]> {
+  let query = supabase
+    .from('race_logs')
+    .select('*')
+    .eq('guild_id', guildId)
+    .eq('channel_id', channelId)
+    .order('created_at', { ascending: false })
+    .limit(500)
+  if (sinceIso) query = query.gte('created_at', sinceIso)
+
+  const { data, error } = await query
+  throwIfError(error, 'Could not load race activity')
+  return (data as RaceLog[] | null) ?? []
+}
+
+/* ------------------------------------------------------------- teams overview */
+
+export interface TeamSnapshot {
+  team: Team
+  captains: TeamCaptain[]
+  war: War | null
+  race: RaceState | null
+  warLogs: WarLog[]
+  raceLogs: RaceLog[]
+}
+
+export interface TeamsOverview {
+  teams: TeamSnapshot[]
+  /** War channels the bot knows about that no team owns yet (Setup can import them). */
+  detectedWarChannels: string[]
+  /** Race channels the bot knows about that no team owns yet. */
+  detectedRaceChannels: string[]
+  warSettings: WarSettings
+  aliases: Alias[]
+}
+
+/**
+ * Everything the one-stop Overview needs: the guild's teams with their war/race rows, captains
+ * and activity logs, plus channels the bot already tracks that are not in a team yet.
+ * Team queries tolerate a missing `teams` table so a pre-migration deploy still renders.
+ */
+export async function getTeamsOverview(
+  supabase: SupabaseClient,
+  guildId: string,
+): Promise<TeamsOverview> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString()
+
+  const [settingsResult, aliasesResult, warsResult, raceResult, teamsResult] =
+    await Promise.allSettled([
+      getWarSettings(supabase, guildId),
+      listAliases(supabase, guildId),
+      supabase.from('wars').select('*').eq('guild_id', guildId),
+      supabase.from('race_state').select('*').eq('guild_id', guildId),
+      listTeams(supabase, guildId),
+    ])
+
+  const warSettings: WarSettings =
+    settingsResult.status === 'fulfilled'
+      ? settingsResult.value
+      : { guild_id: guildId, attacks_required: DEFAULT_ATTACKS_REQUIRED, exempt_absent: true }
+  const aliases = aliasesResult.status === 'fulfilled' ? aliasesResult.value : []
+  const wars =
+    warsResult.status === 'fulfilled' && !warsResult.value.error
+      ? ((warsResult.value.data as War[] | null) ?? [])
+      : []
+  const races =
+    raceResult.status === 'fulfilled' && !raceResult.value.error
+      ? ((raceResult.value.data as RaceState[] | null) ?? [])
+      : []
+  const teams = teamsResult.status === 'fulfilled' ? teamsResult.value : []
+
+  const warByChannel = new Map(wars.map((war) => [String(war.channel_id), war]))
+  const raceByChannel = new Map(races.map((race) => [String(race.channel_id), race]))
+
+  const captains =
+    teams.length > 0
+      ? await listTeamCaptains(supabase, teams.map((team) => team.id)).catch(() => [])
+      : []
+
+  const snapshots = await Promise.all(
+    teams.map(async (team): Promise<TeamSnapshot> => {
+      const warChannel = team.war_channel_id !== null ? String(team.war_channel_id) : null
+      const raceChannel = team.race_channel_id !== null ? String(team.race_channel_id) : null
+      const war = warChannel ? warByChannel.get(warChannel) ?? null : null
+      const race = raceChannel ? raceByChannel.get(raceChannel) ?? null : null
+      const windowStart = war?.war_start ?? sevenDaysAgo
+
+      const [warLogs, raceLogs] = await Promise.all([
+        warChannel
+          ? listWarLogs(supabase, warChannel, war?.war_start ?? null, 50).catch(() => [])
+          : Promise.resolve<WarLog[]>([]),
+        raceChannel
+          ? listRaceLogs(supabase, guildId, raceChannel, windowStart).catch(() => [])
+          : Promise.resolve<RaceLog[]>([]),
+      ])
+
+      return {
+        team,
+        war,
+        race,
+        warLogs,
+        raceLogs,
+        captains: captains.filter((captain) => Number(captain.team_id) === Number(team.id)),
+      }
+    }),
+  )
+
+  const teamWarChannels = new Set(
+    teams
+      .filter((team) => team.war_channel_id !== null)
+      .map((team) => String(team.war_channel_id)),
+  )
+  const teamRaceChannels = new Set(
+    teams
+      .filter((team) => team.race_channel_id !== null)
+      .map((team) => String(team.race_channel_id)),
+  )
+
+  const detectedWarChannels = wars
+    .map((war) => String(war.channel_id))
+    .filter((channelId) => !teamWarChannels.has(channelId))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+  const detectedRaceChannels = races
+    .map((race) => String(race.channel_id))
+    .filter((channelId) => !teamRaceChannels.has(channelId))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+
+  return {
+    teams: snapshots,
+    detectedWarChannels,
+    detectedRaceChannels,
+    warSettings,
+    aliases,
+  }
 }
 
 /* --------------------------------------------------------------- warnings */

@@ -27,8 +27,8 @@ function formatRemainingTime(endDate: Date | null) {
 }
 
 export default function BillingPage() {
-  const { readOnly } = useGuild()
-  if (readOnly) return <StaffOnlyPanel area="Billing" />
+  const { isStaff } = useGuild()
+  if (!isStaff) return <StaffOnlyPanel area="Billing" />
   return <BillingContent />
 }
 
