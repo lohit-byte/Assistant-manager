@@ -423,3 +423,35 @@ def test_help_works_when_trial_expired(clean_db):
 
     ctx.command = types.SimpleNamespace(name="war")
     assert run(botmain.premium_gate(ctx)) is False
+
+
+def test_maze_start_schedules_and_signature(clean_db):
+    db = clean_db
+    bot, _guild, channel = _maze_bot()
+    tracker = MazeTracker(bot)
+    ctx = make_ctx(channel_id=CHANNEL)
+    ctx.channel = channel
+
+    run(call(MazeTracker.maze_group, tracker, ctx, "start", "7d", arg2="6d12h"))
+
+    row = db.one("maze_schedules", guild_id=GUILD)
+    assert row is not None and row["event_end"]
+    assert tracker.schedule_signatures.get(GUILD) is not None
+
+    async def cleanup():
+        for task in tracker.timers.get(GUILD, []):
+            task.cancel()
+
+    run(cleanup())
+
+
+def test_maze_status_is_public(clean_db):
+    db = clean_db
+    db.seed("maze_schedules", {"guild_id": GUILD, "event_start": "2026-01-01T00:00:00+00:00",
+                               "event_end": "2099-01-01T00:00:00+00:00",
+                               "maze_type": "7d", "ping_enabled_global": True})
+    ctx = make_ctx(channel_id=CHANNEL, administrator=False)
+
+    run(call(MazeTracker.maze_group, MazeTracker(FakeBot()), ctx, "status"))
+
+    assert any(embed is not None for _content, embed in ctx.sent)
