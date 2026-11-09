@@ -519,6 +519,7 @@ class WarTracker(commands.Cog):
                 f"Attack ends: <t:{int(war_end.timestamp())}:R>",
             ]
         lines.append(f"War ends: <t:{int(war_end.timestamp())}:R>")
+        lines.append(f"Last updated: <t:{int(now.timestamp())}:t>")
         if title_prefix:
             lines.insert(0, title_prefix)
 
@@ -543,7 +544,7 @@ class WarTracker(commands.Cog):
         if WAR_END_KEY not in sent:
             ping_lines.append(f"▪ War end (staff ping) — <t:{int(war_end.timestamp())}:R>")
         embed.add_field(name="🔔 Pings", value="\n".join(ping_lines), inline=False)
-        embed.set_footer(text=f"Updates automatically every minute · <t:{int(now.timestamp())}:t>")
+        embed.set_footer(text="Updates automatically every minute · countdowns tick every second")
         return embed
 
     async def upsert_board(self, channel_id, channel, war):
