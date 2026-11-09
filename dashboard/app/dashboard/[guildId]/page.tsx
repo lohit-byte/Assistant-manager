@@ -32,11 +32,7 @@ import {
 } from '@/components/ui'
 import { getGuildSummary, type GuildSummary } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
-import {
-  MAZE_SCHEDULES,
-  NODES_PER_LAP,
-  PLAN_META,
-} from '@/lib/constants'
+import { MAZE_SCHEDULES, NODES_PER_LAP, PLAN_META, TRIAL_DAYS } from '@/lib/constants'
 import {
   discountMoments,
   formatDateTime,
@@ -48,6 +44,23 @@ import {
   warPhaseLabel,
 } from '@/lib/format'
 import { useNow } from '@/lib/hooks'
+
+function Metric({
+  label,
+  value,
+  tone = 'text-white',
+}: {
+  label: string
+  value: React.ReactNode
+  tone?: string
+}) {
+  return (
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
+      <p className="text-[11px] uppercase tracking-wider text-slate-500">{label}</p>
+      <p className={`mt-1 text-base font-semibold tracking-tight ${tone}`}>{value}</p>
+    </div>
+  )
+}
 
 export default function OverviewPage() {
   const { guildId, guild } = useGuild()
@@ -89,6 +102,15 @@ export default function OverviewPage() {
   const warWindow = getWarWindow(summary?.war ?? null)
   const warMissing = summary?.war?.missing_list?.length ?? 0
   const warExcused = summary?.war?.absent_list?.length ?? 0
+  const warLogged = Object.keys(summary?.war?.attack_counts ?? {}).length
+  const phaseElapsed = useMemo(() => {
+    if (!warWindow.active || !warWindow.start || !warWindow.end) return null
+    const attackStart = warWindow.phase === 'attack' ? warWindow.start.getTime() + 24 * 3600_000 : warWindow.start.getTime()
+    return {
+      value: now.getTime() - attackStart,
+      max: Math.max(1, warWindow.end.getTime() - attackStart),
+    }
+  }, [warWindow, now])
 
   const race = summary?.race
   const raceLap = race?.current_lap ?? 0
@@ -105,6 +127,10 @@ export default function OverviewPage() {
     [mazeEnd, mazeType, now],
   )
   const upcoming = nextDiscount(moments)
+  const upcomingChunks = useMemo(
+    () => moments.filter((moment) => !moment.past).slice(0, 3),
+    [moments],
+  )
 
   return (
     <div>
@@ -126,28 +152,36 @@ export default function OverviewPage() {
         </Alert>
       ) : null}
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
           label="Plan"
           value={plan.label}
           hint={
             guild.premium_status === 'trial'
-              ? `${trialDays} ${trialDays === 1 ? 'day' : 'days'} remaining`
+              ? `${trialDays} of ${TRIAL_DAYS} trial days left`
               : plan.description
           }
           icon={<CreditCard className="h-4 w-4" />}
           tone={plan.tone}
+          footer={
+            guild.premium_status === 'trial' ? (
+              <ProgressBar value={trialDays} max={TRIAL_DAYS} tone={plan.tone} size="sm" />
+            ) : undefined
+          }
         />
         <Stat
           label="War"
           value={warWindow.active ? warPhaseLabel(warWindow.phase) : 'Idle'}
           hint={
-            warWindow.active && warWindow.warEnd
-              ? `${formatRelative(warWindow.warEnd, now)} left in war`
-              : 'No active war'
+            warWindow.active && warWindow.end ? formatRelative(warWindow.end, now) : 'No active war'
           }
           icon={<Swords className="h-4 w-4" />}
           tone={warWindow.active ? 'amber' : 'slate'}
+          footer={
+            phaseElapsed ? (
+              <ProgressBar value={phaseElapsed.value} max={phaseElapsed.max} tone="amber" size="sm" />
+            ) : undefined
+          }
         />
         <Stat
           label="Race"
@@ -155,6 +189,11 @@ export default function OverviewPage() {
           hint={raceTarget > 0 ? `Target ${raceTarget} laps` : 'No target set'}
           icon={<Trophy className="h-4 w-4" />}
           tone="green"
+          footer={
+            raceTarget > 0 ? (
+              <ProgressBar value={raceLap} max={raceTarget} tone="green" size="sm" />
+            ) : undefined
+          }
         />
         <Stat
           label="Next maze discount"
@@ -162,21 +201,38 @@ export default function OverviewPage() {
           hint={upcoming ? formatRelative(upcoming.at, now) : 'No schedule'}
           icon={<Map className="h-4 w-4" />}
           tone="purple"
+          footer={
+            upcomingChunks.length > 1 ? (
+              <div className="flex items-center gap-1.5">
+                {upcomingChunks.map((moment) => (
+                  <span
+                    key={moment.at.toISOString()}
+                    className="rounded-md border border-indigo-400/20 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300"
+                  >
+                    {moment.percent}
+                  </span>
+                ))}
+              </div>
+            ) : undefined
+          }
         />
       </div>
 
       {loading ? (
         <Spinner label="Loading server data…" />
       ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-5 lg:grid-cols-2">
           <Card>
             <CardHeader
               title="War"
               description="Phase timer and attendance"
-              icon={<Swords className="h-5 w-5" />}
+              icon={<Swords className="h-4 w-4" />}
               action={
-                <Link href={`/dashboard/${guildId}/war`} className="text-xs font-semibold text-purple-300 hover:text-purple-200">
-                  Manage →
+                <Link
+                  href={`/dashboard/${guildId}/war`}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-300 transition-colors hover:text-indigo-200"
+                >
+                  Manage <ArrowRight className="h-3.5 w-3.5" />
                 </Link>
               }
             />
@@ -184,62 +240,46 @@ export default function OverviewPage() {
               {summary?.war ? (
                 <>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone={warWindow.active ? (warWindow.phase === 'attack' ? 'red' : 'blue') : 'slate'} dot>
+                    <Badge
+                      tone={
+                        warWindow.active
+                          ? warWindow.phase === 'attack'
+                            ? 'red'
+                            : 'blue'
+                          : 'slate'
+                      }
+                      dot
+                    >
                       {warWindow.active ? warPhaseLabel(warWindow.phase) : 'Inactive'}
                     </Badge>
-                    {warWindow.phaseEnd ? (
+                    {warWindow.end ? (
                       <span className="text-xs text-slate-500">
-                        Phase Ends {formatDateTime(warWindow.phaseEnd)}
+                        Ends {formatDateTime(warWindow.end)}
                       </span>
                     ) : null}
                   </div>
 
-                  {warWindow.active && warWindow.start && warWindow.phaseEnd && warWindow.warEnd ? (
+                  {phaseElapsed ? (
                     <div>
                       <ProgressBar
-                        value={
-                          now.getTime() -
-                          (warWindow.phase === 'attack'
-                            ? warWindow.start.getTime() + 24 * 3600_000
-                            : warWindow.start.getTime())
-                        }
-                        max={
-                          warWindow.phaseEnd.getTime() -
-                          (warWindow.phase === 'attack'
-                            ? warWindow.start.getTime() + 24 * 3600_000
-                            : warWindow.start.getTime())
-                        }
+                        value={phaseElapsed.value}
+                        max={phaseElapsed.max}
                         tone="amber"
-                        label={`${warPhaseLabel(warWindow.phase)} Phase Elapsed`}
+                        label="Phase elapsed"
                       />
-                      <p className="mt-2 flex justify-between text-xs text-slate-500">
-                        <span>{formatRelative(warWindow.phaseEnd, now)} until next phase</span>
-                        <span>{formatDuration(warWindow.warEnd.getTime() - now.getTime())} remaining in war</span>
+                      <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+                        <Clock className="h-3.5 w-3.5" />
+                        {warWindow.end
+                          ? `${formatDuration(warWindow.end.getTime() - now.getTime())} remaining`
+                          : 'No timer'}
                       </p>
                     </div>
-                  ) : (
-                    <p className="text-sm text-slate-500">
-                      {warWindow.phase === 'ended'
-                        ? 'This war has ended. Reset the lists to prepare the next one.'
-                        : 'No phase timer is running for this war.'}
-                    </p>
-                  )}
+                  ) : null}
 
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                      <p className="text-xs text-slate-500">Missing</p>
-                      <p className="mt-1 text-lg font-bold text-amber-300">{warMissing}</p>
-                    </div>
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                      <p className="text-xs text-slate-500">Excused</p>
-                      <p className="mt-1 text-lg font-bold text-sky-300">{warExcused}</p>
-                    </div>
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                      <p className="text-xs text-slate-500">Logged</p>
-                      <p className="mt-1 text-lg font-bold text-white">
-                        {Object.keys(summary.war.attack_counts ?? {}).length}
-                      </p>
-                    </div>
+                  <div className="grid grid-cols-3 gap-2.5">
+                    <Metric label="Missing" value={warMissing} tone="text-amber-300" />
+                    <Metric label="Excused" value={warExcused} tone="text-sky-300" />
+                    <Metric label="Logged" value={warLogged} />
                   </div>
                 </>
               ) : (
@@ -256,20 +296,25 @@ export default function OverviewPage() {
             <CardHeader
               title="Race"
               description="Current node and task progress"
-              icon={<Trophy className="h-5 w-5" />}
+              icon={<Trophy className="h-4 w-4" />}
               action={
-                <Link href={`/dashboard/${guildId}/race`} className="text-xs font-semibold text-purple-300 hover:text-purple-200">
-                  Manage →
+                <Link
+                  href={`/dashboard/${guildId}/race`}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-300 transition-colors hover:text-indigo-200"
+                >
+                  Manage <ArrowRight className="h-3.5 w-3.5" />
                 </Link>
               }
             />
             <CardBody className="space-y-5">
               {race ? (
                 <>
-                  <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3">
+                  <div className="flex items-center justify-between gap-4 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
                     <div>
-                      <p className="text-xs uppercase tracking-wider text-slate-500">Progress</p>
-                      <p className="mt-0.5 text-lg font-bold text-white">
+                      <p className="text-[11px] uppercase tracking-wider text-slate-500">
+                        Progress
+                      </p>
+                      <p className="mt-1 text-lg font-semibold tracking-tight text-white">
                         Lap {raceLap}.{raceNode}
                         <span className="ml-2 text-xs font-normal text-slate-500">
                           / {NODES_PER_LAP} nodes
@@ -281,11 +326,24 @@ export default function OverviewPage() {
                     </Badge>
                   </div>
 
+                  <div className="flex items-center gap-1.5">
+                    {Array.from({ length: NODES_PER_LAP }).map((_, index) => (
+                      <span
+                        key={index}
+                        className={`h-1.5 flex-1 rounded-full ${
+                          index < raceNode
+                            ? 'bg-gradient-to-r from-emerald-400 to-teal-400'
+                            : 'bg-white/[0.07]'
+                        }`}
+                      />
+                    ))}
+                  </div>
+
                   <div>
-                    <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                      Tasks
+                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                      Task
                     </p>
-                    <p className="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm text-slate-300">
+                    <p className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-sm text-slate-300">
                       {race.task_description || 'No active node'}
                     </p>
                   </div>
@@ -304,7 +362,8 @@ export default function OverviewPage() {
                       OFA {race.ofa_done ? 'done' : race.ofa_holder_id ? 'claimed' : 'open'}
                     </Badge>
                     <Badge tone={race.je_done ? 'green' : 'slate'}>
-                      JE {race.je_done ? 'done' : `${race.je_progress ?? '0'}/${race.je_target ?? '0'}`}
+                      JE{' '}
+                      {race.je_done ? 'done' : `${race.je_progress ?? '0'}/${race.je_target ?? '0'}`}
                     </Badge>
                     <Badge tone="slate">
                       {race.dyp_contributors?.length ?? 0} DYP contributors
@@ -325,10 +384,13 @@ export default function OverviewPage() {
             <CardHeader
               title="Maze schedule"
               description="Upcoming discount moments in your local time"
-              icon={<CalendarClock className="h-5 w-5" />}
+              icon={<CalendarClock className="h-4 w-4" />}
               action={
-                <Link href={`/dashboard/${guildId}/maze`} className="text-xs font-semibold text-purple-300 hover:text-purple-200">
-                  Manage →
+                <Link
+                  href={`/dashboard/${guildId}/maze`}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-300 transition-colors hover:text-indigo-200"
+                >
+                  Manage <ArrowRight className="h-3.5 w-3.5" />
                 </Link>
               }
             />
@@ -342,20 +404,37 @@ export default function OverviewPage() {
                     </Badge>
                     <span className="text-xs text-slate-500">Ends {formatDateTime(mazeEnd)}</span>
                   </div>
-                  <div className="space-y-2">
-                    {moments.slice(0, 4).map((moment) => (
-                      <div
-                        key={`${moment.percent}-${moment.at.toISOString()}`}
-                        className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm"
-                      >
-                        <span className={moment.past ? 'text-slate-500' : 'font-semibold text-purple-300'}>
-                          {moment.percent} discount
-                        </span>
-                        <span className={moment.past ? 'text-xs text-slate-600' : 'text-xs text-slate-400'}>
-                          {moment.past ? 'Passed' : formatDateTime(moment.at)}
-                        </span>
-                      </div>
-                    ))}
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                    {moments.map((moment) => {
+                      const isNext = upcoming?.at.getTime() === moment.at.getTime()
+                      return (
+                        <div
+                          key={`${moment.percent}-${moment.at.toISOString()}`}
+                          className={`rounded-xl border px-3 py-2.5 ${
+                            isNext
+                              ? 'border-indigo-400/30 bg-indigo-500/10'
+                              : moment.past
+                                ? 'border-white/[0.04] bg-white/[0.01]'
+                                : 'border-white/[0.06] bg-white/[0.02]'
+                          }`}
+                        >
+                          <p
+                            className={`text-sm font-semibold ${
+                              moment.past
+                                ? 'text-slate-600'
+                                : isNext
+                                  ? 'text-indigo-200'
+                                  : 'text-slate-200'
+                            }`}
+                          >
+                            {moment.percent}
+                          </p>
+                          <p className="mt-0.5 truncate text-[11px] text-slate-500">
+                            {moment.past ? 'Passed' : formatDateTime(moment.at)}
+                          </p>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               ) : (
@@ -366,7 +445,7 @@ export default function OverviewPage() {
                   action={
                     <Link
                       href={`/dashboard/${guildId}/maze`}
-                      className="inline-flex items-center gap-1 text-sm font-semibold text-purple-300 hover:text-purple-200"
+                      className="inline-flex items-center gap-1 text-sm font-semibold text-indigo-300 hover:text-indigo-200"
                     >
                       Open maze settings <ArrowRight className="h-4 w-4" />
                     </Link>
@@ -380,41 +459,45 @@ export default function OverviewPage() {
             <CardHeader
               title="Roster & discipline"
               description="Aliases and warnings recorded for this server"
-              icon={<Users className="h-5 w-5" />}
+              icon={<Users className="h-4 w-4" />}
             />
             <CardBody className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                  <p className="flex items-center gap-1.5 text-xs text-slate-500">
+              <div className="grid grid-cols-2 gap-2.5">
+                <Link
+                  href={`/dashboard/${guildId}/aliases`}
+                  className="group rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:border-white/[0.12] hover:bg-white/[0.04]"
+                >
+                  <p className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-slate-500">
                     <Users className="h-3.5 w-3.5" /> Aliases
                   </p>
-                  <p className="mt-1 text-2xl font-bold text-white">{summary?.aliasCount ?? 0}</p>
-                  <Link
-                    href={`/dashboard/${guildId}/aliases`}
-                    className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-purple-300 hover:text-purple-200"
-                  >
-                    Manage aliases <ArrowRight className="h-3.5 w-3.5" />
-                  </Link>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                  <p className="flex items-center gap-1.5 text-xs text-slate-500">
+                  <p className="mt-1.5 text-2xl font-bold tracking-tight text-white">
+                    {summary?.aliasCount ?? 0}
+                  </p>
+                  <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-indigo-300">
+                    Manage <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+                  </p>
+                </Link>
+                <Link
+                  href={`/dashboard/${guildId}/war`}
+                  className="group rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:border-white/[0.12] hover:bg-white/[0.04]"
+                >
+                  <p className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-slate-500">
                     <AlertTriangle className="h-3.5 w-3.5" /> Warnings
                   </p>
-                  <p className="mt-1 text-2xl font-bold text-white">{summary?.warningCount ?? 0}</p>
-                  <Link
-                    href={`/dashboard/${guildId}/war`}
-                    className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-purple-300 hover:text-purple-200"
-                  >
-                    Open warnings <ArrowRight className="h-3.5 w-3.5" />
-                  </Link>
-                </div>
+                  <p className="mt-1.5 text-2xl font-bold tracking-tight text-white">
+                    {summary?.warningCount ?? 0}
+                  </p>
+                  <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-indigo-300">
+                    Open <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+                  </p>
+                </Link>
               </div>
 
-              <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm">
+              <div className="flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-sm">
                 {guild.is_blacklisted ? (
                   <>
-                    <ShieldCheck className="h-4 w-4 text-red-300" />
-                    <span className="text-red-300">This server is blacklisted.</span>
+                    <ShieldCheck className="h-4 w-4 text-rose-300" />
+                    <span className="text-rose-300">This server is blacklisted.</span>
                   </>
                 ) : (
                   <>
@@ -430,7 +513,7 @@ export default function OverviewPage() {
         </div>
       )}
 
-      <div className="mt-6 flex flex-wrap gap-3 text-xs text-slate-600">
+      <div className="mt-6 flex flex-wrap gap-4 text-xs text-slate-600">
         <span className="flex items-center gap-1.5">
           <Target className="h-3.5 w-3.5" /> Guild ID <span className="font-mono">{guildId}</span>
         </span>
