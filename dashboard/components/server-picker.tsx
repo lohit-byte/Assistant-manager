@@ -10,11 +10,11 @@ import {
   RefreshCw,
   Search,
   Server,
-  ShieldAlert,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { canManageGuild, DiscordApiError, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
 import { BOT_INVITE_URL, DISCORD_GUILD_ICON, PLAN_META } from '@/lib/constants'
+import { Wordmark } from '@/components/brand'
 import { getGuild } from '@/lib/data'
 import { toDate } from '@/lib/format'
 import type { Guild } from '@/lib/types'
@@ -124,18 +124,10 @@ export default function ServerPicker() {
 
   return (
     <div className="relative min-h-screen bg-ink-950 text-slate-100">
-      <div className="bg-blueprint pointer-events-none absolute inset-x-0 top-0 h-72 opacity-70" aria-hidden />
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-gradient-to-b from-indigo-500/[0.07] to-transparent" />
+      <div className="bg-blueprint pointer-events-none absolute inset-x-0 top-0 h-72 opacity-60" aria-hidden />
       <div className="relative mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:py-14">
-        <div className="mb-8 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/[0.08] bg-gradient-to-b from-indigo-400/25 to-indigo-600/10 text-indigo-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">
-              <ShieldAlert className="h-4 w-4" />
-            </div>
-            <span className="text-sm font-bold tracking-wide text-slate-300">
-              MONSTER LEGENDS ASSISTANT
-            </span>
-          </div>
+        <div className="mb-10 flex items-center justify-between border-b border-white/[0.1] pb-5">
+          <Wordmark />
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={load} loading={loading}>
               <RefreshCw className="h-4 w-4" />
@@ -148,8 +140,9 @@ export default function ServerPicker() {
           </div>
         </div>
 
+        <main id="main">
         <PageHeader
-          eyebrow="Server selection"
+          eyebrow="00 / Server selection"
           title="Choose a server"
           description={`You can manage ${cards.length} ${cards.length === 1 ? 'server' : 'servers'}. ${botServers} ${botServers === 1 ? 'has' : 'have'} the bot installed.`}
           actions={
@@ -258,10 +251,10 @@ export default function ServerPicker() {
                           </div>
                         )}
                         <div className="min-w-0 flex-1">
-                          <p className="truncate font-semibold text-white">{guild.name}</p>
+                          <p className="truncate font-semibold text-slate-50">{guild.name}</p>
                           <p className="truncate font-mono text-xs text-slate-500">{guild.id}</p>
                         </div>
-                        <ArrowRight className="h-4 w-4 shrink-0 text-slate-600 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-300" />
+                        <ArrowRight className="h-4 w-4 shrink-0 text-slate-600 transition-transform group-hover:translate-x-0.5 group-hover:text-accent-300" />
                       </div>
 
                       <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -287,6 +280,7 @@ export default function ServerPicker() {
             )}
           </>
         )}
+        </main>
       </div>
     </div>
   )

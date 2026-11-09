@@ -48,7 +48,7 @@ import { useNow } from '@/lib/hooks'
 function Metric({
   label,
   value,
-  tone = 'text-white',
+  tone = 'text-slate-50',
 }: {
   label: string
   value: React.ReactNode
@@ -209,7 +209,7 @@ export default function OverviewPage() {
                 {upcomingChunks.map((moment) => (
                   <span
                     key={moment.at.toISOString()}
-                    className="rounded-md border border-indigo-400/20 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300"
+                    className="rounded-md border border-accent-400/20 bg-accent-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-accent-300"
                   >
                     {moment.percent}
                   </span>
@@ -232,7 +232,7 @@ export default function OverviewPage() {
               action={
                 <Link
                   href={`/dashboard/${guildId}/war`}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-300 transition-colors hover:text-indigo-200"
+                  className="-my-1 inline-flex items-center gap-1 py-1.5 text-xs font-semibold text-accent-300 transition-colors hover:text-accent-200"
                 >
                   Manage <ArrowRight className="h-3.5 w-3.5" />
                 </Link>
@@ -261,7 +261,7 @@ export default function OverviewPage() {
                     ) : null}
                     {warWindow.warEnd ? (
                       <span className="text-xs text-slate-600">
-                        · War ends {formatDateTime(warWindow.warEnd)}
+                        <span className="hidden sm:inline">· </span>War ends {formatDateTime(warWindow.warEnd)}
                       </span>
                     ) : null}
                   </div>
@@ -291,8 +291,8 @@ export default function OverviewPage() {
                   ) : null}
 
                   <div className="grid grid-cols-3 gap-2.5">
-                    <Metric label="Missing" value={warMissing} tone="text-amber-300" />
-                    <Metric label="Excused" value={warExcused} tone="text-sky-300" />
+                    <Metric label="Missing" value={warMissing} tone="text-warn-300" />
+                    <Metric label="Excused" value={warExcused} tone="text-steel-400" />
                     <Metric label="Logged" value={warLogged} />
                   </div>
                 </>
@@ -314,7 +314,7 @@ export default function OverviewPage() {
               action={
                 <Link
                   href={`/dashboard/${guildId}/race`}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-300 transition-colors hover:text-indigo-200"
+                  className="-my-1 inline-flex items-center gap-1 py-1.5 text-xs font-semibold text-accent-300 transition-colors hover:text-accent-200"
                 >
                   Manage <ArrowRight className="h-3.5 w-3.5" />
                 </Link>
@@ -328,7 +328,7 @@ export default function OverviewPage() {
                       <p className="text-[11px] uppercase tracking-wider text-slate-500">
                         Progress
                       </p>
-                      <p className="mt-1 text-lg font-semibold tracking-tight text-white">
+                      <p className="mt-1 text-lg font-semibold tracking-tight text-slate-50">
                         Lap {raceLap}.{raceNode}
                         <span className="ml-2 text-xs font-normal text-slate-500">
                           / {NODES_PER_LAP} nodes
@@ -346,7 +346,7 @@ export default function OverviewPage() {
                         key={index}
                         className={`h-1.5 flex-1 rounded-full ${
                           index < raceNode
-                            ? 'bg-gradient-to-r from-emerald-400 to-teal-400'
+                            ? 'bg-gradient-to-r from-sage-400 to-sage-500'
                             : 'bg-white/[0.07]'
                         }`}
                       />
@@ -402,7 +402,7 @@ export default function OverviewPage() {
               action={
                 <Link
                   href={`/dashboard/${guildId}/maze`}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-300 transition-colors hover:text-indigo-200"
+                  className="-my-1 inline-flex items-center gap-1 py-1.5 text-xs font-semibold text-accent-300 transition-colors hover:text-accent-200"
                 >
                   Manage <ArrowRight className="h-3.5 w-3.5" />
                 </Link>
@@ -426,7 +426,7 @@ export default function OverviewPage() {
                           key={`${moment.percent}-${moment.at.toISOString()}`}
                           className={`rounded-xl border px-3 py-2.5 ${
                             isNext
-                              ? 'border-indigo-400/30 bg-indigo-500/10'
+                              ? 'border-accent-400/30 bg-accent-500/10'
                               : moment.past
                                 ? 'border-white/[0.04] bg-white/[0.01]'
                                 : 'border-white/[0.06] bg-white/[0.02]'
@@ -437,7 +437,7 @@ export default function OverviewPage() {
                               moment.past
                                 ? 'text-slate-600'
                                 : isNext
-                                  ? 'text-indigo-200'
+                                  ? 'text-accent-200'
                                   : 'text-slate-200'
                             }`}
                           >
@@ -459,7 +459,7 @@ export default function OverviewPage() {
                   action={
                     <Link
                       href={`/dashboard/${guildId}/maze`}
-                      className="inline-flex items-center gap-1 text-sm font-semibold text-indigo-300 hover:text-indigo-200"
+                      className="inline-flex items-center gap-1 text-sm font-semibold text-accent-300 hover:text-accent-200"
                     >
                       Open maze settings <ArrowRight className="h-4 w-4" />
                     </Link>
@@ -484,10 +484,10 @@ export default function OverviewPage() {
                   <p className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-slate-500">
                     <Users className="h-3.5 w-3.5" /> Aliases
                   </p>
-                  <p className="mt-1.5 text-2xl font-bold tracking-tight text-white">
+                  <p className="mt-1.5 text-2xl font-bold tracking-tight text-slate-50">
                     {summary?.aliasCount ?? 0}
                   </p>
-                  <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-indigo-300">
+                  <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-accent-300">
                     Manage <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
                   </p>
                 </Link>
@@ -498,10 +498,10 @@ export default function OverviewPage() {
                   <p className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-slate-500">
                     <AlertTriangle className="h-3.5 w-3.5" /> Warnings
                   </p>
-                  <p className="mt-1.5 text-2xl font-bold tracking-tight text-white">
+                  <p className="mt-1.5 text-2xl font-bold tracking-tight text-slate-50">
                     {summary?.warningCount ?? 0}
                   </p>
-                  <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-indigo-300">
+                  <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-accent-300">
                     Open <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
                   </p>
                 </Link>
@@ -510,12 +510,12 @@ export default function OverviewPage() {
               <div className="flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-sm">
                 {guild.is_blacklisted ? (
                   <>
-                    <ShieldCheck className="h-4 w-4 text-rose-300" />
-                    <span className="text-rose-300">This server is blacklisted.</span>
+                    <ShieldCheck className="h-4 w-4 text-danger-300" />
+                    <span className="text-danger-300">This server is blacklisted.</span>
                   </>
                 ) : (
                   <>
-                    <ShieldCheck className="h-4 w-4 text-emerald-300" />
+                    <ShieldCheck className="h-4 w-4 text-sage-400" />
                     <span className="text-slate-400">
                       Plan: <span className="font-semibold text-slate-200">{plan.label}</span>
                     </span>

@@ -116,7 +116,7 @@ export default function AliasesPage() {
                       <td className="px-3 py-2.5"><span className="font-medium text-slate-200">{alias.alias_name}</span></td>
                       <td className="px-3 py-2.5"><span className="font-mono text-xs text-slate-400">{String(alias.discord_id)}</span></td>
                       <td className="px-3 py-2.5 text-right">
-                        <button type="button" onClick={() => remove(alias)} disabled={busy === `delete-${alias.id}`} className="rounded p-1.5 text-slate-500 hover:bg-red-500/10 hover:text-red-300">
+                        <button type="button" onClick={() => remove(alias)} disabled={busy === `delete-${alias.id}`} className="rounded p-1.5 text-slate-500 hover:bg-danger-500/10 hover:text-danger-300">
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </td>

@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -39,6 +40,7 @@ import { getGuild } from '@/lib/data'
 import { cn, toDate } from '@/lib/format'
 import type { Guild } from '@/lib/types'
 import { Badge, Button, Card, CardBody, Spinner, buttonClass } from '@/components/ui'
+import { BrandMark } from '@/components/brand'
 
 interface GuildContextValue {
   guildId: string
@@ -97,11 +99,7 @@ function trialDaysLeft(guild: Guild): number {
 }
 
 function Logo() {
-  return (
-    <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/[0.08] bg-gradient-to-b from-indigo-400/25 to-indigo-600/10 text-indigo-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">
-      <ShieldAlert className="h-4 w-4" />
-    </span>
-  )
+  return <BrandMark className="h-9 w-9" />
 }
 
 export default function GuildShell({
@@ -118,7 +116,10 @@ export default function GuildShell({
   const [discordGuild, setDiscordGuild] = useState<DiscordGuild | null>(null)
   const [error, setError] = useState<AccessError | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [isDesktop, setIsDesktop] = useState(false)
   const [userLabel, setUserLabel] = useState('Account')
+  const asideRef = useRef<HTMLElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -198,6 +199,54 @@ export default function GuildShell({
     setMenuOpen(false)
   }, [pathname])
 
+  useEffect(() => {
+    const query = window.matchMedia('(min-width: 1024px)')
+    const update = () => setIsDesktop(query.matches)
+    update()
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
+
+  useEffect(() => {
+    if (asideRef.current) asideRef.current.inert = !isDesktop && !menuOpen
+  }, [isDesktop, menuOpen])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const previous = document.activeElement as HTMLElement | null
+    document.body.style.overflow = 'hidden'
+    closeButtonRef.current?.focus()
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMenuOpen(false)
+        return
+      }
+      if (event.key !== 'Tab' || !asideRef.current) return
+      const nodes = asideRef.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled])',
+      )
+      if (nodes.length === 0) return
+      const list = Array.from(nodes)
+      const first = list[0]
+      const last = list[list.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = ''
+      previous?.focus?.()
+    }
+  }, [menuOpen])
+
   const refresh = useCallback(async () => {
     try {
       const row = await getGuild(createClient(), guildId)
@@ -221,7 +270,7 @@ export default function GuildShell({
     return (
       <div className="flex min-h-screen items-center justify-center bg-ink-950">
         <div className="flex flex-col items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/[0.08] bg-indigo-500/10 text-indigo-300">
+          <div className="flex h-12 w-12 items-center justify-center border border-white/[0.12] bg-white/[0.02] text-accent-400">
             <Server className="h-6 w-6" />
           </div>
           <Spinner label="Checking your permissions…" />
@@ -251,7 +300,7 @@ export default function GuildShell({
       <div className="min-h-screen bg-ink-950 text-slate-100">
         <div
           className={cn(
-            'fixed inset-0 z-30 bg-black/70 backdrop-blur-sm transition-opacity lg:hidden',
+            'fixed inset-0 z-30 bg-black/75 transition-opacity lg:hidden',
             menuOpen ? 'opacity-100' : 'pointer-events-none opacity-0',
           )}
           onClick={() => setMenuOpen(false)}
@@ -259,21 +308,26 @@ export default function GuildShell({
         />
 
         <aside
+          ref={asideRef}
           className={cn(
-            'fixed inset-y-0 left-0 z-40 flex w-[268px] flex-col border-r border-white/[0.06] bg-ink-950/90 backdrop-blur-xl transition-transform duration-200 lg:translate-x-0',
+            'fixed inset-y-0 left-0 z-40 flex w-[268px] flex-col border-r border-white/[0.12] bg-ink-950 transition-transform duration-200 lg:translate-x-0',
             menuOpen ? 'translate-x-0' : '-translate-x-full',
           )}
         >
           <div className="flex items-center justify-between px-5 pb-4 pt-5">
             <Link href="/" className="flex items-center gap-2.5">
               <Logo />
-              <span className="text-sm font-semibold tracking-tight text-white">
-                Legends Assistant
+              <span className="flex flex-col leading-none">
+                <span className="text-[13px] font-semibold tracking-tight text-slate-100">
+                  Legends Assistant
+                </span>
+                <span className="mono-label mt-1 text-[9px] text-slate-500">Alliance ops</span>
               </span>
             </Link>
             <button
               type="button"
-              className="rounded-lg p-1.5 text-slate-400 hover:bg-white/[0.06] hover:text-white lg:hidden"
+              ref={closeButtonRef}
+              className="p-1.5 text-slate-400 hover:bg-white/[0.06] hover:text-slate-50 lg:hidden"
               onClick={() => setMenuOpen(false)}
               aria-label="Close navigation"
             >
@@ -284,7 +338,7 @@ export default function GuildShell({
           <div className="px-3">
             <Link
               href="/dashboard"
-              className="group flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2.5 transition-colors hover:border-white/[0.12] hover:bg-white/[0.05]"
+              className="group flex items-center gap-3 rounded-sm border border-white/[0.12] bg-white/[0.02] px-3 py-2.5 transition-colors hover:border-accent-500/50 hover:bg-white/[0.04]"
             >
               {iconUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -299,7 +353,7 @@ export default function GuildShell({
                 </span>
               )}
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold text-white">
+                <span className="block truncate text-sm font-semibold text-slate-50">
                   {discordGuild?.name ?? 'Discord server'}
                 </span>
                 <span className="block truncate font-mono text-[11px] text-slate-500">
@@ -313,7 +367,7 @@ export default function GuildShell({
           <nav className="mt-5 flex-1 space-y-5 overflow-y-auto px-3 pb-4">
             {NAV_GROUPS.map((group) => (
               <div key={group.label}>
-                <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">
+                <p className="mono-label mb-1.5 px-3 text-[10px] text-slate-600">
                   {group.label}
                 </p>
                 <div className="space-y-0.5">
@@ -326,19 +380,19 @@ export default function GuildShell({
                         key={item.name}
                         href={href}
                         className={cn(
-                          'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                          'group relative flex items-center gap-3 rounded-sm border border-transparent px-3 py-2 text-sm font-medium transition-colors',
                           active
-                            ? 'bg-white/[0.07] text-white'
-                            : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200',
+                            ? 'border-white/[0.08] bg-white/[0.04] text-slate-50'
+                            : 'text-slate-400 hover:bg-white/[0.03] hover:text-slate-100',
                         )}
                       >
                         {active ? (
-                          <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-gradient-to-b from-indigo-300 to-violet-400" />
+                          <span className="absolute left-0 top-1/2 h-4 w-[2px] -translate-y-1/2 bg-accent-500" />
                         ) : null}
                         <Icon
                           className={cn(
                             'h-4 w-4 transition-colors',
-                            active ? 'text-indigo-300' : 'text-slate-500 group-hover:text-slate-300',
+                            active ? 'text-accent-400' : 'text-slate-500 group-hover:text-slate-300',
                           )}
                         />
                         {item.name}
@@ -354,9 +408,9 @@ export default function GuildShell({
             {activeGuild.premium_status !== 'premium' ? (
               <Link
                 href={`/dashboard/${guildId}/billing`}
-                className="mb-3 block rounded-xl border border-indigo-400/20 bg-gradient-to-br from-indigo-500/15 via-indigo-500/5 to-transparent p-3 transition-colors hover:border-indigo-400/35"
+                className="mb-3 block rounded-sm border border-accent-500/30 bg-accent-500/[0.05] p-3 transition-colors hover:border-accent-500/60"
               >
-                <p className="flex items-center gap-1.5 text-xs font-semibold text-indigo-200">
+                <p className="flex items-center gap-1.5 font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-accent-300">
                   <Sparkles className="h-3.5 w-3.5" />
                   {activeGuild.premium_status === 'trial'
                     ? `${trialDaysLeft(activeGuild)} days left in trial`
@@ -381,7 +435,7 @@ export default function GuildShell({
               <button
                 type="button"
                 onClick={signOut}
-                className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-white/[0.06] hover:text-white"
+                className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-white/[0.06] hover:text-slate-50"
                 aria-label="Sign out"
                 title="Sign out"
               >
@@ -409,12 +463,14 @@ export default function GuildShell({
         </aside>
 
         <div className="lg:pl-[268px]">
-          <header className="sticky top-0 z-20 hidden border-b border-white/[0.06] bg-ink-950/70 backdrop-blur-xl lg:block">
+          <header className="sticky top-0 z-20 hidden border-b border-white/[0.1] bg-ink-950 lg:block">
             <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-6 xl:px-10">
               <div className="flex min-w-0 items-center gap-2 text-sm">
-                <span className="truncate text-slate-500">{discordGuild?.name ?? 'Server'}</span>
+                <span className="mono-label truncate text-slate-500">{discordGuild?.name ?? 'Server'}</span>
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-700" />
-                <span className="truncate font-medium text-slate-200">{activeItem?.name}</span>
+                <span className="truncate font-mono text-[11px] uppercase tracking-[0.12em] text-slate-200">
+                  {activeItem?.name}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <Badge tone={meta.tone} dot>
@@ -422,7 +478,7 @@ export default function GuildShell({
                 </Badge>
                 <a
                   href={`mailto:${SUPPORT_EMAIL}`}
-                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:bg-white/[0.06] hover:text-white"
+                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:bg-white/[0.06] hover:text-slate-50"
                 >
                   <LifeBuoy className="h-3.5 w-3.5" />
                   Support
@@ -431,7 +487,7 @@ export default function GuildShell({
             </div>
           </header>
 
-          <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-white/[0.06] bg-ink-950/80 px-4 py-3 backdrop-blur-xl lg:hidden">
+          <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-white/[0.1] bg-ink-950 px-4 py-3 lg:hidden">
             <button
               type="button"
               onClick={() => setMenuOpen(true)}
@@ -441,15 +497,15 @@ export default function GuildShell({
               <Menu className="h-5 w-5" />
             </button>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-white">
+              <p className="truncate text-sm font-semibold text-slate-50">
                 {discordGuild?.name ?? 'Dashboard'}
               </p>
-              <p className="truncate text-[11px] text-slate-500">{activeItem?.name}</p>
+              <p className="mono-label truncate text-slate-500">{activeItem?.name}</p>
             </div>
             <Badge tone={meta.tone}>{meta.label}</Badge>
           </header>
 
-          <main className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-10 lg:py-9">{children}</main>
+          <main id="main" className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-10 lg:py-9">{children}</main>
         </div>
       </div>
     </GuildContext.Provider>
@@ -483,11 +539,11 @@ function AccessErrorScreen({
     <div className="flex min-h-screen items-center justify-center bg-ink-950 p-6">
       <Card className="w-full max-w-lg">
         <CardBody className="space-y-5 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-rose-500/25 bg-rose-500/10 text-rose-300">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-danger-500/25 bg-danger-500/10 text-danger-300">
             <ShieldAlert className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-white">{title}</h1>
+            <h1 className="text-xl font-bold tracking-tight text-slate-50">{title}</h1>
             <p className="mt-2 text-sm text-slate-400">{error.message}</p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2">

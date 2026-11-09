@@ -1,38 +1,50 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { ArrowRight, Check, Map, Shield, Sparkles, Swords, Trophy, Users } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
+import {
+  ArrowDown,
+  ArrowUpRight,
+  Check,
+  Menu,
+  X,
+} from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { Alert, Badge, Button, buttonClass } from '@/components/ui'
+import { BOT_INVITE_URL, SUPPORT_EMAIL, TRIAL_DAYS } from '@/lib/constants'
+import { Alert, Button, buttonClass } from '@/components/ui'
+import { Wordmark } from '@/components/brand'
+import { WarBoard } from '@/components/war-board'
+import {
+  clock,
+  faq,
+  features,
+  finale,
+  footer,
+  hero,
+  start,
+} from '@/lib/marketing'
 
-const FEATURES = [
-  {
-    icon: Swords,
-    title: 'War tracking',
-    description: 'Phase timers, missing attacks, excused players and warnings — all in one place.',
-  },
-  {
-    icon: Trophy,
-    title: 'Race nodes',
-    description: 'Track OFA, DYP and JE progress with live lap and node status.',
-  },
-  {
-    icon: Map,
-    title: 'Maze discounts',
-    description: 'Schedule events and see every discount moment in your local timezone.',
-  },
-  {
-    icon: Users,
-    title: 'Alias manager',
-    description: 'Map in-game names to Discord members without accidental mentions.',
-  },
+const NAV = [
+  { label: 'The clock', href: '#clock' },
+  { label: 'What it tracks', href: '#board' },
+  { label: 'Start', href: '#start' },
+  { label: 'Questions', href: '#questions' },
 ]
 
-const HIGHLIGHTS = ['7-day free trial', 'No card required', 'One dashboard per server']
+function DiscordIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg className={className} fill="currentColor" viewBox="0 0 127.14 96.36" aria-hidden>
+      <path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z" />
+    </svg>
+  )
+}
 
 export default function Landing() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -40,6 +52,42 @@ export default function Landing() {
       setError('Discord sign-in did not complete. Please try again.')
     }
   }, [])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const previous = document.activeElement as HTMLElement | null
+    document.body.style.overflow = 'hidden'
+    closeRef.current?.focus()
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMenuOpen(false)
+        return
+      }
+      if (event.key !== 'Tab') return
+      const nodes = menuRef.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled])',
+      )
+      if (!nodes || nodes.length === 0) return
+      const focusable = Array.from(nodes)
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = ''
+      previous?.focus?.()
+    }
+  }, [menuOpen])
 
   const signIn = async () => {
     setLoading(true)
@@ -60,203 +108,455 @@ export default function Landing() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-ink-950 text-white">
-      <div className="bg-blueprint pointer-events-none absolute inset-x-0 top-0 h-[560px] opacity-70" aria-hidden />
+    <div className="relative min-h-screen overflow-x-clip bg-ink-950">
       <div
-        className="pointer-events-none absolute -top-64 left-1/2 h-[520px] w-[820px] -translate-x-1/2 rounded-full bg-indigo-600/[0.14] blur-[120px]"
+        className="bg-blueprint pointer-events-none absolute inset-x-0 top-0 h-[680px] opacity-70"
         aria-hidden
       />
 
-      <div className="relative mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-7">
-        <header className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/[0.08] bg-gradient-to-b from-indigo-400/25 to-indigo-600/10 text-indigo-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">
-              <Shield className="h-4 w-4" />
-            </div>
-            <span className="text-sm font-semibold tracking-tight text-slate-200">
-              Legends Assistant
-            </span>
+      <header className="frame relative z-30 flex items-center justify-between gap-4 py-5">
+        <Wordmark />
+        <nav className="hidden items-center gap-7 lg:flex" aria-label="Main">
+          {NAV.map((item) => (
+            <a
+              key={item.href}
+              href={item.href}
+              className="relative py-2 text-[13px] font-medium text-slate-400 transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-px after:origin-left after:scale-x-0 after:bg-accent-500 after:transition-transform after:duration-200 hover:text-slate-50 hover:after:scale-x-100"
+            >
+              {item.label}
+            </a>
+          ))}
+        </nav>
+        <div className="hidden items-center gap-2 sm:flex">
+          <button
+            type="button"
+            onClick={signIn}
+            disabled={loading}
+            className={buttonClass('primary', 'sm')}
+          >
+            <DiscordIcon className="h-3.5 w-3.5" />
+            {loading ? 'Redirecting…' : 'Sign in'}
+          </button>
+        </div>
+        <button
+          type="button"
+          className="border border-white/[0.14] p-2 text-slate-300 sm:hidden"
+          aria-expanded={menuOpen}
+          aria-controls="mobile-nav"
+          aria-label="Open menu"
+          onClick={() => setMenuOpen(true)}
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+      </header>
+
+      {menuOpen ? (
+        <div
+          id="mobile-nav"
+          ref={menuRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Menu"
+          className="fixed inset-0 z-50 flex flex-col bg-ink-950 px-6 pb-8 pt-5"
+        >
+          <div className="flex items-center justify-between">
+            <Wordmark />
+            <button
+              type="button"
+              ref={closeRef}
+              className="border border-white/[0.14] p-2 text-slate-300"
+              aria-label="Close menu"
+              onClick={() => setMenuOpen(false)}
+            >
+              <X className="h-5 w-5" />
+            </button>
           </div>
-          <Badge tone="purple" dot>
-            Discord bot + dashboard
-          </Badge>
-        </header>
+          <nav className="mt-14 flex flex-col" aria-label="Mobile">
+            {NAV.map((item) => (
+              <a
+                key={item.href}
+                href={item.href}
+                onClick={() => setMenuOpen(false)}
+                className="display border-b border-white/[0.1] py-5 text-4xl text-slate-100"
+              >
+                {item.label}
+              </a>
+            ))}
+          </nav>
+          <div className="mt-auto space-y-3 pt-10">
+            <Button size="lg" onClick={signIn} loading={loading} className="w-full">
+              <DiscordIcon className="h-4 w-4" />
+              {hero.primaryCta}
+            </Button>
+            <p className="mono-label text-slate-500">
+              {TRIAL_DAYS}-day trial / no card required
+            </p>
+          </div>
+        </div>
+      ) : null}
 
-        <main className="flex flex-1 flex-col justify-center py-14">
-          <div className="grid items-center gap-12 lg:grid-cols-[1.05fr_0.95fr]">
+      <main id="main">
+        {/* 01 / hero */}
+        <section className="frame pb-16 pt-6 sm:pt-10 lg:pb-24">
+          <div className="grid items-start gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:gap-14">
             <div>
-              <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/[0.07] bg-white/[0.03] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                <Sparkles className="h-3.5 w-3.5 text-indigo-300" />
-                Built for alliance leadership
+              <p className="mono-label flex items-center gap-2 text-accent-400">
+                <span className="live-dot" aria-hidden />
+                {hero.stamp}
               </p>
-              <h1 className="max-w-xl text-4xl font-extrabold leading-[1.08] tracking-tight sm:text-5xl">
-                Run your alliance&apos;s{' '}
-                <span className="text-gradient">wars, races and mazes</span> without spreadsheets.
+              <h1 className="display mt-5 text-[clamp(2.7rem,6.7vw,5.5rem)] text-slate-50">
+                {hero.title.split('48-hour')[0]}
+                <span className="whitespace-nowrap">
+                  48-hour{hero.title.split('48-hour')[1]}
+                </span>
               </h1>
-              <p className="mt-5 max-w-lg text-base leading-relaxed text-slate-400">
-                One dashboard for timers, missing attacks, race nodes, maze discounts and player
-                aliases. Sign in with Discord to manage a server you own or administrate.
+              <p className="mt-6 max-w-[46ch] text-[17px] leading-relaxed text-slate-400">
+                {hero.lede}
               </p>
-
-              <div className="mt-8 flex flex-wrap items-center gap-3">
-                <Button
-                  size="lg"
-                  loading={loading}
-                  onClick={signIn}
-                  className="bg-[#5865F2] hover:bg-[#4752C4] shadow-[0_16px_40px_-16px_rgba(88,101,242,0.9)]"
-                >
-                  <svg className="h-5 w-5 fill-current" viewBox="0 0 127.14 96.36" aria-hidden>
-                    <path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z" />
-                  </svg>
-                  {loading ? 'Redirecting…' : 'Continue with Discord'}
+              <div className="mt-8 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+                <Button size="lg" loading={loading} onClick={signIn} className="w-full sm:w-auto">
+                  <DiscordIcon className="h-4 w-4" />
+                  {hero.primaryCta}
                 </Button>
-                <a href="#features" className={buttonClass('secondary', 'lg')}>
-                  See what&apos;s included
-                  <ArrowRight className="h-4 w-4" />
+                <a href="#board" className={buttonClass('secondary', 'lg', 'w-full sm:w-auto')}>
+                  {hero.secondaryCta}
+                  <ArrowDown className="h-4 w-4" />
                 </a>
               </div>
-
               {error ? (
-                <Alert tone="red" className="mt-6 max-w-lg" title="Sign-in failed">
+                <Alert tone="red" className="mt-6 max-w-xl" title="Sign-in failed">
                   {error}
                 </Alert>
               ) : null}
-
               <ul className="mt-7 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500">
-                {HIGHLIGHTS.map((item) => (
+                {hero.highlights.map((item) => (
                   <li key={item} className="inline-flex items-center gap-1.5">
-                    <Check className="h-3.5 w-3.5 text-emerald-400" />
+                    <Check className="h-3.5 w-3.5 text-sage-400" aria-hidden />
                     {item}
                   </li>
                 ))}
               </ul>
-
-              <p className="mt-3 text-xs text-slate-600">
-                We request <span className="font-mono text-slate-500">identify</span> and{' '}
-                <span className="font-mono text-slate-500">guilds</span> only. No messages or member
-                data are read by the dashboard.
+              <p className="mt-3 max-w-[52ch] text-xs leading-relaxed text-slate-600">
+                {hero.scopeNote}
               </p>
             </div>
+            <div className="lg:pt-1">
+              <WarBoard />
+            </div>
+          </div>
+        </section>
 
-            <div className="relative">
-              <div
-                className="absolute -inset-4 rounded-[28px] bg-gradient-to-b from-indigo-500/10 to-transparent blur-2xl"
-                aria-hidden
-              />
-              <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-ink-900/90 shadow-panel backdrop-blur">
-                <div className="flex items-center gap-2 border-b border-white/[0.06] px-4 py-2.5">
-                  <span className="h-2 w-2 rounded-full bg-rose-500/70" />
-                  <span className="h-2 w-2 rounded-full bg-amber-500/70" />
-                  <span className="h-2 w-2 rounded-full bg-emerald-500/70" />
-                  <span className="ml-3 flex-1 truncate text-center font-mono text-[11px] text-slate-600">
-                    assistant / overview
-                  </span>
+        {/* 02 / clock */}
+        <section id="clock" className="border-t border-white/[0.1]">
+          <div className="frame py-16 lg:py-24">
+            <div className="section-head">
+              <span className="mono-label text-accent-400">{clock.stamp}</span>
+              <span className="mono-label hidden sm:block">48h / 24h / 24h / 0h</span>
+            </div>
+            <div className="grid gap-12 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16">
+              <div>
+                <h2 className="display text-[clamp(2rem,4vw,3.5rem)] text-slate-50">
+                  {clock.title}
+                </h2>
+                <p className="mt-5 max-w-[58ch] text-[15px] leading-relaxed text-slate-400">
+                  {clock.body}
+                </p>
+              </div>
+              <div className="border border-white/[0.14] p-5">
+                <div className="flex items-center justify-between">
+                  <span className="mono-label text-steel-400">{clock.rail.defence}</span>
+                  <span className="mono-label text-accent-400">{clock.rail.attack}</span>
                 </div>
-
-                <div className="grid grid-cols-[104px_1fr]">
-                  <div className="space-y-1 border-r border-white/[0.06] p-3">
-                    {['Overview', 'War', 'Race', 'Maze', 'Aliases'].map((item, index) => (
-                      <div
-                        key={item}
-                        className={`rounded-md px-2 py-1.5 text-[11px] font-medium ${
-                          index === 0 ? 'bg-white/[0.07] text-white' : 'text-slate-500'
-                        }`}
-                      >
-                        {item}
-                      </div>
-                    ))}
+                <div className="mt-3 grid grid-cols-2 gap-1" aria-hidden>
+                  <div className="flex h-12 items-end border border-steel-500/30 bg-steel-500/[0.08] p-2">
+                    <span className="mono-label text-steel-500">24h</span>
                   </div>
+                  <div className="flex h-12 items-end border border-accent-500/40 bg-accent-500/[0.1] p-2">
+                    <span className="mono-label text-accent-400">24h</span>
+                  </div>
+                </div>
+                <div className="mt-2 flex items-center justify-between">
+                  <span className="mono-label text-slate-600">{clock.rail.start}</span>
+                  <span className="mono-label text-slate-600">{clock.rail.mid}</span>
+                  <span className="mono-label text-slate-600">{clock.rail.end}</span>
+                </div>
+                <dl className="mt-6 space-y-0">
+                  {[
+                    ['Phase switch', 'Automatic at 24h left'],
+                    ['Channel ping', 'At the switch and the last hour'],
+                    ['Missing list', 'Carried into attack, not reset'],
+                  ].map(([term, detail]) => (
+                    <div
+                      key={term}
+                      className="flex items-baseline justify-between gap-4 border-t border-white/[0.08] py-2.5"
+                    >
+                      <dt className="font-mono text-[11px] uppercase tracking-[0.12em] text-slate-500">
+                        {term}
+                      </dt>
+                      <dd className="text-right text-xs text-slate-300">{detail}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            </div>
 
-                  <div className="space-y-3 p-4">
-                    <div className="grid grid-cols-3 gap-2">
-                      {[
-                        { label: 'Phase', value: 'Attack' },
-                        { label: 'Missing', value: '3' },
-                        { label: 'Next', value: '20%' },
-                      ].map((stat) => (
-                        <div
-                          key={stat.label}
-                          className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5"
-                        >
-                          <p className="text-[9px] uppercase tracking-wider text-slate-500">
-                            {stat.label}
-                          </p>
-                          <p className="mt-1 text-sm font-bold tracking-tight text-white">
-                            {stat.value}
+            <dl className="mt-14 grid grid-cols-2 gap-px border-t border-white/[0.14] bg-white/[0.08] lg:grid-cols-4">
+              {clock.facts.map((fact) => (
+                <div key={fact.label} className="bg-ink-950 py-6 pr-4">
+                  <dt className="sr-only">{fact.label}</dt>
+                  <dd>
+                    <span className="block font-display text-[clamp(2rem,3.4vw,3rem)] font-extrabold leading-none tracking-tight text-slate-100">
+                      {fact.value}
+                    </span>
+                    <span className="mono-label mt-2 block text-slate-500">{fact.label}</span>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </section>
+
+        {/* 03 / board */}
+        <section id="board" className="border-t border-white/[0.1]">
+          <div className="frame py-16 lg:py-24">
+            <div className="section-head">
+              <span className="mono-label text-accent-400">{features.stamp}</span>
+              <span className="mono-label hidden sm:block">Six tools, one board</span>
+            </div>
+            <div className="max-w-[62ch]">
+              <h2 className="display text-[clamp(2rem,4vw,3.5rem)] text-slate-50">
+                {features.title}
+              </h2>
+              <p className="mt-5 text-[15px] leading-relaxed text-slate-400">{features.lede}</p>
+            </div>
+
+            <ul className="mt-12 border-t border-white/[0.14]">
+              {features.items.map((item) => (
+                <li
+                  key={item.id}
+                  className="group -mx-2 border-b border-white/[0.08] px-2 transition-colors duration-200 hover:bg-white/[0.025]"
+                >
+                  <div className="grid gap-3 py-6 sm:grid-cols-[60px_1fr_auto] sm:items-baseline sm:gap-8">
+                    <span className="font-mono text-[11px] tracking-[0.12em] text-slate-600 transition-colors group-hover:text-accent-400">
+                      {item.id}
+                    </span>
+                    <div>
+                      <h3 className="font-display text-xl font-bold tracking-tight text-slate-100 sm:text-2xl">
+                        {item.name}
+                      </h3>
+                      <p className="mt-1.5 max-w-[56ch] text-sm leading-relaxed text-slate-500">
+                        {item.description}
+                      </p>
+                    </div>
+                    <span className="mono-label text-slate-600 sm:text-right">{item.tag}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
+        {/* 04 / start */}
+        <section id="start" className="border-t border-white/[0.1]">
+          <div className="frame py-16 lg:py-24">
+            <div className="grid gap-12 lg:grid-cols-[0.75fr_1.25fr] lg:gap-16">
+              <div className="lg:sticky lg:top-10 lg:self-start">
+                <div className="section-head">
+                  <span className="mono-label text-accent-400">{start.stamp}</span>
+                </div>
+                <h2 className="display text-[clamp(2rem,4vw,3.5rem)] text-slate-50">
+                  {start.title}
+                </h2>
+                <p className="mt-5 max-w-[42ch] text-[15px] leading-relaxed text-slate-400">
+                  The board comes up empty. The first war command fills it. If tracking starts
+                  mid-war, name the time left in the phase and the bot back-dates the war clock.
+                </p>
+                <a
+                  href={BOT_INVITE_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={buttonClass('secondary', 'md', 'mt-7')}
+                >
+                  Add the bot
+                  <ArrowUpRight className="h-4 w-4" />
+                </a>
+              </div>
+
+              <ol className="border-t border-white/[0.14]">
+                {start.steps.map((step) => (
+                  <li
+                    key={step.id}
+                    className="grid grid-cols-[40px_1fr] gap-5 border-b border-white/[0.08] py-7 sm:gap-8"
+                  >
+                    <span className="font-display text-lg font-extrabold text-slate-600">
+                      {step.id}
+                    </span>
+                    <div>
+                      <h3 className="font-display text-xl font-bold tracking-tight text-slate-100">
+                        {step.title}
+                      </h3>
+                      <p className="mt-2 max-w-[58ch] text-sm leading-relaxed text-slate-500">
+                        {step.body}
+                      </p>
+                      {step.command ? (
+                        <div className="mt-4 space-y-1.5">
+                          <pre className="overflow-x-auto border border-white/[0.12] bg-ink-950 px-3 py-2 font-mono text-xs text-accent-300">
+                            <code>{step.command}</code>
+                          </pre>
+                          <p className="mono-label text-slate-600">
+                            Or mid-war: {step.altCommand}
                           </p>
                         </div>
-                      ))}
+                      ) : null}
                     </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </div>
+        </section>
 
-                    <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
-                      <div className="flex items-center justify-between text-[10px] text-slate-500">
-                        <span>Phase timer</span>
-                        <span className="font-mono text-slate-400">09h 42m</span>
-                      </div>
-                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
-                        <div className="h-full w-[72%] rounded-full bg-gradient-to-r from-indigo-400 to-cyan-400" />
-                      </div>
-                    </div>
-
-                    <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
-                      <div className="flex items-end justify-between gap-1.5">
-                        {[38, 62, 46, 78, 55, 88, 70, 94].map((height, index) => (
-                          <span
-                            key={index}
-                            style={{ height: `${height * 0.4}px` }}
-                            className={`w-full rounded-sm ${
-                              index > 5 ? 'bg-gradient-to-t from-indigo-500 to-cyan-400' : 'bg-white/[0.1]'
-                            }`}
-                          />
-                        ))}
-                      </div>
-                      <p className="mt-2 text-[10px] text-slate-600">Race progress · last 8 laps</p>
-                    </div>
-                  </div>
+        {/* 05 / questions */}
+        <section id="questions" className="border-t border-white/[0.1]">
+          <div className="frame py-16 lg:py-24">
+            <div className="grid gap-10 lg:grid-cols-[0.7fr_1.3fr] lg:gap-16">
+              <div>
+                <div className="section-head">
+                  <span className="mono-label text-accent-400">{faq.stamp}</span>
                 </div>
+                <h2 className="display text-[clamp(2rem,3.6vw,3.1rem)] text-slate-50">
+                  {faq.title}
+                </h2>
               </div>
-              <p className="mt-3 text-center text-[11px] text-slate-600">
-                Example data — sign in to see your server.
+              <div className="border-t border-white/[0.14]">
+                {faq.items.map((item) => (
+                  <details key={item.q} className="group border-b border-white/[0.08] py-5">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-semibold text-slate-200">
+                      {item.q}
+                      <span
+                        aria-hidden
+                        className="font-mono text-lg font-normal leading-none text-accent-400 transition-transform duration-200 group-open:rotate-45"
+                      >
+                        +
+                      </span>
+                    </summary>
+                    <p className="mt-3 max-w-[62ch] pr-8 text-sm leading-relaxed text-slate-500">
+                      {item.a}
+                    </p>
+                  </details>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* finale */}
+        <section className="border-t border-white/[0.1]">
+          <div className="frame py-20 lg:py-28">
+            <div className="grid items-end gap-10 lg:grid-cols-[1.2fr_0.8fr]">
+              <div>
+                <h2 className="display display-wide text-[clamp(2.6rem,7.4vw,6rem)] text-slate-50">
+                  {finale.title}
+                </h2>
+                <p className="mt-5 max-w-[46ch] text-[15px] leading-relaxed text-slate-400">
+                  {finale.body}
+                </p>
+              </div>
+              <div className="flex flex-col items-start gap-3 lg:items-end">
+                <Button size="lg" loading={loading} onClick={signIn}>
+                  <DiscordIcon className="h-4 w-4" />
+                  {finale.cta}
+                </Button>
+                <span className="mono-label text-slate-500">
+                  {TRIAL_DAYS}-day trial / no card required
+                </span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer className="border-t border-white/[0.14]">
+        <div className="frame py-12">
+          <div className="grid gap-10 lg:grid-cols-[1.3fr_0.7fr]">
+            <div>
+              <p className="display text-[clamp(2.2rem,5.4vw,4.4rem)] text-slate-200">
+                Legends
+                <br />
+                Assistant
               </p>
+              <p className="mt-4 max-w-[44ch] text-sm leading-relaxed text-slate-500">
+                A war board for Monster Legends alliance staff. Built to replace the pinned
+                spreadsheet, not the conversation.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-x-8 gap-y-6 text-sm">
+              <div>
+                <p className="mono-label mb-3 text-slate-600">Board</p>
+                <ul className="space-y-2">
+                  <li>
+                    <button
+                      type="button"
+                      onClick={signIn}
+                      className="py-1.5 text-left text-slate-300 hover:text-accent-400"
+                    >
+                      Sign in with Discord
+                    </button>
+                  </li>
+                  <li>
+                    <a
+                      href={BOT_INVITE_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block py-1.5 text-slate-300 hover:text-accent-400"
+                    >
+                      Add the bot
+                    </a>
+                  </li>
+                  <li>
+                    <a
+                      href="#clock"
+                      className="inline-block py-1.5 text-slate-300 hover:text-accent-400"
+                    >
+                      War clock
+                    </a>
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <p className="mono-label mb-3 text-slate-600">Support</p>
+                <ul className="space-y-2">
+                  <li>
+                    <a
+                      href={`mailto:${SUPPORT_EMAIL}`}
+                      className="inline-block py-1.5 text-slate-300 hover:text-accent-400"
+                    >
+                      {SUPPORT_EMAIL}
+                    </a>
+                  </li>
+                  {footer.links.map((link) => (
+                    <li key={link.label}>
+                      <Link
+                        href={link.href}
+                        className="inline-block py-1.5 text-slate-300 hover:text-accent-400"
+                      >
+                        {link.label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           </div>
 
-          <div id="features" className="mt-20 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {FEATURES.map((feature) => {
-              const Icon = feature.icon
-              return (
-                <div
-                  key={feature.title}
-                  className="surface group p-5 transition-colors hover:border-white/[0.12]"
-                >
-                  <div className="mb-3 inline-flex rounded-xl border border-indigo-400/20 bg-indigo-500/10 p-2.5 text-indigo-300">
-                    <Icon className="h-4 w-4" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-white">{feature.title}</h3>
-                  <p className="mt-1 text-sm leading-relaxed text-slate-400">
-                    {feature.description}
-                  </p>
-                </div>
-              )
-            })}
+          <div className="mt-12 flex flex-col justify-between gap-3 border-t border-white/[0.08] pt-4 sm:flex-row">
+            <p className="mono-label text-slate-600">
+              {footer.disclaimer} © {new Date().getFullYear()}
+            </p>
+            <p className="mono-label text-slate-600">{footer.colophon}</p>
           </div>
-        </main>
-
-        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.06] py-6 text-xs text-slate-600">
-          <span>Monster Legends Assistant · Community project, not affiliated with Monster Legends.</span>
-          <nav className="flex items-center gap-4">
-            <a href="/legal" className="transition-colors hover:text-slate-300">
-              Terms of Service
-            </a>
-            <a href="/legal#refund" className="text-rose-400/80 transition-colors hover:text-rose-300">
-              Refund Policy
-            </a>
-            <a href="/legal" className="transition-colors hover:text-slate-300">
-              Privacy Policy
-            </a>
-          </nav>
-        </footer>
-      </div>
+        </div>
+      </footer>
     </div>
   )
 }

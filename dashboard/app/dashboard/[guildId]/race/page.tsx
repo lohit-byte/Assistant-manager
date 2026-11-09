@@ -167,7 +167,7 @@ export default function RacePage() {
           <div className="flex items-center gap-2">
             {availableChannels.length > 0 && (
               <div className="relative">
-                <select value={channelId} onChange={(e) => router.push(`?channel=${e.target.value}`)} className="appearance-none bg-slate-900 border border-slate-700 text-white text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:border-indigo-500">
+                <select value={channelId} onChange={(e) => router.push(`?channel=${e.target.value}`)} className="appearance-none bg-slate-900 border border-slate-700 text-slate-50 text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:border-accent-500">
                   {availableChannels.map(id => <option key={id} value={id}>Team Channel ({id})</option>)}
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
@@ -198,17 +198,17 @@ export default function RacePage() {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <p className="flex items-center gap-2 text-sm font-semibold text-white"><Hand className="h-4 w-4 text-indigo-300" /> One For All (OFA)</p>
+                  <p className="flex items-center gap-2 text-sm font-semibold text-slate-50"><Hand className="h-4 w-4 text-accent-300" /> One For All (OFA)</p>
                   <Badge tone={draft.ofa_done ? 'green' : ofaName ? 'amber' : 'slate'}>{draft.ofa_done ? 'Done' : ofaName ? 'Claimed' : 'Open'}</Badge>
                 </div>
                 <div className="p-3 bg-slate-900 rounded-lg border border-slate-800 text-sm">
-                  {ofaName ? <span>Player <strong className="text-indigo-300">{ofaName}</strong> {draft.ofa_done ? 'has completed this.' : 'is working on this.'}</span> : <span className="text-slate-500">Nobody has claimed this yet.</span>}
+                  {ofaName ? <span>Player <strong className="text-accent-300">{ofaName}</strong> {draft.ofa_done ? 'has completed this.' : 'is working on this.'}</span> : <span className="text-slate-500">Nobody has claimed this yet.</span>}
                 </div>
               </div>
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <p className="flex items-center gap-2 text-sm font-semibold text-white"><Users className="h-4 w-4 text-emerald-300" /> Do Your Part (DYP)</p>
+                  <p className="flex items-center gap-2 text-sm font-semibold text-slate-50"><Users className="h-4 w-4 text-sage-400" /> Do Your Part (DYP)</p>
                   <span className="text-sm font-bold">{dypProgress} / {dypTarget}</span>
                 </div>
                 <ProgressBar value={dypProgress} max={dypTarget} tone="green" />
@@ -219,7 +219,7 @@ export default function RacePage() {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <p className="flex items-center gap-2 text-sm font-semibold text-white"><Sparkles className="h-4 w-4 text-amber-300" /> Joint Effort (JE)</p>
+                  <p className="flex items-center gap-2 text-sm font-semibold text-slate-50"><Sparkles className="h-4 w-4 text-warn-300" /> Joint Effort (JE)</p>
                   <Badge tone={draft.je_done ? 'green' : 'slate'}>{draft.je_done ? 'Done' : 'In Progress'}</Badge>
                 </div>
                 <div className="flex justify-between text-sm font-bold"><span>{jeProgress}</span><span className="text-slate-500">/ {jeTarget}</span></div>
@@ -241,7 +241,7 @@ export default function RacePage() {
 
               <div className="space-y-4">
                 <Field label="Active Node Sheet">
-                  <select value={activeSheet || ''} onChange={(e) => selectSheet(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white">
+                  <select value={activeSheet || ''} onChange={(e) => selectSheet(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-slate-50">
                     <option value="" disabled>Select a sheet...</option>
                     {sheets.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
                   </select>
@@ -273,17 +273,17 @@ export default function RacePage() {
                 <ul className="divide-y divide-slate-800/50">
                   {logs.map((log) => {
                     const actionMap: Record<string, { label: string, color: string }> = {
-                      ofa_claim: { label: 'Claimed OFA', color: 'text-indigo-300' },
-                      ofa_done: { label: 'Completed OFA', color: 'text-emerald-300' },
-                      dyp_done: { label: 'Logged DYP', color: 'text-blue-300' },
-                      je_done: { label: 'Logged JE', color: 'text-amber-300' },
+                      ofa_claim: { label: 'Claimed OFA', color: 'text-accent-300' },
+                      ofa_done: { label: 'Completed OFA', color: 'text-sage-400' },
+                      dyp_done: { label: 'Logged DYP', color: 'text-steel-300' },
+                      je_done: { label: 'Logged JE', color: 'text-warn-300' },
                     }
                     const action = actionMap[log.action_type] || { label: log.action_type, color: 'text-slate-300' }
                     return (
                       <li key={log.id} className="p-4 flex items-start gap-3 hover:bg-slate-800/20 transition-colors">
                         <div className={`mt-0.5 p-1.5 rounded-full bg-slate-800 ${action.color}`}><Check className="w-3 h-3" /></div>
                         <div>
-                          <p className="text-sm"><strong className="text-white">{log.player_name}</strong> <span className="text-slate-400"> {action.label}</span></p>
+                          <p className="text-sm"><strong className="text-slate-50">{log.player_name}</strong> <span className="text-slate-400"> {action.label}</span></p>
                           <p className="text-xs text-slate-500 mt-0.5">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                         </div>
                       </li>

@@ -119,31 +119,31 @@ export default function BillingPage() {
     return (
       <div className="max-w-3xl">
         <h1 className="text-3xl font-bold mb-8">Billing & Plan</h1>
-        <div className="bg-slate-900 border border-red-900/50 p-8 rounded-xl relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 to-orange-500" />
+        <div className="bg-slate-900 border border-danger-500/30 p-8 rounded-xl relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-danger-500 to-accent-500" />
           <div className="flex items-start space-x-4 mb-6">
-            <div className="p-3 bg-red-900/30 rounded-lg">
-              <ShieldAlert className="w-8 h-8 text-red-400" />
+            <div className="p-3 bg-danger-500/10 rounded-lg">
+              <ShieldAlert className="w-8 h-8 text-danger-400" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold text-white">Your Team is Flying Blind</h2>
+              <h2 className="text-2xl font-bold text-slate-50">Your Team is Flying Blind</h2>
               <p className="text-slate-400 mt-1">
                 Your subscription has ended. The bot is now paused for this server. 
-                <strong className="text-red-300 ml-1">Your alliance is currently missing war timers, race tracking, and maze pings.</strong>
+                <strong className="text-danger-300 ml-1">Your alliance is currently missing war timers, race tracking, and maze pings.</strong>
               </p>
             </div>
           </div>
           <div className="bg-slate-950 rounded-lg p-6 border border-slate-800 mb-6">
-            <h3 className="font-bold text-lg mb-2 text-white">What you lose while paused:</h3>
+            <h3 className="font-bold text-lg mb-2 text-slate-50">What you lose while paused:</h3>
             <ul className="space-y-2 text-slate-300 text-sm">
-              <li className="flex items-center gap-2"><X className="w-4 h-4 text-red-400" /> No War phase timers or missing attack lists</li>
-              <li className="flex items-center gap-2"><X className="w-4 h-4 text-red-400" /> No automated Race node tracking</li>
-              <li className="flex items-center gap-2"><X className="w-4 h-4 text-red-400" /> No Maze discount pings</li>
-              <li className="flex items-center gap-2"><X className="w-4 h-4 text-red-400" /> Alias and warning data becomes inaccessible</li>
+              <li className="flex items-center gap-2"><X className="w-4 h-4 text-danger-400" /> No War phase timers or missing attack lists</li>
+              <li className="flex items-center gap-2"><X className="w-4 h-4 text-danger-400" /> No automated Race node tracking</li>
+              <li className="flex items-center gap-2"><X className="w-4 h-4 text-danger-400" /> No Maze discount pings</li>
+              <li className="flex items-center gap-2"><X className="w-4 h-4 text-danger-400" /> Alias and warning data becomes inaccessible</li>
             </ul>
           </div>
           <div className="flex gap-4">
-            <button onClick={() => document.getElementById('pricing-plans')?.scrollIntoView({ behavior: 'smooth' })} className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 rounded-lg font-bold text-lg flex items-center justify-center space-x-2 transition-colors">
+            <button onClick={() => document.getElementById('pricing-plans')?.scrollIntoView({ behavior: 'smooth' })} className="flex-1 py-4 bg-accent-600 hover:bg-accent-500 text-ink-950 rounded-lg font-bold text-lg flex items-center justify-center space-x-2 transition-colors">
               <span>Reactivate Bot & Save Team</span>
               <ArrowRight className="w-5 h-5" />
             </button>
@@ -152,25 +152,25 @@ export default function BillingPage() {
 
         <div id="pricing-plans" className="mt-8 grid gap-4 sm:grid-cols-2">
           {PRICING_PLANS.map((plan) => (
-            <Card key={plan.id} className={`relative overflow-hidden ${plan.highlight ? 'border-indigo-500/50 shadow-lg shadow-indigo-900/20' : ''}`}>
-              {plan.highlight && <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-indigo-500 to-sky-400" />}
+            <Card key={plan.id} className={`relative overflow-hidden ${plan.highlight ? 'border-accent-500/50 shadow-lg shadow-accent-900/20' : ''}`}>
+              {plan.highlight && <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-accent-500 to-steel-400" />}
               <CardBody className="p-6 flex flex-col h-full">
                 <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h4 className="text-lg font-bold text-white">{plan.name}</h4>
+                    <h4 className="text-lg font-bold text-slate-50">{plan.name}</h4>
                     <p className="text-xs text-slate-400 mt-1">{plan.description}</p>
                   </div>
                   {plan.badge && <Badge tone="purple">{plan.badge}</Badge>}
                 </div>
                 <div className="mt-auto pt-6">
-                  <p className="text-3xl font-extrabold text-white">
+                  <p className="text-3xl font-extrabold text-slate-50">
                     {formatPrice(plan.price[currency], currency)}
                     <span className="text-sm font-normal text-slate-400"> / {plan.cadence}</span>
                   </p>
                   <button 
                     onClick={() => handlePayment(plan)}
                     disabled={loadingPlan === plan.id}
-                    className="w-full mt-4 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2"
+                    className="w-full mt-4 py-3 bg-accent-600 hover:bg-accent-500 text-ink-950 font-bold rounded-xl transition-colors flex justify-center items-center gap-2"
                   >
                     {loadingPlan === plan.id ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Select Plan'}
                   </button>
@@ -191,7 +191,7 @@ export default function BillingPage() {
         title="Subscription"
         description="Manage your server's premium status."
         actions={
-          <a href={supportHref} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-700">
+          <a href={supportHref} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-2 text-sm font-semibold text-slate-50 transition-colors hover:bg-slate-700">
             <Mail className="h-4 w-4" /> Contact Support
           </a>
         }
@@ -200,11 +200,11 @@ export default function BillingPage() {
       <Card className="mb-8">
         <CardBody className="flex flex-col sm:flex-row items-center justify-between gap-6 p-6">
           <div className="flex items-center gap-4">
-            <div className={`p-3 rounded-2xl ${isPremium ? 'bg-indigo-500/20 text-indigo-400' : 'bg-green-500/20 text-green-400'}`}>
+            <div className={`p-3 rounded-2xl ${isPremium ? 'bg-accent-500/20 text-accent-400' : 'bg-sage-500/20 text-sage-400'}`}>
               <ShieldCheck className="w-8 h-8" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-white">{isPremium ? 'Premium Active' : 'Free Trial Active'}</h2>
+              <h2 className="text-xl font-bold text-slate-50">{isPremium ? 'Premium Active' : 'Free Trial Active'}</h2>
               <p className="text-sm text-slate-400 mt-1">
                 {isPremium 
                   ? 'Thank you for supporting the bot! Your server has full access.' 
@@ -213,7 +213,7 @@ export default function BillingPage() {
               
               {/* EXPIRY BAR */}
               {isPremium && premiumEnd && (
-                <div className="mt-3 inline-flex items-center gap-2 bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold text-indigo-300">
+                <div className="mt-3 inline-flex items-center gap-2 bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold text-accent-300">
                   <Clock className="w-3.5 h-3.5" />
                   Premium expires in {formatRemainingTime(premiumEnd)}
                 </div>
@@ -230,31 +230,31 @@ export default function BillingPage() {
 
       <div className="grid gap-8 lg:grid-cols-[1fr_300px]">
         <div className="space-y-6">
-          <h3 className="text-lg font-bold text-white flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-indigo-400" /> Upgrade / Renew
+          <h3 className="text-lg font-bold text-slate-50 flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-accent-400" /> Upgrade / Renew
           </h3>
           
           <div className="grid gap-4 sm:grid-cols-2">
             {PRICING_PLANS.map((plan) => (
-              <Card key={plan.id} className={`relative overflow-hidden transition-all hover:border-indigo-500/50 ${plan.highlight ? 'border-indigo-500/30 shadow-lg shadow-indigo-900/20' : ''}`}>
-                {plan.highlight && <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-indigo-500 to-sky-400" />}
+              <Card key={plan.id} className={`relative overflow-hidden transition-all hover:border-accent-500/50 ${plan.highlight ? 'border-accent-500/30 shadow-lg shadow-accent-900/20' : ''}`}>
+                {plan.highlight && <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-accent-500 to-steel-400" />}
                 <CardBody className="p-6 flex flex-col h-full">
                   <div className="flex justify-between items-start mb-4">
                     <div>
-                      <h4 className="text-lg font-bold text-white">{plan.name}</h4>
+                      <h4 className="text-lg font-bold text-slate-50">{plan.name}</h4>
                       <p className="text-xs text-slate-400 mt-1">{plan.description}</p>
                     </div>
                     {plan.badge && <Badge tone="purple">{plan.badge}</Badge>}
                   </div>
                   <div className="mt-auto pt-6">
-                    <p className="text-3xl font-extrabold text-white">
+                    <p className="text-3xl font-extrabold text-slate-50">
                       {formatPrice(plan.price[currency], currency)}
                       <span className="text-sm font-normal text-slate-400"> / {plan.cadence}</span>
                     </p>
                     <button 
                       onClick={() => handlePayment(plan)}
                       disabled={loadingPlan === plan.id}
-                      className="w-full mt-4 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full mt-4 py-3 bg-accent-600 hover:bg-accent-500 text-ink-950 font-bold rounded-xl transition-colors flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {loadingPlan === plan.id ? (
                         <><Loader2 className="w-5 h-5 animate-spin" /> Processing...</>
@@ -276,7 +276,7 @@ export default function BillingPage() {
               <ul className="space-y-3">
                 {PLAN_FEATURES.map((feature, idx) => (
                   <li key={idx} className="flex items-start gap-2 text-sm text-slate-300">
-                    <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <Check className="w-4 h-4 text-sage-400 shrink-0 mt-0.5" />
                     <span>{feature}</span>
                   </li>
                 ))}
@@ -284,7 +284,7 @@ export default function BillingPage() {
             </CardBody>
           </Card>
           <p className="text-xs text-slate-500 px-2 text-center">
-            By selecting a plan, you agree to our <a href="/legal" target="_blank" className="text-indigo-400 hover:underline">Terms of Service</a>. All payments are strictly non-refundable.
+            By selecting a plan, you agree to our <a href="/legal" target="_blank" className="text-accent-400 hover:underline">Terms of Service</a>. All payments are strictly non-refundable.
           </p>
         </div>
       </div>

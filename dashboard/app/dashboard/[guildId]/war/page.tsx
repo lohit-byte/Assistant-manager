@@ -42,9 +42,9 @@ function LiveTimer({ endTime }: { endTime: Date | null }) {
   const s = totalSec % 60
 
   return (
-    <div className={`p-6 rounded-2xl border flex flex-col items-center justify-center transition-colors ${isCritical ? 'bg-red-500/10 border-red-500/50 animate-pulse' : isUrgent ? 'bg-amber-500/10 border-amber-500/50' : 'bg-slate-950/60 border-slate-800'}`}>
+    <div className={`p-6 rounded-2xl border flex flex-col items-center justify-center transition-colors ${isCritical ? 'bg-danger-500/10 border-danger-500/50 animate-pulse' : isUrgent ? 'bg-warn-500/10 border-warn-500/50' : 'bg-slate-950/60 border-slate-800'}`}>
       <p className="text-xs text-slate-400 uppercase tracking-widest mb-1">Time Remaining</p>
-      <p className={`text-5xl font-black font-mono tracking-tighter ${isCritical ? 'text-red-500' : isUrgent ? 'text-amber-400' : 'text-white'}`}>
+      <p className={`text-5xl font-black font-mono tracking-tighter ${isCritical ? 'text-danger-500' : isUrgent ? 'text-warn-400' : 'text-slate-50'}`}>
         {String(h).padStart(2, '0')}:{String(m).padStart(2, '0')}:{String(s).padStart(2, '0')}
       </p>
     </div>
@@ -176,7 +176,7 @@ export default function WarPage() {
                 <select 
                   value={channelId || ''}
                   onChange={(e) => router.push(`?channel=${e.target.value}`)}
-                  className="appearance-none bg-slate-900 border border-slate-700 text-white text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:border-indigo-500"
+                  className="appearance-none bg-slate-900 border border-slate-700 text-slate-50 text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:border-accent-500"
                 >
                   {availableChannels.map(id => <option key={id} value={id}>Team Channel ({id})</option>)}
                 </select>
@@ -225,9 +225,9 @@ export default function WarPage() {
                         </div>
                       )}
                       <div className="grid grid-cols-3 gap-3 text-center">
-                        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><p className="text-xs text-slate-500">Missing</p><p className="mt-1 text-xl font-bold text-amber-300">{missing.length}</p></div>
-                        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><p className="text-xs text-slate-500">Excused</p><p className="mt-1 text-xl font-bold text-sky-300">{excused.length}</p></div>
-                        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><p className="text-xs text-slate-500">Logged</p><p className="mt-1 text-xl font-bold text-white">{Object.keys(counts).length}</p></div>
+                        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><p className="text-xs text-slate-500">Missing</p><p className="mt-1 text-xl font-bold text-warn-300">{missing.length}</p></div>
+                        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><p className="text-xs text-slate-500">Excused</p><p className="mt-1 text-xl font-bold text-steel-400">{excused.length}</p></div>
+                        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><p className="text-xs text-slate-500">Logged</p><p className="mt-1 text-xl font-bold text-slate-50">{Object.keys(counts).length}</p></div>
                       </div>
                     </>
                   ) : <EmptyState icon={<Swords className="h-7 w-7" />} title="No active war for this channel" />}
@@ -280,8 +280,8 @@ export default function WarPage() {
             <CardBody className="space-y-6">
               <Field label="Required Attacks">
                 <div className="flex items-center gap-4">
-                  <input type="range" min="1" max={MAX_ATTACKS_REQUIRED} value={settings.attacks_required} onChange={(e) => setSettings({...settings, attacks_required: parseInt(e.target.value)})} className="w-full accent-indigo-500" />
-                  <div className="flex h-10 w-12 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-lg font-bold text-indigo-300">{settings.attacks_required}</div>
+                  <input type="range" min="1" max={MAX_ATTACKS_REQUIRED} value={settings.attacks_required} onChange={(e) => setSettings({...settings, attacks_required: parseInt(e.target.value)})} className="w-full accent-accent-500" />
+                  <div className="flex h-10 w-12 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-lg font-bold text-accent-300">{settings.attacks_required}</div>
                 </div>
               </Field>
               <Button onClick={saveSettings} loading={busy === 'settings'} className="w-full">Save Settings</Button>
@@ -297,7 +297,7 @@ export default function WarPage() {
                 <select 
                   value={warningId} 
                   onChange={(e) => setWarningId(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-white focus:border-indigo-500"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-50 focus:border-accent-500"
                 >
                   <option value="" disabled>Select a player (alias)...</option>
                   {aliases.map(a => (
@@ -325,10 +325,10 @@ export default function WarPage() {
                     return (
                       <li key={w.id} className="flex justify-between items-center bg-slate-950/60 px-3 py-2 rounded-lg border border-slate-800">
                         <div>
-                          <p className="text-sm font-semibold text-white">{displayName}</p>
+                          <p className="text-sm font-semibold text-slate-50">{displayName}</p>
                           <p className="text-xs text-slate-500">{w.reason}</p>
                         </div>
-                        <button onClick={() => removeWarning(w.id)} className="text-slate-500 hover:text-red-400"><Trash2 className="h-4 w-4" /></button>
+                        <button onClick={() => removeWarning(w.id)} className="text-slate-500 hover:text-danger-400"><Trash2 className="h-4 w-4" /></button>
                       </li>
                     )
                   })
