@@ -82,13 +82,23 @@ file is ignored; a single bad node is skipped — the rest of the sheet keeps wo
 
 ## 🚀 Deploying this version
 
-1. **Supabase:** run the `MIGRATIONS` section of `shared/schema.sql` in the SQL editor. It
-   creates `teams`, `team_captains`, `war_logs`, adds `race_logs.channel_id/lap/node`, and
-   installs the idempotent RLS policies. Safe to re-run.
+1. **Supabase:** open `shared/schema.sql` and run everything from the
+   `MIGRATIONS for existing databases` heading to the end of the file in the SQL editor
+   (paste the whole block in one go). It adds the missing columns, creates `teams`,
+   `team_captains` and `war_logs`, and installs the idempotent RLS policies. Safe to re-run.
+   The `CREATE TABLE` statements earlier in the file are the fresh-install schema and are
+   not part of this migration.
 2. **Bot:** upload `nodesheet.json` (optional) and redeploy. The bot keeps working without the
    migration, but captain checks and the attack log need the new tables.
 3. **Dashboard:** redeploy (Vercel). Then open **Overview → Setup**, add each team (or import
    the channels the bot already tracks), assign captains, and save.
+
+**Security model (unchanged):** the dashboard talks to Supabase with the anon key, so the
+RLS policies for `teams`, `team_captains` and `war_logs` are permissive for signed-in users,
+exactly like the existing dashboard tables. Staff/captain scoping is enforced by the UI and by
+the bot's service-role code, not by Postgres — a signed-in user who crafts API calls can write
+these tables directly. If that trust model ever needs tightening, move dashboard writes behind
+a server route that verifies Discord permissions before using the service role.
 
 
 ## 🧪 Tests

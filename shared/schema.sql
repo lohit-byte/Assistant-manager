@@ -142,45 +142,6 @@ CREATE TABLE player_ping_settings (
     PRIMARY KEY (guild_id, discord_id)
 );
 
--- 11. TEAMS (a team pairs one war channel with one race channel and owns captains)
-CREATE TABLE IF NOT EXISTS teams (
-    id BIGSERIAL PRIMARY KEY,
-    guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    war_channel_id BIGINT,
-    race_channel_id BIGINT,
-    team_role_id BIGINT, -- role pinged by this team's war announcements (synced to wars.team_role_id)
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE (guild_id, name)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS teams_guild_war_channel_key
-    ON teams (guild_id, war_channel_id) WHERE war_channel_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS teams_guild_race_channel_key
-    ON teams (guild_id, race_channel_id) WHERE race_channel_id IS NOT NULL;
-
--- 12. TEAM CAPTAINS (a captain is staff for their team channels only)
-CREATE TABLE IF NOT EXISTS team_captains (
-    team_id BIGINT REFERENCES teams(id) ON DELETE CASCADE,
-    discord_id BIGINT REFERENCES users(discord_id) ON DELETE CASCADE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    PRIMARY KEY (team_id, discord_id)
-);
-
--- 13. WAR LOGS (one row per attack report: button = +1, text = delta, undo = negative)
-CREATE TABLE IF NOT EXISTS war_logs (
-    id BIGSERIAL PRIMARY KEY,
-    guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
-    channel_id BIGINT NOT NULL,
-    war_start TIMESTAMP WITH TIME ZONE,
-    discord_id BIGINT,
-    player_name TEXT,
-    attacks INTEGER NOT NULL DEFAULT 1, -- signed delta
-    source TEXT DEFAULT 'self',         -- 'self' | 'staff' | 'undo'
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS war_logs_channel_idx ON war_logs (channel_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS war_logs_guild_idx ON war_logs (guild_id, created_at DESC);
-
 -- ============================================================================
 -- MIGRATIONS for existing databases (safe to run repeatedly)
 -- ============================================================================
@@ -197,10 +158,57 @@ UPDATE player_ping_settings
    SET maze_alert_mode = 'off'
  WHERE maze_pings_enabled = FALSE AND maze_alert_mode = 'here';
 
--- Security: the Python bot uses the service role key (bypasses RLS).
--- The dashboard reads and writes with the anon key, so the dashboard-facing tables
--- need permissive RLS policies for signed-in users. The statements below are
--- idempotent because this block is run by hand in the Supabase SQL editor.
+-- ----------------------------------------------------------------------------
+-- MIGRATION 2026-11: teams, team captains and the war attack log.
+-- Existing servers keep working without this block; running it enables the
+-- one-stop team setup, captains, the "I attacked" button and the activity rating.
+-- Every statement is idempotent, so the whole block can be re-run.
+-- ----------------------------------------------------------------------------
+
+-- Teams: a team pairs one war channel with one race channel and owns captains.
+CREATE TABLE IF NOT EXISTS teams (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    war_channel_id BIGINT,
+    race_channel_id BIGINT,
+    team_role_id BIGINT, -- role pinged by this team's war announcements (synced to wars.team_role_id)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (guild_id, name)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS teams_guild_war_channel_key
+    ON teams (guild_id, war_channel_id) WHERE war_channel_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS teams_guild_race_channel_key
+    ON teams (guild_id, race_channel_id) WHERE race_channel_id IS NOT NULL;
+
+-- Team captains: a captain is staff for their team channels only.
+CREATE TABLE IF NOT EXISTS team_captains (
+    team_id BIGINT REFERENCES teams(id) ON DELETE CASCADE,
+    discord_id BIGINT REFERENCES users(discord_id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (team_id, discord_id)
+);
+
+-- War logs: one row per attack report (button = +1, text = delta, staff = correction, undo = negative).
+CREATE TABLE IF NOT EXISTS war_logs (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    channel_id BIGINT NOT NULL,
+    war_start TIMESTAMP WITH TIME ZONE,
+    discord_id BIGINT,
+    player_name TEXT,
+    attacks INTEGER NOT NULL DEFAULT 1, -- signed delta
+    source TEXT DEFAULT 'self',         -- 'self' | 'staff' | 'undo'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS war_logs_channel_idx ON war_logs (channel_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS war_logs_guild_idx ON war_logs (guild_id, created_at DESC);
+
+-- Security: the Python bot uses the service role key (bypasses RLS). The dashboard reads
+-- and writes with the anon key, so the dashboard-facing tables need permissive RLS policies
+-- for signed-in users (the same trust model the existing dashboard tables use: staff and
+-- captain scoping is enforced by the UI, not by Postgres). Tighten these if the project ever
+-- moves permission checks server-side.
 ALTER TABLE teams ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS teams_authenticated ON teams;
 CREATE POLICY teams_authenticated ON teams
