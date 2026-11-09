@@ -83,16 +83,19 @@ class BillingManager(commands.Cog):
             channel = guild.system_channel
         if not channel:
             channel = guild.text_channels[0] if guild.text_channels else None
-        if not channel:
-            return
 
         owner_ping = guild.owner.mention if guild.owner else ""
 
         async def send_notice(embed):
-            try:
-                await channel.send(content=owner_ping, embed=embed)
-            except discord.HTTPException as e:
-                print(f"Billing notice failed in {guild_id}: {e}")
+            # Channel notice when there is a channel, plus a DM to the people who
+            # can actually renew (owner + Manage Server admins) since admins log
+            # in with Discord.
+            if channel is not None:
+                try:
+                    await channel.send(content=owner_ping, embed=embed)
+                except discord.HTTPException as e:
+                    print(f"Billing notice failed in {guild_id}: {e}")
+            await self._dm_admins(guild, embed)
 
         # --- LOGIC FOR EXPIRY ---
         if expired:
@@ -137,6 +140,27 @@ class BillingManager(commands.Cog):
                 ),
                 color=discord.Color.yellow()
             ))
+
+    async def _dm_admins(self, guild, embed):
+        """DM the guild owner and up to four Manage-Server admins."""
+        targets, seen = [], set()
+        if guild.owner is not None:
+            targets.append(guild.owner)
+            seen.add(guild.owner.id)
+        for member in list(getattr(guild, "members", []))[:1000]:
+            if len(targets) >= 5:
+                break
+            if getattr(member, "bot", False) or member.id in seen:
+                continue
+            perms = getattr(member, "guild_permissions", None)
+            if perms is not None and (perms.administrator or perms.manage_guild):
+                targets.append(member)
+                seen.add(member.id)
+        for member in targets:
+            try:
+                await member.send(embed=embed)
+            except (discord.HTTPException, AttributeError, TypeError) as e:
+                print(f"Billing DM failed for {getattr(member, 'id', '?')}: {e}")
 
     async def _update_if_unchanged(self, guild_id, ends_at_str, payload):
         """Only write if premium_ends_at still matches what the sweep read."""

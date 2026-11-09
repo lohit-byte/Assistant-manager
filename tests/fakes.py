@@ -12,6 +12,9 @@ Two fakes are provided:
 """
 
 import asyncio
+import itertools
+
+_next_message_id = itertools.count(1)
 
 
 # --------------------------------------------------------------------------- DB
@@ -53,8 +56,8 @@ class FakeDB:
     def seed(self, name, *rows):
         self.rows(name).extend(dict(r) for r in rows)
 
-    def one(self, name, **filters):
-        for row in self.rows(name):
+    def one(self, table, **filters):
+        for row in self.rows(table):
             if all(row.get(k) == v for k, v in filters.items()):
                 return row
         return None
@@ -75,9 +78,11 @@ class _Query:
         self._order = None
         self._desc = False
         self._limit = None
+        self.cols = "*"
 
     def select(self, cols="*"):
         self.op = "select"
+        self.cols = cols
         return self
 
     def insert(self, payload):
@@ -145,6 +150,9 @@ class _Query:
                 res = list(reversed(res))
             if self._limit is not None:
                 res = res[: self._limit]
+            if self.cols and self.cols.strip() != "*":
+                keys = [c.strip() for c in self.cols.split(",") if c.strip()]
+                return _Resp([{k: r.get(k) for k in keys} for r in res])
             return _Resp([dict(r) for r in res])
 
         if self.op == "insert":
@@ -198,6 +206,7 @@ class FakeRole:
     def __init__(self, role_id, name="role"):
         self.id = role_id
         self.name = name
+        self.mention = f"<@&{role_id}>"
 
 
 class FakeMember:
@@ -210,7 +219,12 @@ class FakeMember:
         self.guild = guild
         self.roles = []
         self.bot = False
+        self.dms = []
         self.guild_permissions = FakePerms(administrator, administrator, mention_everyone)
+
+    async def send(self, content=None, embed=None, **kwargs):
+        self.dms.append((content, embed))
+        return None
 
     def set_guild(self, guild):
         self.guild = guild
@@ -219,15 +233,25 @@ class FakeMember:
 
 class FakeMessage:
     def __init__(self, content="", author=None, mentions=None, attachments=None,
-                 guild=None, channel=None, message_id=0):
-        self.id = message_id
+                 guild=None, channel=None, message_id=None, embed=None):
+        self.id = message_id if message_id is not None else next(_next_message_id)
         self.content = content
         self.author = author
         self.mentions = mentions or []
         self.attachments = attachments or []
         self.guild = guild
         self.channel = channel
+        self.embed = embed
         self.replies = []
+        self.edited = []
+
+    async def edit(self, content=None, embed=None, **kwargs):
+        if content is not None:
+            self.content = content
+        if embed is not None:
+            self.embed = embed
+        self.edited.append((content, embed))
+        return self
 
     async def reply(self, content=None, **kwargs):
         self.replies.append(content)
@@ -240,16 +264,26 @@ class FakeMessage:
 
 
 class FakeChannel:
-    def __init__(self, channel_id=10, guild=None, mention_everyone=True):
+    def __init__(self, channel_id=10, guild=None, mention_everyone=True, name="war-channel"):
         self.id = channel_id
         self.guild = guild
+        self.name = name
         self.mention = f"<#{channel_id}>"
         self.messages = []
+        self.sent_messages = []
         self._mention_everyone = mention_everyone
 
     async def send(self, content=None, embed=None, **kwargs):
+        message = FakeMessage(content=content, guild=self.guild, channel=self, embed=embed)
         self.messages.append((content, embed))
-        return FakeMessage(content=content, guild=self.guild, channel=self)
+        self.sent_messages.append(message)
+        return message
+
+    async def fetch_message(self, message_id):
+        for message in self.sent_messages:
+            if message.id == int(message_id):
+                return message
+        raise Exception(f"message {message_id} not found")
 
     def permissions_for(self, member):
         if member is None:
@@ -269,6 +303,7 @@ class FakeChannel:
 class FakeGuild:
     def __init__(self, guild_id=100, me=None):
         self.id = guild_id
+        self.name = "Test Guild"
         self.me = me
         self.owner = FakeMember(1, "Owner", administrator=True, guild=self)
         self.members = []
@@ -287,6 +322,12 @@ class FakeGuild:
 
     def get_channel(self, channel_id):
         return self._channels.get(channel_id)
+
+    def get_role(self, role_id):
+        for role in self.roles:
+            if role.id == role_id:
+                return role
+        return None
 
     def get_member(self, member_id):
         for member in self.members:
@@ -322,6 +363,16 @@ class FakeBot:
             if channel:
                 return channel
         return None
+
+    def get_user(self, user_id):
+        for guild in self.guilds:
+            member = guild.get_member(user_id)
+            if member:
+                return member
+        return None
+
+    async def fetch_user(self, user_id):
+        return self.get_user(user_id)
 
     async def wait_until_ready(self):
         return None
@@ -365,3 +416,16 @@ def call(command, instance, *args, **kwargs):
 
 def run(coro):
     return asyncio.run(coro)
+
+
+class FakeAttachment:
+    def __init__(self, filename, data):
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        self.filename = filename
+        self.size = len(data)
+        self._data = data
+        self.content_type = "text/csv" if filename.endswith(".csv") else "application/octet-stream"
+
+    async def read(self):
+        return self._data

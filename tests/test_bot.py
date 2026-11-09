@@ -7,11 +7,13 @@ import types
 from datetime import datetime, timezone, timedelta
 
 from fakes import (
+    FakeAttachment,
     FakeBot,
     FakeChannel,
     FakeGuild,
     FakeMember,
     FakeMessage,
+    FakeRole,
     call,
     make_ctx,
     run,
@@ -19,8 +21,8 @@ from fakes import (
 
 from cogs.admin import Admin
 from cogs.maze import MazeTracker
-from cogs.race import RaceTracker, format_amount, parse_amount, parse_node_args
-from cogs.war import WarTracker, fmt_td, parse_time, phase_at, progress_bar
+from cogs.race import RaceTracker, format_amount, parse_amount, parse_node_args, parse_sheet_csv
+from cogs.war import WarTracker, _due_pings, _initial_sent, fmt_td, parse_time, phase_at, progress_bar
 import ocr_engine
 
 GUILD = 100
@@ -605,3 +607,222 @@ def test_non_staff_denied_through_async_role_lookup(clean_db):
     run(call(Admin.alias_group, admin_cog(), ctx, "list"))
 
     assert any("Only Admins" in text for text in ctx.texts)
+
+
+# --------------------------------------------------- feature: maze alerts
+
+
+def test_maze_alerts_dm_preference(clean_db):
+    db = clean_db
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(MazeTracker.maze_group, MazeTracker(FakeBot()), ctx, "alerts", "dm"))
+
+    row = db.one("player_ping_settings", guild_id=GUILD, discord_id=1)
+    assert row["maze_alert_mode"] == "dm"
+    assert row["maze_pings_enabled"] is True
+    assert any("DM" in text for text in ctx.texts)
+
+
+def test_maze_alerts_off_preference(clean_db):
+    db = clean_db
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(MazeTracker.maze_group, MazeTracker(FakeBot()), ctx, "alerts", "off"))
+
+    row = db.one("player_ping_settings", guild_id=GUILD, discord_id=1)
+    assert row["maze_alert_mode"] == "off"
+    assert row["maze_pings_enabled"] is False
+
+
+def test_maze_ping_uses_here_and_dms_opt_ins(clean_db):
+    db = clean_db
+    bot, guild, channel = _maze_bot()
+    member = FakeMember(200, "Sam", administrator=False, guild=guild)
+    guild.members.append(member)
+    db.seed("users", {"discord_id": 200})
+    db.seed("maze_schedules", {"guild_id": GUILD, "event_end": "2099-01-01T00:00:00+00:00",
+                               "ping_enabled_global": True, "ping_mention": "here"})
+    db.seed("player_ping_settings", {"guild_id": GUILD, "discord_id": 200,
+                                     "maze_alert_mode": "dm", "maze_pings_enabled": True})
+    db.one("guilds", guild_id=GUILD)["maze_channel_id"] = CHANNEL
+
+    run(MazeTracker(bot).ping_discount_at_time(GUILD, channel, "20%", 0))
+
+    assert any("@here" in (content or "") for content in channel.texts())
+    assert member.dms, "a DM-alert player should get a DM"
+
+
+def test_maze_set_ping_everyone(clean_db):
+    db = clean_db
+    db.seed("maze_schedules", {"guild_id": GUILD, "event_end": "2099-01-01T00:00:00+00:00"})
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(MazeTracker.maze_group, MazeTracker(FakeBot()), ctx, "set", "ping", arg2="everyone"))
+
+    assert db.one("maze_schedules", guild_id=GUILD)["ping_mention"] == "everyone"
+
+
+def test_maze_set_ping_role(clean_db):
+    db = clean_db
+    db.seed("maze_schedules", {"guild_id": GUILD, "event_end": "2099-01-01T00:00:00+00:00"})
+    ctx = make_ctx(channel_id=CHANNEL)
+    role = FakeRole(555, "Maze Alerts")
+    ctx.guild.roles.append(role)
+    ctx.message.role_mentions = [role]
+
+    run(call(MazeTracker.maze_group, MazeTracker(FakeBot()), ctx, "set", "ping", arg2="role"))
+
+    row = db.one("maze_schedules", guild_id=GUILD)
+    assert row["ping_mention"] == "role"
+    assert row["ping_role_id"] == 555
+
+
+def test_maze_status_shows_ping_details(clean_db):
+    db = clean_db
+    db.seed("maze_schedules", {"guild_id": GUILD, "event_start": "2026-01-01T00:00:00+00:00",
+                               "event_end": "2099-01-01T00:00:00+00:00",
+                               "maze_type": "7d", "ping_enabled_global": True,
+                               "ping_mention": "here"})
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(MazeTracker.maze_group, MazeTracker(FakeBot()), ctx, "status"))
+
+    embed = next(e for _c, e in ctx.sent if e is not None)
+    field_names = [field.name for field in embed.fields]
+    assert "Ping mention" in field_names
+    assert "Next discounts" in field_names
+
+
+# --------------------------------------------------- feature: race sheets
+
+
+def test_parse_sheet_csv_lap_and_node():
+    data = parse_sheet_csv(
+        "lap,node,ofa,dyp,je\n1,1,Hatch 5,Collect 20k,5\n1,2,Breed 3,10 members,Craft 2\n"
+    )
+    assert set(data) == {"1.1", "1.2"}
+    assert data["1.1"] == {"ofa": "Hatch 5", "dyp": "Collect 20k", "je": "5"}
+
+
+def test_parse_sheet_csv_node_key_column():
+    data = parse_sheet_csv("node,ofa,dyp,je\n0.1,Hatch,10,5\n")
+    assert data == {"0.1": {"ofa": "Hatch", "dyp": "10", "je": "5"}}
+
+
+def test_upload_sheet_accepts_csv(clean_db):
+    db = clean_db
+    ctx = make_ctx(channel_id=CHANNEL)
+    ctx.message.attachments = [FakeAttachment(
+        "nodes.csv", "lap,node,ofa,dyp,je\n1,1,Hatch,10,5\n"
+    )]
+
+    run(call(RaceTracker.race_group, race_cog(), ctx, "uploadsheet", args="my sheet"))
+
+    row = db.one("race_sheets", guild_id=GUILD, name="my sheet")
+    assert row is not None
+    assert row["data"] == {"1.1": {"ofa": "Hatch", "dyp": "10", "je": "5"}}
+
+
+# --------------------------------------------------- feature: war timeline
+
+
+def test_war_due_and_initial_pings():
+    now = datetime(2026, 1, 3, tzinfo=timezone.utc)
+    war_end = now + timedelta(hours=12)
+    assert [key for key, _label, _at in _due_pings(war_end, set(), now)] == ["hours_12"]
+
+    # A war that began 40h ago: defence/attack-start/12h reminders are stale.
+    war_end = now + timedelta(hours=8)
+    initial = _initial_sent(war_end, now)
+    assert "defence_30m" in initial
+    assert "attack_started" in initial
+    assert "hours_12" in initial
+    assert "hours_6" not in initial
+
+
+def test_war_board_embed_matches_live_style():
+    now = datetime.now(timezone.utc)
+    war = {
+        "channel_id": CHANNEL, "guild_id": GUILD,
+        "war_start": (now - timedelta(hours=31)).isoformat(),
+        "phase": "attack", "is_active": True,
+        "missing_list": [{"name": "sam"}],
+        "absent_list": [{"name": "FBW SunnyMC47"}],
+        "sent_pings": ["defence_30m", "attack_started"],
+        "status_message_id": None,
+    }
+    channel = FakeChannel(CHANNEL, name="FBW")
+
+    embed = WarTracker(FakeBot()).build_embed(war, channel=channel)
+
+    assert embed.title == "⚔️ ATTACK PHASE — FBW"
+    assert "Defence phase ended" in embed.description
+    fields = {field.name: field.value for field in embed.fields}
+    assert "🏖️ Excused (absence channel) — 1" in fields
+    assert "12h warning" in fields["🔔 Pings"]
+    assert "Pings sent: 2/7" in fields["🔔 Pings"]
+
+
+def test_war_board_command_posts_live_message(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(), phase="defence")
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "board"))
+
+    row = db.one("wars", channel_id=CHANNEL)
+    assert row["status_message_id"] is not None
+    assert any(embed is not None for _c, embed in ctx.channel.messages)
+
+
+def test_war_missing_add_pings_the_player(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(), missing_list=[])
+    db.seed("users", {"discord_id": 200})
+    db.seed("aliases", {"guild_id": GUILD, "discord_id": 200, "alias_name": "sam"})
+    ctx = make_ctx(channel_id=CHANNEL)
+    member = FakeMember(200, "Sam", administrator=False, guild=ctx.guild)
+    ctx.guild.members.append(member)
+
+    run(war_cog().war_missing(ctx, "add", "sam"))
+
+    row = db.one("wars", channel_id=CHANNEL)
+    assert any(entry.get("id") == 200 for entry in row["missing_list"])
+    assert any("<@200>" in (content or "") for content, _embed in ctx.channel.messages)
+    assert member.dms
+
+
+def test_finish_war_pings_staff_roles(clean_db):
+    db = clean_db
+    db.one("guilds", guild_id=GUILD)["staff_role_id"] = 555
+    now = datetime.now(timezone.utc)
+    seed_war(db, war_start=(now - timedelta(hours=49)).isoformat())
+    _bot, _guild, channel = _maze_bot()
+
+    run(war_cog().finish_war(CHANNEL, channel))
+
+    assert db.one("wars", channel_id=CHANNEL)["is_active"] is False
+    assert any("<@&555>" in (content or "") for content, _embed in channel.messages)
+
+
+def test_billing_expiry_dms_the_owner(clean_db):
+    from cogs.billing import BillingManager
+
+    db = clean_db
+    bot, guild, _channel = _maze_bot()
+    manager = object.__new__(BillingManager)
+    manager.bot = bot
+    row = db.one("guilds", guild_id=GUILD)
+    row.update({
+        "premium_status": "premium",
+        "premium_ends_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        "last_renewal_ping": 0,
+    })
+
+    run(manager._process_guild(dict(row), datetime.now(timezone.utc)))
+
+    assert db.one("guilds", guild_id=GUILD)["premium_status"] == "expired"
+    assert guild.owner.dms, "the owner should receive a premium-expiry DM"

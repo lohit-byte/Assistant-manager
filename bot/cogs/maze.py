@@ -3,7 +3,7 @@ from discord.ext import commands
 import re
 import asyncio
 from datetime import datetime, timedelta, timezone
-from database import supabase, is_staff_member
+from database import supabase, is_staff_member, ensure_user
 
 SCHEDULE_7D = [
     (6 * 24 + 22, 0, "20%"), (5 * 24 + 19, 0, "10%"), (5 * 24 + 0, 0, "30%"),
@@ -151,7 +151,7 @@ class MazeTracker(commands.Cog):
         try:
             res = await asyncio.to_thread(
                 supabase.table("maze_schedules")
-                .select("ping_enabled_global, event_end")
+                .select("ping_enabled_global, event_end, ping_mention, ping_role_id")
                 .eq("guild_id", guild_id)
                 .limit(1)
                 .execute
@@ -183,33 +183,173 @@ class MazeTracker(commands.Cog):
             pass
         # ----------------------------------------------
         
-        # channel.guild.me is None when the bot member is not cached (for
-        # example right after a reconnect), which would raise AttributeError.
-        me = getattr(getattr(channel, "guild", None), "me", None)
-        can_mention = bool(me and channel.permissions_for(me).mention_everyone)
-
+        content, allowed = self._mention_payload(
+            channel,
+            (row.get("ping_mention") or "here").lower(),
+            row.get("ping_role_id"),
+        )
         try:
-            if can_mention:
-                await channel.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
+            if content:
+                await channel.send(content=content, embed=embed, allowed_mentions=allowed)
             else:
                 await channel.send(embed=embed)
         except (discord.HTTPException, AttributeError, TypeError) as e:
             print(f"Maze ping failed in {guild_id}: {e}")
+
+        # Players who chose DM alerts get a personal copy.
+        await self._dm_alert_players(guild_id, pct)
+
+    def _mention_payload(self, channel, mode, role_id=None):
+        """Return (content, allowed_mentions) for the configured ping mode."""
+        me = getattr(getattr(channel, "guild", None), "me", None)
+        can_mention = bool(me and channel.permissions_for(me).mention_everyone)
+        if mode == "everyone" and can_mention:
+            return "@everyone", discord.AllowedMentions(everyone=True)
+        if mode == "here" and can_mention:
+            return "@here", discord.AllowedMentions(everyone=True)
+        if mode == "role" and role_id:
+            return f"<@&{role_id}>", discord.AllowedMentions(roles=True)
+        return None, discord.AllowedMentions.none()
+
+    async def _get_alert_mode(self, guild_id, discord_id):
+        try:
+            res = await asyncio.to_thread(
+                supabase.table("player_ping_settings").select("maze_alert_mode")
+                .eq("guild_id", guild_id).eq("discord_id", discord_id).limit(1).execute
+            )
+            if res.data:
+                return res.data[0].get("maze_alert_mode") or "here"
+        except Exception as e:
+            print(f"Maze alert preference lookup failed: {e}")
+        return "here"
+
+    async def _alert_count(self, guild_id):
+        try:
+            res = await asyncio.to_thread(
+                supabase.table("player_ping_settings").select("discord_id")
+                .eq("guild_id", guild_id).eq("maze_alert_mode", "dm").execute
+            )
+            return len(res.data)
+        except Exception:
+            return 0
+
+    async def _dm_alert_players(self, guild_id, pct):
+        """DM every player who selected DM alerts (kept well below DM rate limits)."""
+        try:
+            res = await asyncio.to_thread(
+                supabase.table("player_ping_settings").select("discord_id")
+                .eq("guild_id", guild_id).eq("maze_alert_mode", "dm").limit(100).execute
+            )
+        except Exception as e:
+            print(f"Maze DM alert lookup failed: {e}")
+            return
+        guild = self.bot.get_guild(guild_id)
+        guild_name = getattr(guild, "name", "your server")
+        for row in res.data:
+            discord_id = row.get("discord_id")
+            user = guild.get_member(discord_id) if guild and discord_id else None
+            if user is None:
+                try:
+                    user = self.bot.get_user(discord_id)
+                except Exception:
+                    user = None
+            if user is None:
+                continue
+            try:
+                await user.send(embed=discord.Embed(
+                    title="🗺️ Maze discount — DM alert",
+                    description=f"**{pct} discount** is live right now in **{guild_name}**!\n\nSpend your Maze Coins!",
+                    color=discord.Color.purple(),
+                ))
+                await asyncio.sleep(0.5)
+            except (discord.HTTPException, AttributeError, TypeError):
+                pass
+
+    async def alerts_command(self, ctx, mode):
+        mode = (mode or "").strip().lower()
+        if not mode:
+            current = await self._get_alert_mode(ctx.guild.id, ctx.author.id)
+            label = {"dm": "**DM alerts**", "off": "**off**", "here": "**channel @here**"}.get(current, f"**{current}**")
+            return await ctx.send(
+                f"🔔 Maze alerts are {label} for you.\n"
+                "Change with `!maze alerts here`, `!maze alerts dm` or `!maze alerts off`."
+            )
+        if mode not in ("here", "dm", "off"):
+            return await ctx.send("❌ Use `!maze alerts here`, `!maze alerts dm` or `!maze alerts off`.")
+        try:
+            await asyncio.to_thread(ensure_user, ctx.author.id)
+            await asyncio.to_thread(
+                supabase.table("player_ping_settings").upsert({
+                    "guild_id": ctx.guild.id,
+                    "discord_id": ctx.author.id,
+                    "maze_alert_mode": mode,
+                    "maze_pings_enabled": mode != "off",
+                }, on_conflict="guild_id,discord_id").execute
+            )
+        except Exception as e:
+            return await ctx.send(f"❌ Database error: {e}")
+        message = {
+            "here": "🔔 Maze alerts set to **channel @here**.",
+            "dm": "🔔 Maze alerts set to **DM** — I'll message you at every discount.",
+            "off": "🔕 Maze alerts turned **off** for you.",
+        }[mode]
+        await ctx.send(message)
+
+    async def set_ping(self, ctx, subaction, value):
+        if (subaction or "").lower() != "ping":
+            return await ctx.send("Usage: `!maze set ping here|everyone|role @role|none`")
+        value = (value or "").strip()
+        parts = value.split()
+        mode = parts[0].lower() if parts else ""
+        role_id = None
+        if mode == "role":
+            if ctx.message.role_mentions:
+                role_id = ctx.message.role_mentions[0].id
+            elif len(parts) > 1 and parts[1].isdigit():
+                role_id = int(parts[1])
+            if not role_id:
+                return await ctx.send("❌ Mention the role to ping, e.g. `!maze set ping role @Maze Alerts`.")
+        elif mode not in ("here", "everyone", "none"):
+            return await ctx.send("Usage: `!maze set ping here|everyone|role @role|none`")
+        try:
+            res = await asyncio.to_thread(
+                supabase.table("maze_schedules").select("guild_id")
+                .eq("guild_id", ctx.guild.id).limit(1).execute
+            )
+            if not res.data:
+                return await ctx.send("❌ No maze event scheduled yet. Run `!maze start` first.")
+            await asyncio.to_thread(
+                supabase.table("maze_schedules").update({
+                    "ping_mention": mode,
+                    "ping_role_id": role_id,
+                }).eq("guild_id", ctx.guild.id).execute
+            )
+        except Exception as e:
+            return await ctx.send(f"❌ Database error: {e}")
+        suffix = f" (<@&{role_id}>)" if role_id else ""
+        await ctx.send(f"✅ Maze ping mention set to **{mode}**{suffix}.")
 
     @commands.command(name="maze")
     @commands.guild_only()
     async def maze_group(self, ctx, action: str = None, arg1: str = None, *, arg2: str = None):
         action = (action or "").lower()
         if not action:
-            return await ctx.send("Usage: `!maze help`, `!maze start`, `!maze status`, or `!maze ping 20%`")
+            return await ctx.send("Usage: `!maze help`, `!maze status`, `!maze alerts`, `!maze start 7d 6d12h`, or `!maze ping 20%`")
         
         if action == "help":
             return await ctx.invoke(self.bot.get_command("help"), topic="maze")
+
+        # Players manage their own alert preference; no staff needed.
+        if action in ("alerts", "alert"):
+            return await self.alerts_command(ctx, (arg1 or "").lower())
 
         # `status` is informational, so members may use it. Everything else
         # changes shared server state and stays staff-only.
         if action != "status" and not await is_staff_member(ctx.author):
             return await ctx.send("❌ You must be an Admin or Staff to use Maze commands.")
+
+        if action == "set":
+            return await self.set_ping(ctx, arg1, arg2)
 
         if action == "status":
             try:
@@ -219,15 +359,41 @@ class MazeTracker(commands.Cog):
                 row = res.data[0]
                 start = to_utc(row.get("event_start"))
                 end = to_utc(row.get("event_end"))
-                
+                now = datetime.now(timezone.utc)
                 start_str = f"<t:{int(start.timestamp())}:F>" if start else "Not set"
                 end_str = f"<t:{int(end.timestamp())}:F>" if end else "Not set"
+
+                schedule = self._normalise_schedule(row.get("discount_schedule")) or (
+                    SCHEDULE_7D if row.get("maze_type", "7d") == "7d" else SCHEDULE_3D
+                )
+                upcoming = []
+                if end:
+                    for hours, minutes, pct in schedule:
+                        at = end - timedelta(hours=hours, minutes=minutes)
+                        if at > now:
+                            upcoming.append((at, pct))
+                upcoming.sort()
+                next_str = "\n".join(
+                    f"▪ {pct} discount — <t:{int(at.timestamp())}:R>" for at, pct in upcoming[:4]
+                ) or "No upcoming discounts."
+
+                mode = (row.get("ping_mention") or "here").lower()
+                role_id = row.get("ping_role_id")
+                mode_label = {
+                    "here": "@here", "everyone": "@everyone", "none": "No mention",
+                    "role": f"<@&{role_id}>" if role_id else "Role (not set)",
+                }.get(mode, mode)
+                dm_count = await self._alert_count(ctx.guild.id)
 
                 embed = discord.Embed(title="🗺️ Maze Event Status", color=discord.Color.purple())
                 embed.add_field(name="Type", value=row.get("maze_type", "7d").upper(), inline=True)
                 embed.add_field(name="Starts", value=start_str, inline=True)
                 embed.add_field(name="Ends", value=end_str, inline=True)
-                embed.add_field(name="Pings Enabled", value=str(row.get("ping_enabled_global", True)), inline=True)
+                embed.add_field(name="Ping mention", value=mode_label, inline=True)
+                embed.add_field(name="Pings enabled", value="Yes" if row.get("ping_enabled_global", True) else "No", inline=True)
+                embed.add_field(name="Player DM alerts", value=f"{dm_count} player(s)", inline=True)
+                embed.add_field(name="Next discounts", value=next_str[:1024], inline=False)
+                embed.set_footer(text="Players: !maze alerts here|dm|off · Staff: !maze set ping here|everyone|role @role|none")
                 await ctx.send(embed=embed)
             except Exception as e:
                 await ctx.send(f"❌ Database error: {e}")
@@ -314,20 +480,32 @@ class MazeTracker(commands.Cog):
             if not m or not (1 <= int(m.group(1)) <= 100):
                 return await ctx.send("❌ Use a percentage from 1–100, e.g. `!maze ping 20%`")
 
-            # INDENTATION FIXED HERE
-            me = ctx.guild.me
-            if not me or not ctx.channel.permissions_for(me).mention_everyone:
-                return await ctx.send("❌ I lack the 'Mention @everyone' permission in this channel.")
-
+            try:
+                res = await asyncio.to_thread(
+                    supabase.table("maze_schedules").select("ping_mention, ping_role_id")
+                    .eq("guild_id", ctx.guild.id).limit(1).execute
+                )
+                schedule = res.data[0] if res.data else {}
+            except Exception:
+                schedule = {}
+            content, allowed = self._mention_payload(
+                ctx.channel,
+                (schedule.get("ping_mention") or "here").lower(),
+                schedule.get("ping_role_id"),
+            )
             embed = discord.Embed(
                 title="🗺️ Maze Island Discount!",
                 description=f"🚨 **{m.group(1)}% Discount is live right now!**\n\nSpend your Maze Coins!",
                 color=discord.Color.purple()
             )
-            await ctx.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
+            if content:
+                await ctx.send(content=content, embed=embed, allowed_mentions=allowed)
+            else:
+                await ctx.send(embed=embed)
+            await self._dm_alert_players(ctx.guild.id, f"{m.group(1)}%")
             
         else:
-            await ctx.send("❌ Unknown action. Use `start`, `status`, `stop`, or `ping`.")
+            await ctx.send("❌ Unknown action. Use `start`, `status`, `stop`, `ping`, `alerts` or `set`.")
 
 async def setup(bot):
     await bot.add_cog(MazeTracker(bot))

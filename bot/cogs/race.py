@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
 import asyncio
+import csv
+import io
 import re
 import json
 from database import supabase, check_premium_status, is_staff_member
@@ -57,6 +59,59 @@ def parse_node_args(args):
         val = f"{m.group(1)} {(m.group(2) or '').upper()}".strip()
         out.append((val, m.group(3).strip()))
     return out
+
+def parse_sheet_csv(text, delimiter=None):
+    """Parse a race-node spreadsheet into the bot's sheet shape.
+
+    Headers are case-insensitive: `lap,node,ofa,dyp,je` (node = 1..5) or
+    `node,ofa,dyp,je` where node is the full key such as `0.1`.
+    """
+    if delimiter is None:
+        try:
+            delimiter = csv.Sniffer().sniff(text[:2048], delimiters=",;\t").delimiter
+        except csv.Error:
+            delimiter = ","
+    reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+    rows = list(reader)
+    if not rows:
+        raise ValueError("empty spreadsheet")
+    headers = {}
+    for raw in rows[0].keys():
+        if raw is not None:
+            headers[str(raw).strip().lower()] = raw
+
+    def column(*names):
+        for candidate in names:
+            if candidate in headers:
+                return headers[candidate]
+        return None
+
+    c_ofa = column("ofa", "one for all")
+    c_dyp = column("dyp", "do your part")
+    c_je = column("je", "joint effort")
+    if not (c_ofa and c_dyp and c_je):
+        raise ValueError("CSV needs 'ofa', 'dyp' and 'je' columns")
+    c_lap = column("lap", "lap number")
+    c_node = column("node", "node number", "lap.node")
+
+    data = {}
+    for index, row in enumerate(rows, start=2):
+        node_raw = (row.get(c_node) or "").strip() if c_node else ""
+        if not node_raw:
+            raise ValueError(f"row {index}: missing 'node' value")
+        key = node_raw
+        if c_lap and "." not in key:
+            lap_raw = (row.get(c_lap) or "").strip()
+            if not lap_raw:
+                raise ValueError(f"row {index}: missing 'lap' value")
+            key = f"{int(float(lap_raw))}.{int(float(node_raw))}"
+        data[key] = {
+            "ofa": (row.get(c_ofa) or "").strip(),
+            "dyp": (row.get(c_dyp) or "").strip(),
+            "je": (row.get(c_je) or "").strip(),
+        }
+    return data
+
 
 async def get_race(channel_id):
     res = await asyncio.to_thread(supabase.table("race_state").select("*").eq("channel_id", channel_id).limit(1).execute)
@@ -157,19 +212,28 @@ class RaceTracker(commands.Cog):
         await ctx.send("❌ Unknown race action. Use `!race help`.")
 
     async def upload_sheet(self, ctx, name):
-        if not name: return await ctx.send("Usage: `!race uploadsheet <name>` (attach a .json file)")
-        if not ctx.message.attachments: return await ctx.send("❌ Please attach a `.json` file.")
+        if not name: return await ctx.send("Usage: `!race uploadsheet <name>` (attach a .json, .csv or .tsv file)")
+        if not ctx.message.attachments: return await ctx.send("❌ Please attach a `.json`, `.csv` or `.tsv` file.")
         attachment = ctx.message.attachments[0]
-        if not attachment.filename.endswith('.json'): return await ctx.send("❌ File must be a `.json` file.")
+        filename = (getattr(attachment, "filename", "") or "").lower()
+        if not filename.endswith((".json", ".csv", ".tsv")):
+            return await ctx.send("❌ File must be `.json`, `.csv` or `.tsv`.")
         if getattr(attachment, "size", 0) > 2_000_000:
             return await ctx.send("❌ That file is too large (max 2 MB).")
         try:
             content = await attachment.read()
-            data = json.loads(content.decode('utf-8'))
-        except (UnicodeDecodeError, json.JSONDecodeError) as e:
-            return await ctx.send(f"❌ Failed to parse JSON: {e}")
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError as e:
+            return await ctx.send(f"❌ File must be UTF-8 text: {e}")
+        try:
+            if filename.endswith(".json"):
+                data = json.loads(text)
+            else:
+                data = parse_sheet_csv(text, delimiter="\t" if filename.endswith(".tsv") else None)
+        except (json.JSONDecodeError, ValueError, csv.Error) as e:
+            return await ctx.send(f"❌ Failed to parse sheet: {e}")
         if not isinstance(data, dict) or not data:
-            return await ctx.send("❌ Invalid sheet: expected a JSON object keyed by `lap.node`.")
+            return await ctx.send("❌ Invalid sheet: expected rows keyed by `lap.node`.")
         for key, node in data.items():
             if not isinstance(node, dict) or not {"ofa", "dyp", "je"} <= set(node):
                 return await ctx.send(
@@ -177,7 +241,7 @@ class RaceTracker(commands.Cog):
                 )
         try:
             await asyncio.to_thread(supabase.table("race_sheets").upsert({"guild_id": ctx.guild.id, "name": name, "data": data}, on_conflict="guild_id,name").execute)
-            await ctx.send(f"✅ Sheet **{name}** uploaded successfully with **{len(data)}** nodes.")
+            await ctx.send(f"✅ Sheet **{name}** uploaded successfully with **{len(data)}** nodes ({filename.rsplit(chr(46), 1)[-1].upper()}).")
         except Exception as e: await ctx.send(f"❌ Database error: {e}")
 
     async def use_sheet(self, ctx, name):

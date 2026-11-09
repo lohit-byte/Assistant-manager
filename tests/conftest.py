@@ -72,4 +72,9 @@ def seed_guild(guild_id=100, **overrides):
 def clean_db():
     DB.reset()
     seed_guild()
+    try:
+        import database
+        database._role_cache.clear()
+    except Exception:
+        pass
     yield DB

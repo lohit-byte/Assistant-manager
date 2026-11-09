@@ -2,14 +2,63 @@ import discord
 from discord.ext import commands
 from datetime import datetime, timezone, timedelta
 import re
+import time
 import asyncio
 from collections import defaultdict
-from database import supabase, is_staff_member, ensure_user
+from database import supabase, is_staff_member, ensure_user, get_staff_role_ids
 
 DEFENCE = ("defence", "defense")
 PHASE = timedelta(hours=24)
 WAR = timedelta(hours=48)
 DONE_RE = re.compile(r"\b(?:(\d+)\s+)?attacks?\s+done(?:\s+(\d+))?\b", re.I)
+
+# Channel reminders for the fixed 48h war timeline, expressed as seconds before
+# the war ends (offset, key, human label). "attack_started" is sent by the phase
+# switch itself; "war_ended" is sent by finish_war to the staff roles.
+PING_SCHEDULE = [
+    ("defence_30m", 24 * 3600 + 30 * 60, "Defence ends 30m warning"),
+    ("attack_started", 24 * 3600, "Attack started"),
+    ("hours_12", 12 * 3600, "12h warning"),
+    ("hours_6", 6 * 3600, "6h warning"),
+    ("hours_3", 3 * 3600, "3h warning"),
+    ("minutes_30", 30 * 60, "30m warning"),
+]
+PING_OFFSETS = {key: offset for key, offset, _label in PING_SCHEDULE}
+WAR_END_KEY = "war_ended"
+
+
+def _sent_keys(war):
+    raw = war.get("sent_pings") if war else None
+    return set(raw) if isinstance(raw, list) else set()
+
+
+def _ping_due(war_end, offset):
+    return war_end - timedelta(seconds=offset)
+
+
+def _due_pings(war_end, sent, now, grace=3600):
+    """Reminders that are due and not too stale to send (after downtime)."""
+    due = []
+    for key, offset, label in PING_SCHEDULE:
+        if key in sent:
+            continue
+        due_at = _ping_due(war_end, offset)
+        if due_at <= now and (now - due_at).total_seconds() <= grace:
+            due.append((key, label, due_at))
+    return due
+
+
+def _initial_sent(war_end, now, grace=3600):
+    """Mark reminders already missed by more than the grace window so tracking
+    a war midway through doesn't spam old reminders."""
+    return [
+        key for key, offset, _label in PING_SCHEDULE
+        if (now - _ping_due(war_end, offset)).total_seconds() > grace
+    ]
+
+
+def _ping_phase_label(offset):
+    return "defence" if offset >= 24 * 3600 else "attack"
 
 def parse_time(time_str):
     regex = re.compile(r'((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?')
@@ -82,7 +131,7 @@ class WarTracker(commands.Cog):
         self.ping_tasks = {}
         self.done_replies = {}  
         self.locks = defaultdict(asyncio.Lock)
-        self.end_reminded = set()
+        self.board_updated = {}
 
     async def cog_load(self):
         self.bot.loop.create_task(self.restore_events())
@@ -128,6 +177,7 @@ class WarTracker(commands.Cog):
         if action in ("absent", "absence"): return await self.war_absent(ctx, subaction, args)
         if action == "report": return await self.war_report(ctx)
         if action in ("cancel", "reset"): return await self.cancel_war(ctx)
+        if action in ("board", "live"): return await self.war_board(ctx, subaction)
         if action in ("warning", "warn"): return await self.war_warning(ctx, subaction, args)
         if action == "attacks":
             # ``subaction`` swallows the first word (the player name); re-join it
@@ -179,17 +229,26 @@ class WarTracker(commands.Cog):
                 "war_start": war_start.isoformat(),
                 "phase": current_phase,
                 "is_active": True,
-                "status_message_id": None,
             }
             if not existing_war or not existing_war.get("is_active"):
                 war_data["missing_list"] = []
                 war_data["absent_list"] = []
                 war_data["attack_counts"] = {}
+                war_data["status_message_id"] = None
+                # Starting mid-war: don't fire reminders whose window already
+                # passed by more than the grace period.
+                initial = _initial_sent(war_end, now)
+                if current_phase == "attack" and "attack_started" not in initial:
+                    initial.append("attack_started")
+                war_data["sent_pings"] = initial
+            else:
+                war_data["sent_pings"] = sorted(_sent_keys(existing_war))
+                war_data["status_message_id"] = existing_war.get("status_message_id")
 
             await asyncio.to_thread(supabase.table("wars").upsert(war_data, on_conflict="channel_id").execute)
 
             if ctx.channel.id in self.status_tasks: self.status_tasks[ctx.channel.id].cancel()
-            self.end_reminded.discard(ctx.channel.id)
+            self.board_updated.pop(ctx.channel.id, None)
             self.status_tasks[ctx.channel.id] = asyncio.create_task(
                 self.status_updater(ctx.channel.id, ctx.channel)
             )
@@ -200,10 +259,74 @@ class WarTracker(commands.Cog):
             embed.add_field(name=current_phase.title(), value=f"{fmt_td(phase_end - now)} left", inline=True)
             embed.add_field(name="Phase ends", value=f"<t:{int(phase_end.timestamp())}:R>", inline=True)
             embed.add_field(name="War ends", value=f"<t:{int(war_end.timestamp())}:R>", inline=True)
-            embed.set_footer(text="Defence = 48h → 24h left · Attack = 24h → 0h left.")
+            embed.set_footer(text="Defence = 48h → 24h left · Attack = 24h → 0h left. Live board updates every minute.")
             await ctx.send(embed=embed)
+            war = await get_war(ctx.channel.id)
+            if war:
+                await self.upsert_board(ctx.channel.id, ctx.channel, war)
+                self.board_updated[ctx.channel.id] = time.monotonic()
         except Exception as e:
             await ctx.send(f"❌ Error: {e}")
+
+    async def war_board(self, ctx, subaction):
+        """Create/refresh the live board, or stop it with `!war board stop`."""
+        if not await is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
+        sub = (subaction or "").lower()
+        war = await get_war(ctx.channel.id)
+        if sub in ("stop", "off", "remove", "delete"):
+            if war:
+                await asyncio.to_thread(
+                    supabase.table("wars").update({"status_message_id": None})
+                    .eq("channel_id", ctx.channel.id).execute
+                )
+                message_id = war.get("status_message_id")
+                if message_id:
+                    try:
+                        message = await ctx.channel.fetch_message(int(message_id))
+                        await message.edit(embed=discord.Embed(
+                            title="🛑 Live war board stopped",
+                            description="Use `!war board` to start a new live board.",
+                            color=discord.Color.light_grey(),
+                        ))
+                    except Exception:
+                        pass
+            self.board_updated.pop(ctx.channel.id, None)
+            return await ctx.send("🛑 Live war board stopped.")
+        if not war or not war.get("is_active"):
+            return await ctx.send("ℹ️ No active war here. Start one with `!war defence ends <time>`.")
+        # Force a fresh board (the old one keeps its last state).
+        await asyncio.to_thread(
+            supabase.table("wars").update({"status_message_id": None})
+            .eq("channel_id", ctx.channel.id).execute
+        )
+        war["status_message_id"] = None
+        await self.upsert_board(ctx.channel.id, ctx.channel, war)
+        self.board_updated[ctx.channel.id] = time.monotonic()
+        await ctx.send("📌 Live war board started — it refreshes automatically every minute.")
+
+    async def _notify_missing(self, channel, entry):
+        """Ping a player the moment they are added to the missing list."""
+        name = entry.get("name") or ""
+        discord_id = entry.get("id")
+        member = channel.guild.get_member(int(discord_id)) if discord_id else None
+        text = "you're on the **missing attacks** list for the current war — use `attacks done` after you attack."
+        if member is not None:
+            try:
+                await member.send(f"⚠️ You're on the missing attacks list in {channel.guild.name} — use `attacks done` after you attack.")
+            except (discord.HTTPException, AttributeError):
+                pass
+            try:
+                await channel.send(
+                    content=f"⚠️ {member.mention} {text}",
+                    allowed_mentions=discord.AllowedMentions(users=True),
+                )
+                return
+            except (discord.HTTPException, AttributeError, TypeError):
+                pass
+        try:
+            await channel.send(f"⚠️ **{name}** {text}")
+        except (discord.HTTPException, AttributeError, TypeError) as e:
+            print(f"Missing-list ping failed: {e}")
 
     async def _send_ping(self, channel, content, embed=None):
         try:
@@ -223,7 +346,7 @@ class WarTracker(commands.Cog):
             print(f"War announcement failed in {getattr(channel, 'id', '?')}: {e}")
 
     async def status_updater(self, channel_id, channel):
-        """Watches one war and drives the defence -> attack -> ended timeline."""
+        """Watches one war: phase switches, scheduled reminders and the live board."""
         while True:
             try:
                 war = await get_war(channel_id)
@@ -236,10 +359,13 @@ class WarTracker(commands.Cog):
 
                 now = datetime.now(timezone.utc)
                 current = phase_at(start, now)
-
                 if current == "ended":
                     await self.finish_war(channel_id, channel)
                     return
+
+                war_end = start + WAR
+                sent = _sent_keys(war)
+                changed = False
 
                 stored = (war.get("phase") or "").lower()
                 if current == "attack" and stored in DEFENCE:
@@ -248,124 +374,262 @@ class WarTracker(commands.Cog):
                         .eq("channel_id", channel_id).execute
                     )
                     await self.announce_attack(channel, start, war)
+                    if "attack_started" not in sent:
+                        sent.add("attack_started")
+                        changed = True
 
-                war_end = start + WAR
-                if channel_id not in self.end_reminded and 0 < (war_end - now).total_seconds() <= 3600:
-                    self.end_reminded.add(channel_id)
-                    await self.announce_war_ending(channel, war_end, war)
+                for key, label, _due_at in _due_pings(war_end, sent, now):
+                    await self.send_reminder(channel, war, start, key, label)
+                    sent.add(key)
+                    changed = True
 
-                await asyncio.sleep(30)
+                if changed:
+                    await asyncio.to_thread(
+                        supabase.table("wars").update({"sent_pings": sorted(sent)})
+                        .eq("channel_id", channel_id).execute
+                    )
+                    war["sent_pings"] = sorted(sent)
+
+                # The embed uses Discord relative timestamps so countdowns tick
+                # every second client-side; refresh it about once a minute to stay
+                # well below Discord's edit rate limit.
+                last = self.board_updated.get(channel_id, 0.0)
+                if changed or time.monotonic() - last >= 55:
+                    await self.upsert_board(channel_id, channel, war)
+                    self.board_updated[channel_id] = time.monotonic()
+
+                await asyncio.sleep(20)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                # A transient DB/Discord error must not kill the only task driving
-                # the phase switch / 1-hour warning / war end.
                 print(f"War updater error in {channel_id}: {e}")
                 await asyncio.sleep(60)
 
     async def announce_attack(self, channel, start, war):
-        missing = war.get("missing_list") or []
-        embed = discord.Embed(
-            title="⚔️ Attack phase has begun!",
-            color=discord.Color.red(),
-            description=(
-                f"Defence is over — the war clock is now {fmt_td(start + WAR - datetime.now(timezone.utc))} from 0h. "
-                f"War ends <t:{int((start + WAR).timestamp())}:R>.\n"
-                f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}\n\n"
-                "Use `attacks done` after attacking, and `!war status` for the live board."
-            ),
+        await self._send_ping(
+            channel,
+            "⚔️ **Attack phase started!** Use `attacks done` after attacking.",
+            self.build_embed(war, channel=channel, title_prefix="⚔️ **Attack phase started!**"),
         )
-        await self._send_ping(channel, "⚔️ **Attack phase started!**", embed)
 
-    async def announce_war_ending(self, channel, war_end, war):
+    async def send_reminder(self, channel, war, start, key, label):
+        war_end = start + WAR
         missing = war.get("missing_list") or []
-        embed = discord.Embed(
-            title="⏰ 1 hour left in the war!",
-            color=discord.Color.orange(),
-            description=(
-                f"War ends <t:{int(war_end.timestamp())}:R>.\n"
-                f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}"
-            ),
+        war_ts = int(war_end.timestamp())
+        if key == "hours_12":
+            # The 12h reminder points at the players who still owe attacks
+            # instead of pinging everyone.
+            mentions = await self._missing_mentions(war)
+            content = "⏱️ **12 hours left!** "
+            if mentions:
+                content += "Missing attacks: " + ", ".join(mentions) + " — use `attacks done` after you attack."
+                allowed = discord.AllowedMentions(users=True)
+            else:
+                content += "Use `attacks done` after you attack."
+                allowed = discord.AllowedMentions.none()
+            embed = discord.Embed(
+                title="⏱️ 12 hours left in the war",
+                description=(
+                    f"**War ends:** <t:{war_ts}:R>\n"
+                    f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}"
+                ),
+                color=discord.Color.orange(),
+            )
+            try:
+                await channel.send(content=content, embed=embed, allowed_mentions=allowed)
+            except (discord.HTTPException, AttributeError, TypeError) as e:
+                print(f"War 12h reminder failed: {e}")
+            return
+
+        embed = self.build_embed(war, channel=channel)
+        embed.title = f"⏰ {label}"
+        embed.description = (
+            f"**War ends:** <t:{war_ts}:R>\n"
+            f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}\n"
+            "Use `attacks done` after attacking."
         )
-        await self._send_ping(channel, "⏰ **One hour left in the war!**", embed)
+        await self._send_ping(channel, f"⏰ **{label}**", embed)
+
+    async def _missing_mentions(self, war):
+        missing = war.get("missing_list") or []
+        ids = [str(m["id"]) for m in missing if m.get("id")]
+        names = [m.get("name") or "" for m in missing if not m.get("id")]
+        if names and war.get("guild_id"):
+            try:
+                res = await asyncio.to_thread(
+                    supabase.table("aliases").select("alias_name, discord_id")
+                    .eq("guild_id", war["guild_id"]).execute
+                )
+                wanted = {n.lower() for n in names if n}
+                for row in res.data:
+                    if (row.get("alias_name") or "").lower() in wanted:
+                        ids.append(str(row["discord_id"]))
+            except Exception as e:
+                print(f"Missing alias lookup failed: {e}")
+        seen, mentions = set(), []
+        for discord_id in ids:
+            if discord_id not in seen:
+                seen.add(discord_id)
+                mentions.append(f"<@{discord_id}>")
+        return mentions[:50]
+
+    def build_embed(self, war, channel=None, title_prefix=None):
+        start = to_utc(war.get("war_start")) if war else None
+        now = datetime.now(timezone.utc)
+        if not start:
+            return discord.Embed(title="No Active War", color=discord.Color.light_grey())
+
+        current = phase_at(start, now)
+        war_end = start + WAR
+        missing = war.get("missing_list") or []
+        absent = war.get("absent_list") or []
+        sent = _sent_keys(war)
+        total = len(PING_SCHEDULE) + 1  # + the war-end staff ping
+        sent_count = sum(1 for key, _o, _l in PING_SCHEDULE if key in sent)
+        team = f" — {channel.name}" if getattr(channel, "name", None) else ""
+
+        if current == "ended":
+            return discord.Embed(
+                title=f"🏁 WAR ENDED{team}",
+                color=discord.Color.red(),
+                description=(
+                    f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}\n"
+                    f"**Pings sent:** {sent_count + (1 if WAR_END_KEY in sent else 0)}/{total}"
+                ),
+            )
+
+        phase_start, phase_end = phase_bounds(start, current)
+        bar = progress_bar((now - phase_start).total_seconds(), 86400)
+        if current == "defence":
+            title = f"🛡️ DEFENCE PHASE{team}"
+            color = discord.Color.blue()
+            lines = [
+                bar,
+                f"Time left in defence: **{fmt_td(phase_end - now)}**",
+                f"Defence ends: <t:{int(phase_end.timestamp())}:R>",
+            ]
+        else:
+            title = f"⚔️ ATTACK PHASE{team}"
+            color = discord.Color.red()
+            lines = [
+                bar,
+                f"Defence phase ended: {fmt_td(now - phase_start)} ago",
+                f"Time left in attack: **{fmt_td(war_end - now)}**",
+                f"Attack ends: <t:{int(war_end.timestamp())}:R>",
+            ]
+        lines.append(f"War ends: <t:{int(war_end.timestamp())}:R>")
+        if title_prefix:
+            lines.insert(0, title_prefix)
+
+        embed = discord.Embed(title=title, color=color, description="\n".join(lines))
+        embed.add_field(name=f"⚠️ Missing ({len(missing)})", value=join_names(missing) or "None", inline=False)
+        embed.add_field(
+            name=f"🏖️ Excused (absence channel) — {len(absent)}",
+            value=join_names(absent) or "None",
+            inline=False,
+        )
+
+        pending = [
+            (key, label, _ping_due(war_end, PING_OFFSETS[key]))
+            for key, _offset, label in PING_SCHEDULE if key not in sent
+        ]
+        remaining = sum(1 for _k, _l, at in pending if at >= now) + (0 if WAR_END_KEY in sent else 1)
+        ping_lines = [f"**{remaining} ping(s) remaining**", f"Pings sent: {sent_count}/{total}"]
+        for key, label, at in pending:
+            if at < now:
+                continue  # overdue; retried by the updater, not shown as pending
+            ping_lines.append(f"▪ {label} ({_ping_phase_label(PING_OFFSETS[key])}) — <t:{int(at.timestamp())}:R>")
+        if WAR_END_KEY not in sent:
+            ping_lines.append(f"▪ War end (staff ping) — <t:{int(war_end.timestamp())}:R>")
+        embed.add_field(name="🔔 Pings", value="\n".join(ping_lines), inline=False)
+        embed.set_footer(text=f"Updates automatically every minute · <t:{int(now.timestamp())}:t>")
+        return embed
+
+    async def upsert_board(self, channel_id, channel, war):
+        """Create the live board once, then edit that same message in place."""
+        embed = self.build_embed(war, channel=channel)
+        message_id = war.get("status_message_id")
+        if message_id:
+            try:
+                message = await channel.fetch_message(int(message_id))
+                await message.edit(embed=embed)
+                return
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException,
+                    AttributeError, TypeError):
+                pass  # message deleted or bot lacks access -> post a fresh one
+
+        try:
+            message = await channel.send(embed=embed)
+        except (discord.HTTPException, AttributeError, TypeError) as e:
+            print(f"War board could not be posted in {channel_id}: {e}")
+            return
+        await asyncio.to_thread(
+            supabase.table("wars").update({"status_message_id": message.id})
+            .eq("channel_id", channel_id).execute
+        )
 
     async def finish_war(self, channel_id, channel):
         task = self.status_tasks.pop(channel_id, None)
         if task and task is not asyncio.current_task():
             task.cancel()
-        self.end_reminded.discard(channel_id)
+        self.board_updated.pop(channel_id, None)
 
-        missing = []
         try:
-            war = await get_war(channel_id)
-            missing = war.get("missing_list") or [] if war else []
+            war = await get_war(channel_id) or {}
+            missing = war.get("missing_list") or []
+            sent = _sent_keys(war)
+            sent.add(WAR_END_KEY)
             await asyncio.to_thread(
-                supabase.table("wars").update({"is_active": False, "phase": "ended"})
-                .eq("channel_id", channel_id).execute
+                supabase.table("wars").update({
+                    "is_active": False, "phase": "ended", "sent_pings": sorted(sent),
+                }).eq("channel_id", channel_id).execute
             )
+            war.update({"is_active": False, "phase": "ended", "sent_pings": sorted(sent)})
+            message_id = war.get("status_message_id")
+            if message_id:
+                try:
+                    message = await channel.fetch_message(int(message_id))
+                    await message.edit(embed=self.build_embed(war, channel=channel))
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException,
+                        AttributeError, TypeError):
+                    pass
+
             embed = discord.Embed(
                 title="🏁 The War Has Ended!",
                 description=(
                     f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}\n"
-                    "Use `!war report` to view the final stats."
+                    "Staff: start the next war with `!war defence ends <time>`."
                 ),
                 color=discord.Color.red(),
             )
-            await self._send_ping(channel, "🏁 **The war has ended!**", embed)
+            await self._send_staff_ping(channel, embed)
         except Exception as e:
             print(f"Could not finish war in {channel_id}: {e}")
 
-    async def build_status_embed(self, channel_id):
-        war = await get_war(channel_id)
-        if not war or not war.get("is_active"):
-            return discord.Embed(title="No Active War", color=discord.Color.light_grey())
-
-        start = to_utc(war.get("war_start"))
-        now = datetime.now(timezone.utc)
-        missing, absent = war.get("missing_list") or [], war.get("absent_list") or []
-
-        current = phase_at(start, now)
-        if current == "unknown":
-            return discord.Embed(title="No Active War", color=discord.Color.light_grey())
-
-        if current == "ended":
-            return discord.Embed(
-                title="🏁 War finished",
-                description=f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}",
-                color=discord.Color.red(),
-            )
-
-        phase_start, phase_end = phase_bounds(start, current)
-        elapsed = (now - phase_start).total_seconds()
-        bar = progress_bar(elapsed, 86400)
-        war_end = start + WAR
-
-        # The in-game war clock runs 48h -> 0h: defence covers 48h -> 24h left,
-        # attack covers 24h -> 0h left, and the war ends at 0h.
-        war_left = fmt_td(war_end - now)
-        phase_left = fmt_td(phase_end - now)
-        label = "Defence" if current == "defence" else "Attack"
-        color = discord.Color.blue() if current == "defence" else discord.Color.red()
-        title = "🛡️ DEFENCE PHASE" if current == "defence" else "⚔️ ATTACK PHASE"
-
-        embed = discord.Embed(
-            title=title,
-            color=color,
-            description=(
-                f"{bar}\n"
-                f"**War clock:** {war_left} left (48h → 0h)\n"
-                f"**{label}:** {phase_left} left\n"
-                f"**Phase ends:** <t:{int(phase_end.timestamp())}:R> · "
-                f"**War ends:** <t:{int(war_end.timestamp())}:R>"
-            ),
+    async def _send_staff_ping(self, channel, embed):
+        """Ping the configured staff roles to start the next war."""
+        try:
+            role_ids = await asyncio.to_thread(get_staff_role_ids, channel.guild.id)
+        except Exception:
+            role_ids = set()
+        content = " ".join(f"<@&{role_id}>" for role_id in sorted(role_ids))
+        if content:
+            content += " The war has ended — start the next one with `!war defence ends <time>`."
+            try:
+                await channel.send(content=content, embed=embed,
+                                   allowed_mentions=discord.AllowedMentions(roles=True))
+                return
+            except (discord.HTTPException, AttributeError, TypeError):
+                pass
+        await self._send_ping(
+            channel,
+            "🏁 **The war has ended!** Staff: start the next war with `!war defence ends <time>`.",
+            embed,
         )
 
-        embed.add_field(name=f"⚠️ Missing ({len(missing)})", value=join_names(missing) or "None", inline=False)
-        embed.add_field(name=f"🏖️ Excused ({len(absent)})", value=join_names(absent) or "None", inline=False)
-        return embed
-
     async def show_status(self, ctx):
-        await ctx.send(embed=await self.build_status_embed(ctx.channel.id))
+        war = await get_war(ctx.channel.id)
+        await ctx.send(embed=self.build_embed(war, channel=ctx.channel))
 
     async def cancel_war(self, ctx):
         if not await is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
@@ -407,11 +671,29 @@ class WarTracker(commands.Cog):
             name = self._resolve_name(ctx, args)
             if not name: return await ctx.send("❌ Provide a name or mention a user.")
             if sub == "add":
-                if any(a["name"].lower() == name for a in absent): return await ctx.send(f"🏖️ `{name}` is excused.")
-                if not any(m["name"].lower() == name for m in missing):
-                    missing.append({"name": name})
+                if any((a.get("name") or "").lower() == name for a in absent):
+                    return await ctx.send(f"🏖️ `{name}` is excused.")
+                entry = {"name": name}
+                member = ctx.message.mentions[0] if ctx.message.mentions else None
+                if member is not None:
+                    entry["id"] = member.id
+                else:
+                    try:
+                        res = await asyncio.to_thread(
+                            supabase.table("aliases").select("discord_id")
+                            .eq("guild_id", ctx.guild.id).eq("alias_name", name).limit(1).execute
+                        )
+                        if res.data:
+                            entry["id"] = res.data[0]["discord_id"]
+                    except Exception as e:
+                        print(f"Missing-list alias lookup failed: {e}")
+                added = not any((m.get("name") or "").lower() == name for m in missing)
+                if added:
+                    missing.append(entry)
                     await asyncio.to_thread(supabase.table("wars").update({"missing_list": missing}).eq("channel_id", ctx.channel.id).execute)
                 await ctx.send(f"✅ Added `{name}` to missing.")
+                if added:
+                    await self._notify_missing(ctx.channel, entry)
             else:
                 if not any(m["name"].lower() == name for m in missing):
                     return await ctx.send(f"❌ `{name}` is not on the missing list.")
@@ -674,8 +956,8 @@ class WarTracker(commands.Cog):
             ),
             inline=False,
         )
-        embed.add_field(name="Public", value="`!war status`\n`!war missing list`\n`attacks done`", inline=False)
-        if is_staff: embed.add_field(name="Staff", value="`!war defence ends <time>`\n`!war attack ends <time>`\n`!war cancel`\n`!war missing add|remove <name>`\n`!war absent add|remove <name>`\n`!war attacks <name> <count>`\n`!war check`\n`!war warning add @user <reason>`", inline=False)
+        embed.add_field(name="Public", value="`!war status` — live-style board with countdowns + ping schedule\n`!war missing list`\n`attacks done`", inline=False)
+        if is_staff: embed.add_field(name="Staff", value="`!war defence ends <time>`\n`!war attack ends <time>`\n`!war cancel`\n`!war missing add|remove <name>`\n`!war absent add|remove <name>`\n`!war attacks <name> <count>`\n`!war check`\n`!war board` — live updating board\n`!war warning add @user <reason>`", inline=False)
         await ctx.send(embed=embed)
 
 async def setup(bot):

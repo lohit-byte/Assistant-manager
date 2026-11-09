@@ -72,7 +72,8 @@ CREATE TABLE wars (
     missing_list JSONB DEFAULT '[]'::jsonb, -- [{ "name": "sam" }]; id is optional when known
     absent_list JSONB DEFAULT '[]'::jsonb,
     attack_counts JSONB DEFAULT '{}'::jsonb, -- { "sam": 6 }
-    status_message_id BIGINT,
+    status_message_id BIGINT, -- live war board message (edited in place)
+    sent_pings JSONB DEFAULT '[]'::jsonb, -- reminder keys already sent, e.g. ["hours_12"]
     is_active BOOLEAN DEFAULT TRUE
 );
 
@@ -126,17 +127,30 @@ CREATE TABLE maze_schedules (
     maze_type TEXT DEFAULT '7d', -- '7d' or '3d'
     channel_id BIGINT, -- channel the discount pings are sent to
     discount_schedule JSONB, -- optional [[hours, minutes, "pct"], ...]; SCHEDULE_7D/3D are the defaults
-    ping_enabled_global BOOLEAN DEFAULT TRUE
+    ping_enabled_global BOOLEAN DEFAULT TRUE,
+    ping_mention TEXT DEFAULT 'here', -- 'here', 'everyone', 'role', 'none'
+    ping_role_id BIGINT -- role pinged when ping_mention = 'role'
 );
 
--- 10. PLAYER PING PREFERENCES (players can opt out of maze pings)
--- NOTE: not consulted by the maze ping path yet (pings use @everyone).
+-- 10. PLAYER PING PREFERENCES (players choose channel @here, DM alerts, or off)
 CREATE TABLE player_ping_settings (
     guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
     discord_id BIGINT REFERENCES users(discord_id) ON DELETE CASCADE,
-    maze_pings_enabled BOOLEAN DEFAULT TRUE,
+    maze_pings_enabled BOOLEAN DEFAULT TRUE, -- legacy mirror of maze_alert_mode != 'off'
+    maze_alert_mode TEXT DEFAULT 'here', -- 'here' (channel @here), 'dm', 'off'
     PRIMARY KEY (guild_id, discord_id)
 );
+
+-- ============================================================================
+-- MIGRATIONS for existing databases (safe to run repeatedly)
+-- ============================================================================
+ALTER TABLE wars ADD COLUMN IF NOT EXISTS sent_pings JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS ping_mention TEXT DEFAULT 'here';
+ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS ping_role_id BIGINT;
+ALTER TABLE player_ping_settings ADD COLUMN IF NOT EXISTS maze_alert_mode TEXT DEFAULT 'here';
+UPDATE player_ping_settings
+   SET maze_alert_mode = 'off'
+ WHERE maze_pings_enabled = FALSE AND maze_alert_mode = 'here';
 
 -- Security: the Python bot uses the service role key (bypasses RLS).
 -- The dashboard reads with the anon key, so enable RLS and add policies that
