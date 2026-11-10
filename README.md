@@ -18,6 +18,12 @@ A unified Discord bot and web dashboard designed for Monster Legends alliances t
 * **Dynamic Targets:** Set team lap targets and track live progress.
 * **Staff Overrides:** Manual contribution logging and corrections.
 
+### 👥 Teams & rosters
+* **Many teams per server:** a main team plus feeder/recruiting teams, each pairing its own war and race channel (set up from the dashboard).
+* **Roster:** `!team list`, `!team players <team>`, `!team add @user <team>` (moves a player from their old team and cleans its active war lists) and `!team remove @user`. A rostered player needs an alias first.
+* **Per-team war rules:** `!war set attacks <number>` and `!war set exempt on|off` in a team channel store that team's values; global staff values are only the fallback outside a team. Race is already per team channel; Maze stays server-wide.
+* `!war missing add` and the 12h reminder validate against the team roster, so players who left a team/servers are flagged instead of pinged.
+
 ### 🗺️ Maze Island
 * **Clock Syncing:** Sync the bot to the in-game countdown timer.
 * **Automated Pings:** Schedule standard discount alerts (10%, 20%, 30%).

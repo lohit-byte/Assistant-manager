@@ -6,7 +6,7 @@ def _embed(title, color, desc=None):
     return discord.Embed(title=title, description=desc, color=color)
 
 def build_overview(is_staff):
-    topics = "`war`, `race`, `maze`, `alias`"
+    topics = "`war`, `race`, `maze`, `team`, `alias`"
     if is_staff:
         topics += ", `ids`, `roles`, `warning`, `pings`"
     e = _embed("📖 Bot Help", discord.Color.blurple(),
@@ -17,10 +17,16 @@ def build_overview(is_staff):
     e.add_field(
         name="👑 Captains",
         value=("A team captain can run their team's war and race commands in the team's "
-               "channels (war tracking, lists, `!war attacks`, node/target/sheet selection). "
+               "channels (war tracking, lists, `!war attacks`, node/target/sheet selection, "
+               "that team's `!war set attacks` / `!war set exempt`). "
                "Server settings, warnings, aliases, sheet uploads and other teams stay staff-only."),
         inline=False,
     )
+    team_help = "`!team list` — teams, channels, roster sizes and each team's war rules"
+    if is_staff:
+        team_help += ("\n`!team players <team>` · `!team add @user <team>` · "
+                      "`!team remove @user`")
+    e.add_field(name="👥 Teams", value=team_help, inline=False)
     if is_staff:
         e.add_field(name="🔧 Admin", value="`!alias add @user <name>` · `!alias list` · `!alias prune` · `!warning`", inline=False)
         e.add_field(
@@ -43,7 +49,8 @@ def build_topic(topic, is_staff):
             name="Captains",
             value=("A team captain can run the team war commands in their team's war channel: "
                    "start/cancel a war, the live board, the missing/excused lists, "
-                   "`!war attacks`, `!war check` and `!war set role`."),
+                   "`!war attacks`, `!war check`, `!war set role`, and this team's "
+                   "`!war set attacks` / `!war set exempt`."),
             inline=False,
         )
         if is_staff:
@@ -51,7 +58,8 @@ def build_topic(topic, is_staff):
                 "`!war defence ends <time>`\n`!war attack ends <time>`\n`!war cancel`\n"
                 "`!war board` — start/refresh the live board · `!war board stop`\n"
                 "`!war missing add|remove <name>`\n`!war absent add|remove <name>`\n"
-                "`!war attacks <name> <count>` (or `name | count`)\n`!war set attacks <number>`\n"
+                "`!war attacks <name> <count>` (or `name | count`)\n"
+                "`!war set attacks <number>` · `!war set exempt on|off` (team value in a team channel)\n"
                 "`!war check` · `!war report`\n`!warning add @user <reason>` · `!warning list`"), inline=False)
         return e
     if topic == "race":
@@ -109,6 +117,20 @@ def build_topic(topic, is_staff):
             e.add_field(name="Commands", value="`!ids` — this server, channel and your ID\n`!ids roles` — all role IDs\n`!ids members [search]` — member IDs\n`!ids @user` — one user's ID and roles", inline=False)
             e.add_field(name="Roles", value="`!roles` — role IDs with member counts\n`!roles @role` — the members holding that role", inline=False)
         return e
+    if topic in ("team", "teams", "roster"):
+        e = _embed("👥 Teams", discord.Color.teal(),
+                   "Teams group players for war and race; each team has its own roster and war rules.")
+        e.add_field(name="Everyone",
+                    value="`!team list` — teams, channels, roster size and that team's war rules",
+                    inline=False)
+        if is_staff:
+            e.add_field(name="Staff", value=(
+                "`!team players <team>` — the roster, flagging members who left\n"
+                "`!team add @user <team>` — add or move a player (they need an alias first)\n"
+                "`!team remove @user` — remove them from their team and clean its active war lists\n"
+                "`!war set attacks <number>` / `!war set exempt on|off` — per-team war rules in the team channel"),
+                inline=False)
+        return e
     if topic in ("roles", "role"):
         e = _embed("🎭 Roles & IDs", discord.Color.teal(), "Staff only.")
         if is_staff:
@@ -139,7 +161,7 @@ class Help(commands.Cog):
             return await ctx.send(embed=build_overview(staff))
         e = build_topic(topic.lower(), staff)
         if e is None:
-            return await ctx.send("❌ Unknown topic. Try `!help`, `!help war`, `!help race`, `!help maze`, `!help ids`, `!help roles`.")
+            return await ctx.send("❌ Unknown topic. Try `!help`, `!help war`, `!help race`, `!help maze`, `!help team`, `!help ids`, `!help roles`.")
         await ctx.send(embed=e)
 
 async def setup(bot):

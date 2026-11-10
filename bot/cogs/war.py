@@ -12,6 +12,8 @@ from database import (
     is_team_staff,
     ensure_user,
     get_staff_role_ids,
+    get_team_by_channel,
+    get_team_players,
     get_team_role_id,
 )
 
@@ -160,15 +162,27 @@ async def get_war(channel_id):
         war["absent_list"] = _normalise_entries(war.get("absent_list"))
     return war
 
-async def get_settings(guild_id):
+async def get_settings(guild_id, channel_id=None):
+    """War rules for a channel: the team's settings win over the server defaults."""
     res = await asyncio.to_thread(supabase.table("war_settings").select("*").eq("guild_id", guild_id).limit(1).execute)
-    settings = {"attacks_required": 6, "exempt_absent": True}
+    settings = {"attacks_required": 6, "exempt_absent": True, "team": None}
     if res.data:
         row = res.data[0]
         if row.get("attacks_required") is not None:
             settings["attacks_required"] = int(row["attacks_required"])
         if row.get("exempt_absent") is not None:
             settings["exempt_absent"] = bool(row["exempt_absent"])
+    if channel_id is not None:
+        try:
+            team = await asyncio.to_thread(get_team_by_channel, guild_id, channel_id)
+        except Exception:
+            team = None
+        if team:
+            settings["team"] = team
+            if team.get("attacks_required") is not None:
+                settings["attacks_required"] = max(1, int(team["attacks_required"]))
+            if team.get("exempt_absent") is not None:
+                settings["exempt_absent"] = bool(team["exempt_absent"])
     return settings
 
 async def check_team_limit(guild_id):
@@ -334,11 +348,54 @@ class WarTracker(commands.Cog):
                 if not await is_team_staff(ctx.author, ctx.channel.id):
                     return await ctx.send("❌ Staff only.")
                 return await self.set_team_role(ctx, args)
-            if not await is_staff_member(ctx.author): return await ctx.send("❌ Staff only.")
-            if subaction == "attacks" and args and args.strip().isdigit() and int(args.strip()) >= 1:
-                await asyncio.to_thread(supabase.table("war_settings").upsert({"guild_id": ctx.guild.id, "attacks_required": int(args)}, on_conflict="guild_id").execute)
-                return await ctx.send(f"✅ Required attacks updated to **{args.strip()}**.")
-            return await ctx.send("Usage: `!war set attacks <number>` or `!war set role @Role`")
+            team = await asyncio.to_thread(get_team_by_channel, ctx.guild.id, ctx.channel.id)
+            usage = "Usage: `!war set attacks <number>`, `!war set exempt on|off` or `!war set role @Role`"
+            if subaction == "attacks":
+                if not args or not args.strip().isdigit() or int(args.strip()) < 1:
+                    return await ctx.send(usage)
+                value = int(args.strip())
+                if team:
+                    if not await is_team_staff(ctx.author, ctx.channel.id):
+                        return await ctx.send("❌ Team staff only.")
+                    await asyncio.to_thread(
+                        supabase.table("teams").update({"attacks_required": value})
+                        .eq("id", team["id"]).execute)
+                    return await ctx.send(
+                        f"✅ Required attacks for **{team.get('name')}** updated to **{value}**.")
+                if not await is_staff_member(ctx.author):
+                    return await ctx.send("❌ Staff only.")
+                await asyncio.to_thread(
+                    supabase.table("war_settings").upsert(
+                        {"guild_id": ctx.guild.id, "attacks_required": value},
+                        on_conflict="guild_id").execute)
+                return await ctx.send(
+                    f"✅ Server default required attacks updated to **{value}**.")
+            if subaction in ("exempt", "absence", "absent"):
+                raw = (args or "").strip().lower()
+                if raw not in ("on", "off", "true", "false", "yes", "no"):
+                    return await ctx.send(usage)
+                enabled = raw in ("on", "true", "yes")
+                if team:
+                    if not await is_team_staff(ctx.author, ctx.channel.id):
+                        return await ctx.send("❌ Team staff only.")
+                    await asyncio.to_thread(
+                        supabase.table("teams").update({"exempt_absent": enabled})
+                        .eq("id", team["id"]).execute)
+                    state = "exempt" if enabled else "counted as missing"
+                    return await ctx.send(
+                        f"✅ Absent players for **{team.get('name')}** are now **{state}**.")
+                if not await is_staff_member(ctx.author):
+                    return await ctx.send("❌ Staff only.")
+                await asyncio.to_thread(
+                    supabase.table("war_settings").upsert(
+                        {"guild_id": ctx.guild.id, "exempt_absent": enabled},
+                        on_conflict="guild_id").execute)
+                state = "exempt" if enabled else "counted as missing"
+                return await ctx.send(
+                    f"✅ Server default: absent players are now **{state}**.")
+            if not await is_staff_member(ctx.author):
+                return await ctx.send("❌ Staff only.")
+            return await ctx.send(usage)
             
         if action in ("defence", "defense", "attack"):
             if not await is_team_staff(ctx.author, ctx.channel.id):
@@ -566,6 +623,7 @@ class WarTracker(commands.Cog):
                 war = await get_war(channel_id)
                 if not war or not war.get("is_active"):
                     return
+                await self._attach_roster(war, getattr(channel, "guild", None) and channel.guild.id, channel_id)
 
                 start = to_utc(war.get("war_start"))
                 if not start:
@@ -644,7 +702,8 @@ class WarTracker(commands.Cog):
         if key == "hours_12":
             # The 12h reminder points at the players who still owe attacks
             # instead of pinging everyone.
-            mentions = await self._missing_mentions(war, getattr(channel, "guild", None))
+            mentions = await self._missing_mentions(
+                war, getattr(channel, "guild", None), war.get("team_roster") or None)
             content = "⏱️ **12 hours left!** "
             if mentions:
                 content += "Missing attacks: " + ", ".join(mentions) + " — use `attacks done` or the **✅ I attacked** button after you attack."
@@ -674,14 +733,15 @@ class WarTracker(commands.Cog):
         return await self._send_ping(channel, f"⏰ **{label}**", embed, war=war,
                                      view=self.attack_view)
 
-    async def _missing_mentions(self, war, guild=None):
+    async def _missing_mentions(self, war, guild=None, roster=None):
         def _present(discord_id):
-            if guild is None:
-                return True
             try:
-                return guild.get_member(int(discord_id)) is not None
+                value = int(discord_id)
             except (TypeError, ValueError):
                 return True
+            if guild is not None and guild.get_member(value) is None:
+                return False
+            return not roster or value in roster
 
         missing = war.get("missing_list") or []
         ids = [str(m["id"]) for m in missing
@@ -707,18 +767,37 @@ class WarTracker(commands.Cog):
                 mentions.append(f"<@{discord_id}>")
         return mentions[:50]
 
-    def _display_entries(self, items, guild):
-        """Comma-joined entry names, marking aliases whose member left the guild."""
+    async def _attach_roster(self, war, guild_id, channel_id):
+        """Attach the channel's team and roster for membership-aware displays."""
+        if not war:
+            return war
+        try:
+            team = await asyncio.to_thread(get_team_by_channel, guild_id, channel_id)
+            roster = (await asyncio.to_thread(
+                get_team_players, guild_id, team["id"])) if team else set()
+        except Exception as e:
+            print(f"Team roster attach failed for channel {channel_id}: {e}")
+            team, roster = None, set()
+        war["team"] = team
+        war["team_roster"] = roster
+        return war
+
+    def _display_entries(self, items, guild, roster=None):
+        """Entry names, marking members who left the server or their team."""
         labels = []
         for entry in items:
             label = _entry_label(entry)
             entry_id = entry.get("id") if isinstance(entry, dict) else None
-            if entry_id is not None and guild is not None:
+            if entry_id is not None:
                 try:
-                    if guild.get_member(int(entry_id)) is None:
-                        label = f"{label} (left)"
+                    entry_id = int(entry_id)
                 except (TypeError, ValueError):
-                    pass
+                    entry_id = None
+            if entry_id is not None:
+                if guild is not None and guild.get_member(entry_id) is None:
+                    label = f"{label} (left)"
+                elif roster and entry_id not in roster:
+                    label = f"{label} (left team)"
             labels.append(label)
         text = ", ".join(labels)
         return text[:1000] if len(text) > 1000 else text
@@ -739,12 +818,13 @@ class WarTracker(commands.Cog):
         team = f" — {channel.name}" if getattr(channel, "name", None) else ""
 
         guild = getattr(channel, "guild", None)
+        roster = war.get("team_roster") or None
         if current == "ended":
             return discord.Embed(
                 title=f"🏁 WAR ENDED{team}",
                 color=discord.Color.red(),
                 description=(
-                    f"**Missing attacks ({len(missing)})**: {self._display_entries(missing, guild) or 'None'}\n"
+                    f"**Missing attacks ({len(missing)})**: {self._display_entries(missing, guild, roster) or 'None'}\n"
                     f"**Pings sent:** {sent_count + (1 if WAR_END_KEY in sent else 0)}/{total}"
                 ),
             )
@@ -775,10 +855,10 @@ class WarTracker(commands.Cog):
 
         embed = discord.Embed(title=title, color=color, description="\n".join(lines))
         embed.add_field(name=f"⚠️ Missing ({len(missing)})",
-                        value=self._display_entries(missing, guild) or "None", inline=False)
+                        value=self._display_entries(missing, guild, roster) or "None", inline=False)
         embed.add_field(
             name=f"🏖️ Excused (absence channel) — {len(absent)}",
-            value=self._display_entries(absent, guild) or "None",
+            value=self._display_entries(absent, guild, roster) or "None",
             inline=False,
         )
         team_role = self._team_role(channel, war)
@@ -827,6 +907,8 @@ class WarTracker(commands.Cog):
     async def finish_war(self, channel_id, channel):
         try:
             war = await get_war(channel_id)
+            war = await self._attach_roster(
+                war, getattr(getattr(channel, "guild", None), "id", None), channel_id)
         except Exception as e:
             # A transient read failure must not strand the war with no updater.
             print(f"Could not read war {channel_id} to finish it: {e}")
@@ -914,6 +996,7 @@ class WarTracker(commands.Cog):
 
     async def show_status(self, ctx):
         war = await get_war(ctx.channel.id)
+        war = await self._attach_roster(war, ctx.guild.id, ctx.channel.id)
         await ctx.send(embed=self.build_embed(war, channel=ctx.channel))
 
     async def cancel_war(self, ctx):
@@ -926,6 +1009,7 @@ class WarTracker(commands.Cog):
     async def war_report(self, ctx):
         war = await get_war(ctx.channel.id)
         if not war: return await ctx.send("ℹ️ No war data found.")
+        war = await self._attach_roster(war, ctx.guild.id, ctx.channel.id)
         missing, absent = war.get("missing_list") or [], war.get("absent_list") or []
         embed = discord.Embed(title="🏁 Final War Report", color=discord.Color.red())
         embed.add_field(name=f"❌ Missed Attacks ({len(missing)})", value=join_names(missing) or "Everyone completed attacks!", inline=False)
@@ -1006,7 +1090,7 @@ class WarTracker(commands.Cog):
                 war = await get_war(channel_id)
                 if not war or not war.get("is_active"):
                     return await self._reply_ephemeral(interaction, "ℹ️ No active war here.")
-                cfg = await get_settings(guild.id)
+                cfg = await get_settings(guild.id, channel_id)
                 required = cfg["attacks_required"]
                 my_alias = await self._pick_alias(
                     guild.id, user.id, war.get("missing_list") or [],
@@ -1080,6 +1164,7 @@ class WarTracker(commands.Cog):
             war = await get_war(ctx.channel.id)
             if not war:
                 return await ctx.send("ℹ️ No war data found.")
+            war = await self._attach_roster(war, ctx.guild.id, ctx.channel.id)
             missing, absent = war.get("missing_list") or [], war.get("absent_list") or []
             if sub == "list":
                 if not missing:
@@ -1101,6 +1186,13 @@ class WarTracker(commands.Cog):
             row, error = await self._alias_target(ctx, args)
             if error:
                 return await ctx.send(error)
+            team = await asyncio.to_thread(get_team_by_channel, ctx.guild.id, ctx.channel.id)
+            if team:
+                roster = await asyncio.to_thread(get_team_players, ctx.guild.id, team["id"])
+                if roster and int(row.get("discord_id") or 0) not in roster:
+                    return await ctx.send(
+                        f"❌ `{(row.get('alias_name') or '').lower()}` isn't on **{team.get('name')}**'s roster. "
+                        f"Add them with `!team add @user {team.get('name')}` first.")
             name = (row.get("alias_name") or "").lower()
             entry = {"name": name}
             if row.get("discord_id") is not None:
@@ -1125,6 +1217,7 @@ class WarTracker(commands.Cog):
             war = await get_war(ctx.channel.id)
             if not war:
                 return await ctx.send("ℹ️ No war data found.")
+            war = await self._attach_roster(war, ctx.guild.id, ctx.channel.id)
             absent, missing = war.get("absent_list") or [], war.get("missing_list") or []
             if sub == "list":
                 if not absent:
@@ -1146,6 +1239,13 @@ class WarTracker(commands.Cog):
             row, error = await self._alias_target(ctx, args)
             if error:
                 return await ctx.send(error)
+            team = await asyncio.to_thread(get_team_by_channel, ctx.guild.id, ctx.channel.id)
+            if team:
+                roster = await asyncio.to_thread(get_team_players, ctx.guild.id, team["id"])
+                if roster and int(row.get("discord_id") or 0) not in roster:
+                    return await ctx.send(
+                        f"❌ `{(row.get('alias_name') or '').lower()}` isn't on **{team.get('name')}**'s roster. "
+                        f"Add them with `!team add @user {team.get('name')}` first.")
             name = (row.get("alias_name") or "").lower()
             entry = {"name": name}
             if row.get("discord_id") is not None:
@@ -1182,7 +1282,7 @@ class WarTracker(commands.Cog):
         name = (row.get("alias_name") or "").lower()
         discord_id = row.get("discord_id")
 
-        cfg = await get_settings(ctx.guild.id)
+        cfg = await get_settings(ctx.guild.id, ctx.channel.id)
         required = cfg["attacks_required"]
         async with self.locks[ctx.channel.id]:
             war = await get_war(ctx.channel.id)
@@ -1221,7 +1321,7 @@ class WarTracker(commands.Cog):
             return await ctx.send("❌ Staff only.")
         war = await get_war(ctx.channel.id)
         if not war: return await ctx.send("ℹ️ No war data found.")
-        cfg = await get_settings(ctx.guild.id)
+        cfg = await get_settings(ctx.guild.id, ctx.channel.id)
         required = cfg["attacks_required"]
         counts = {k.lower(): int(v or 0) for k, v in (war.get("attack_counts") or {}).items()}
         absent = {_entry_name(a) for a in war.get("absent_list") or []}
@@ -1345,7 +1445,7 @@ class WarTracker(commands.Cog):
             war = await get_war(message.channel.id)
             if not war or not war.get("is_active"): return
 
-            cfg = await get_settings(message.guild.id)
+            cfg = await get_settings(message.guild.id, message.channel.id)
             required = cfg["attacks_required"]
 
             # Aliases are the single player identity: without one, nothing is logged.
@@ -1476,7 +1576,7 @@ class WarTracker(commands.Cog):
             inline=False,
         )
         embed.add_field(name="Public", value="`!war status` — live-style board with countdowns + ping schedule\n`!war missing list`\n`attacks done` or the **✅ I attacked** button (uses your alias)", inline=False)
-        if is_staff: embed.add_field(name="Staff", value="`!war defence ends <time>`\n`!war attack ends <time>`\n`!war cancel`\n`!war missing add|remove <alias>`\n`!war absent add|remove <alias>`\n`!war attacks <alias> <count>`\n`!war check`\n`!war board` — live updating board\n`!war set role @Role` — role pinged by this channel's announcements\n`!war warning add @user <reason>`", inline=False)
+        if is_staff: embed.add_field(name="Staff", value="`!war defence ends <time>`\n`!war attack ends <time>`\n`!war cancel`\n`!war missing add|remove <alias>`\n`!war absent add|remove <alias>`\n`!war attacks <alias> <count>`\n`!war check`\n`!war board` — live updating board\n`!war set attacks <number>` · `!war set exempt on|off` — this team's war rules\n`!war set role @Role` — role pinged by this channel's announcements\n`!war warning add @user <reason>`", inline=False)
         await ctx.send(embed=embed)
 
 async def setup(bot):

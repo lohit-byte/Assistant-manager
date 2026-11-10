@@ -32,6 +32,7 @@ from cogs.help import Help
 from cogs.maze import MazeTracker
 from cogs.race import (RaceTracker, clean_val, format_amount, parse_amount,
                        parse_dyp_target, parse_node_args, parse_sheet_csv)
+from cogs.team import Teams
 from cogs.war import (
     AttackView,
     WarTracker,
@@ -1116,12 +1117,22 @@ def test_war_absent_add_and_remove_by_alias(clean_db):
 
 
 def seed_team(db, team_id=1, guild=GUILD, name="A", war_channel_id=CHANNEL,
-              race_channel_id=None, team_role_id=None):
+              race_channel_id=None, team_role_id=None,
+              attacks_required=None, exempt_absent=None):
     db.seed("teams", {"id": team_id, "guild_id": guild, "name": name,
                       "war_channel_id": war_channel_id,
                       "race_channel_id": race_channel_id,
-                      "team_role_id": team_role_id})
+                      "team_role_id": team_role_id,
+                      "attacks_required": attacks_required,
+                      "exempt_absent": exempt_absent})
     return team_id
+
+
+def seed_team_player(db, team_id, discord_id, alias=None):
+    db.seed("users", {"discord_id": discord_id})
+    db.seed("team_players", {"team_id": team_id, "discord_id": discord_id})
+    if alias:
+        db.seed("aliases", {"guild_id": GUILD, "discord_id": discord_id, "alias_name": alias})
 
 
 def seed_captain(db, team_id, discord_id):
@@ -1703,8 +1714,10 @@ def test_captain_can_manage_team_war_but_not_guild_settings(clean_db):
 
     run(call(WarTracker.war_group, cog, ctx, "set", "attacks", args="5"))
 
+    # A team channel stores the team's own value; the server default is untouched.
     assert db.rows("war_settings") == []
-    assert any("Staff only" in text for text in ctx.texts)
+    assert db.one("teams", id=1)["attacks_required"] == 5
+    assert not any("Staff only" in text for text in ctx.texts)
 
 
 def test_captain_can_record_attacks_and_set_the_team_role(clean_db):
@@ -2283,7 +2296,7 @@ def test_12h_reminder_keeps_stored_discord_ids(clean_db):
 # ----------------------------------------- help embeds stay inside Discord limits
 
 def test_every_help_page_stays_within_discord_embed_limits(clean_db):
-    topics = (None, "war", "race", "maze", "alias", "ids", "roles", "warning", "pings")
+    topics = (None, "war", "race", "maze", "team", "alias", "ids", "roles", "warning", "pings")
 
     for topic in topics:
         ctx = make_ctx()
@@ -2812,3 +2825,166 @@ def test_12h_reminder_skips_members_who_left(clean_db):
     ))
 
     assert mentions == ["<@900>"]
+
+
+# ------------------------------------ per-team rosters and per-team war rules
+
+def test_team_list_shows_settings_and_roster_count(clean_db):
+    db = clean_db
+    seed_team(db, attacks_required=4, exempt_absent=False)
+    seed_team_player(db, 1, 900, "sam")
+    ctx = make_ctx()
+
+    run(call(Teams.team_group, Teams(FakeBot()), ctx))
+
+    description = ctx.sent[-1][1].description or ""
+    assert "**A**" in description
+    assert "4 attacks" in description
+    assert "absences count" in description
+    assert "👥 1" in description
+
+
+def test_team_add_requires_the_player_to_have_an_alias(clean_db):
+    db = clean_db
+    seed_team(db)
+    ctx = make_ctx()
+    member = FakeMember(900, "Sam", administrator=False, guild=ctx.guild)
+    ctx.guild.members.append(member)
+    ctx.message.mentions = [member]
+
+    run(call(Teams.team_group, Teams(FakeBot()), ctx, "add", args=f"{member.mention} A"))
+
+    assert any("alias" in text.lower() for text in ctx.texts)
+    assert db.rows("team_players") == []
+
+
+def test_team_add_moves_a_player_and_cleans_the_old_team_lists(clean_db):
+    db = clean_db
+    seed_team(db, 1, name="A", war_channel_id=CHANNEL)
+    seed_team(db, 2, name="B", war_channel_id=CHANNEL + 1)
+    seed_team_player(db, 1, 900, "sam")
+    seed_war(db, missing_list=[{"name": "sam", "id": 900}])
+    ctx = make_ctx()
+    member = FakeMember(900, "Sam", administrator=False, guild=ctx.guild)
+    ctx.guild.members.append(member)
+    ctx.message.mentions = [member]
+
+    run(call(Teams.team_group, Teams(FakeBot()), ctx, "add", args=f"{member.mention} B"))
+
+    assert db.one("team_players", discord_id=900)["team_id"] == 2
+    assert db.one("wars", channel_id=CHANNEL)["missing_list"] == []
+    assert any("Moved from" in text for text in ctx.texts)
+
+
+def test_team_players_marks_members_who_left_the_server(clean_db):
+    db = clean_db
+    seed_team(db)
+    seed_team_player(db, 1, 200, "gone")
+    ctx = make_ctx()
+
+    run(call(Teams.team_group, Teams(FakeBot()), ctx, "players", args="A"))
+
+    assert "left the server" in (ctx.sent[-1][1].description or "")
+
+
+def test_team_remove_clears_active_war_lists(clean_db):
+    db = clean_db
+    seed_team(db)
+    seed_team_player(db, 1, 900, "sam")
+    seed_war(db, missing_list=[{"name": "sam", "id": 900}])
+    ctx = make_ctx()
+    member = FakeMember(900, "Sam", administrator=False, guild=ctx.guild)
+    ctx.guild.members.append(member)
+    ctx.message.mentions = [member]
+
+    run(call(Teams.team_group, Teams(FakeBot()), ctx, "remove", args=""))
+
+    assert db.rows("team_players") == []
+    assert db.one("wars", channel_id=CHANNEL)["missing_list"] == []
+
+
+def test_team_captain_can_manage_only_their_own_roster(clean_db):
+    db = clean_db
+    seed_team(db, 1, name="A", war_channel_id=CHANNEL)
+    seed_team(db, 2, name="B", war_channel_id=CHANNEL + 1)
+    seed_captain(db, 1, 900)
+    seed_alias(db, 200, "sam")
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, administrator=False)
+    target = FakeMember(200, "Sam", administrator=False, guild=ctx.guild)
+    ctx.guild.members.append(target)
+    ctx.message.mentions = [target]
+
+    run(call(Teams.team_group, Teams(FakeBot()), ctx, "add", args=f"{target.mention} A"))
+    assert db.one("team_players", discord_id=200)["team_id"] == 1
+
+    ctx.sent.clear()
+    run(call(Teams.team_group, Teams(FakeBot()), ctx, "add", args=f"{target.mention} B"))
+    assert any("Staff only" in text for text in ctx.texts)
+    assert db.one("team_players", discord_id=200)["team_id"] == 1
+
+
+def test_per_team_war_settings_override_the_server_defaults(clean_db):
+    from cogs.war import get_settings
+
+    db = clean_db
+    db.seed("war_settings", {"guild_id": GUILD, "attacks_required": 6, "exempt_absent": True})
+    seed_team(db, attacks_required=4, exempt_absent=False)
+
+    team_settings = run(get_settings(GUILD, CHANNEL))
+    default_settings = run(get_settings(GUILD, CHANNEL + 99))
+
+    assert team_settings["attacks_required"] == 4
+    assert team_settings["exempt_absent"] is False
+    assert team_settings["team"]["name"] == "A"
+    assert default_settings["attacks_required"] == 6
+    assert default_settings["exempt_absent"] is True
+    assert default_settings["team"] is None
+
+
+def test_war_missing_add_requires_a_rostered_player(clean_db):
+    db = clean_db
+    seed_team(db)
+    seed_team_player(db, 1, 900)
+    seed_alias(db, 200, "sam")
+    seed_war(db, missing_list=[])
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(WarTracker.war_missing(war_cog(), ctx, "add", "sam"))
+    assert any("roster" in text.lower() for text in ctx.texts)
+    assert db.one("wars", channel_id=CHANNEL)["missing_list"] == []
+
+    seed_team_player(db, 1, 200)
+    run(WarTracker.war_missing(war_cog(), ctx, "add", "sam"))
+    missing = db.one("wars", channel_id=CHANNEL)["missing_list"]
+    assert [entry["name"] for entry in missing] == ["sam"]
+
+
+def test_war_board_marks_a_player_who_left_the_team(clean_db):
+    db = clean_db
+    ctx = make_ctx(channel_id=CHANNEL)
+    ctx.guild.members.append(FakeMember(200, "Sam", guild=ctx.guild))
+    start = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    war = {
+        "war_start": start,
+        "missing_list": [{"name": "sam", "id": 200}],
+        "absent_list": [],
+        "sent_pings": [],
+        "team_roster": {900},
+    }
+
+    embed = war_cog().build_embed(war, channel=ctx.channel)
+
+    values = {field.name: field.value for field in embed.fields}
+    assert "(left team)" in values["⚠️ Missing (1)"]
+
+
+def test_team_captain_can_set_the_team_exemption_rule(clean_db):
+    db = clean_db
+    seed_team(db, 1, name="A", war_channel_id=CHANNEL)
+    seed_captain(db, 1, 900)
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, administrator=False)
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "set", "exempt", args="off"))
+
+    assert db.one("teams", id=1)["exempt_absent"] is False
+    assert not any("Staff only" in text for text in ctx.texts)

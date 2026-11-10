@@ -168,6 +168,249 @@ async def is_team_staff(m, channel_id: int) -> bool:
     return m.id in ids
 
 
+_roster_cache = {}
+
+
+def get_team_by_channel(guild_id: int, channel_id: int):
+    """The team that owns this war/race channel, if any."""
+    if channel_id is None:
+        return None
+    try:
+        res = supabase.table("teams").select("*").eq("guild_id", guild_id).execute()
+    except Exception as e:
+        print(f"Team channel lookup failed: {e}")
+        return None
+    for team in res.data or []:
+        owned = {
+            str(value) for value in
+            (team.get("war_channel_id"), team.get("race_channel_id"))
+            if value is not None
+        }
+        if str(channel_id) in owned:
+            return team
+    return None
+
+
+def get_team_by_name(guild_id: int, name: str):
+    """Resolve a team by (case-insensitive) exact name, then unique partial match."""
+    wanted = (name or "").strip().lower()
+    if not wanted:
+        return None
+    try:
+        res = supabase.table("teams").select("*").eq("guild_id", guild_id).execute()
+    except Exception as e:
+        print(f"Team name lookup failed: {e}")
+        return None
+    teams = res.data or []
+    for team in teams:
+        if (team.get("name") or "").strip().lower() == wanted:
+            return team
+    partial = [team for team in teams if wanted in (team.get("name") or "").strip().lower()]
+    return partial[0] if len(partial) == 1 else None
+
+
+def get_team_players(guild_id: int, team_id) -> set:
+    """Discord ids currently on one team's roster."""
+    if team_id is None:
+        return set()
+    try:
+        res = supabase.table("team_players").select("discord_id").eq("team_id", team_id).execute()
+    except Exception as e:
+        print(f"Team roster lookup failed: {e}")
+        return set()
+    return {
+        int(row["discord_id"]) for row in (res.data or [])
+        if row.get("discord_id") is not None
+    }
+
+
+def get_team_players_map(guild_id: int) -> dict:
+    """Map team id -> set of roster Discord ids (cached for 60s)."""
+    now = time.time()
+    cached = _roster_cache.get(guild_id)
+    if cached and now - cached[0] < 60:
+        return cached[1]
+    mapping = {}
+    try:
+        teams = supabase.table("teams").select("id").eq("guild_id", guild_id).execute()
+        team_ids = [team["id"] for team in teams.data or [] if team.get("id") is not None]
+        if team_ids:
+            rows = supabase.table("team_players").select(
+                "team_id, discord_id").in_("team_id", team_ids).execute()
+            for row in rows.data or []:
+                if row.get("discord_id") is None:
+                    continue
+                mapping.setdefault(row.get("team_id"), set()).add(int(row["discord_id"]))
+    except Exception as e:
+        print(f"Team roster map lookup failed: {e}")
+        return {}
+    _roster_cache[guild_id] = (now, mapping)
+    return mapping
+
+
+def clear_team_cache(guild_id: int = None) -> None:
+    if guild_id is None:
+        _team_cache.clear()
+        _roster_cache.clear()
+    else:
+        _team_cache.pop(guild_id, None)
+        _roster_cache.pop(guild_id, None)
+
+
+def _roster_names(guild_id: int, discord_id: int) -> set:
+    try:
+        res = supabase.table("aliases").select("alias_name").eq(
+            "guild_id", guild_id).eq("discord_id", discord_id).execute()
+    except Exception:
+        return set()
+    return {
+        (row.get("alias_name") or "").strip().lower()
+        for row in (res.data or []) if row.get("alias_name")
+    }
+
+
+def _team_player_name(entry) -> str:
+    if isinstance(entry, dict):
+        return (entry.get("name") or "").strip().lower()
+    return str(entry or "").strip().lower()
+
+
+def scrub_war_player(guild_id: int, channel_id, discord_id: int, names=None) -> None:
+    """Remove one player from a team war channel's active missing/excused lists."""
+    if channel_id is None:
+        return
+    names = names if names is not None else _roster_names(guild_id, discord_id)
+    try:
+        res = supabase.table("wars").select(
+            "channel_id, missing_list, absent_list").eq(
+            "channel_id", channel_id).eq("is_active", True).execute()
+    except Exception as e:
+        print(f"Team leave war cleanup lookup failed: {e}")
+        return
+    for war in res.data or []:
+        def gone(entry):
+            if isinstance(entry, dict) and entry.get("id") is not None:
+                try:
+                    if int(entry["id"]) == int(discord_id):
+                        return True
+                except (TypeError, ValueError):
+                    pass
+            return _team_player_name(entry) in names
+
+        missing = [entry for entry in war.get("missing_list") or [] if not gone(entry)]
+        absent = [entry for entry in war.get("absent_list") or [] if not gone(entry)]
+        if len(missing) == len(war.get("missing_list") or []) and len(absent) == len(war.get("absent_list") or []):
+            continue
+        supabase.table("wars").update({
+            "missing_list": missing, "absent_list": absent,
+        }).eq("channel_id", war["channel_id"]).execute()
+
+
+def set_team_player(guild_id: int, team_id, discord_id: int) -> list:
+    """Put a player on a team, moving them off any other team in this guild.
+
+    Removes the player from the previous team's active war missing/excused
+    lists (they are no longer waiting on that team) and returns the previous
+    team names. Attack-count history is never rewritten.
+    """
+    ensure_user(discord_id)
+    teams = supabase.table("teams").select(
+        "id, name, war_channel_id").eq("guild_id", guild_id).execute()
+    by_id = {team["id"]: team for team in teams.data or [] if team.get("id") is not None}
+    moved_from = []
+    if by_id:
+        old = supabase.table("team_players").select("team_id").in_(
+            "team_id", list(by_id)).eq("discord_id", discord_id).execute()
+        if any(row.get("team_id") == team_id for row in old.data or []):
+            return []  # already on this team
+        names = _roster_names(guild_id, discord_id)
+        for row in old.data or []:
+            old_team = by_id.get(row.get("team_id"))
+            if old_team is None:
+                continue
+            supabase.table("team_players").delete().eq(
+                "team_id", row.get("team_id")).eq("discord_id", discord_id).execute()
+            scrub_war_player(guild_id, old_team.get("war_channel_id"), discord_id, names)
+            moved_from.append(old_team.get("name") or "?")
+        if old.data:
+            # Remove a duplicate row when the player is already on the target team.
+            supabase.table("team_players").delete().eq(
+                "team_id", team_id).eq("discord_id", discord_id).execute()
+    supabase.table("team_players").insert({
+        "team_id": team_id, "discord_id": discord_id,
+    }).execute()
+    clear_team_cache(guild_id)
+    return moved_from
+
+
+def remove_team_player(guild_id: int, team_id, discord_id: int) -> bool:
+    """Remove a player from one team and clean that team's active war lists."""
+    team = supabase.table("teams").select("war_channel_id").eq(
+        "id", team_id).limit(1).execute()
+    names = _roster_names(guild_id, discord_id)
+    res = supabase.table("team_players").delete().eq(
+        "team_id", team_id).eq("discord_id", discord_id).execute()
+    if res.data:
+        team_row = (team.data or [{}])[0]
+        scrub_war_player(guild_id, team_row.get("war_channel_id"), discord_id, names)
+        clear_team_cache(guild_id)
+        return True
+    return False
+
+
+def get_player_team(guild_id: int, discord_id: int):
+    """The team a player is rostered on in this guild, if any."""
+    mapping = get_team_players_map(guild_id)
+    for team_id, player_ids in mapping.items():
+        if int(discord_id) in player_ids:
+            try:
+                res = supabase.table("teams").select("*").eq(
+                    "guild_id", guild_id).eq("id", team_id).limit(1).execute()
+            except Exception as e:
+                print(f"Player team lookup failed: {e}")
+                return None
+            return res.data[0] if res.data else None
+    return None
+
+
+def get_player_alias(guild_id: int, discord_id: int):
+    """First alias for a player (aliases are the identity used by war/race)."""
+    try:
+        res = supabase.table("aliases").select("alias_name").eq(
+            "guild_id", guild_id).eq("discord_id", discord_id).order(
+            "alias_name").limit(1).execute()
+    except Exception as e:
+        print(f"Player alias lookup failed: {e}")
+        return None
+    return res.data[0].get("alias_name") if res.data else None
+
+
+def get_team_roster(guild_id: int, team: dict) -> list:
+    """Roster rows for one team: {discord_id, aliases: [...]} sorted by alias."""
+    ids = get_team_players(guild_id, team.get("id"))
+    if not ids:
+        return []
+    try:
+        res = supabase.table("aliases").select("alias_name, discord_id").eq(
+            "guild_id", guild_id).in_("discord_id", sorted(ids)).execute()
+    except Exception as e:
+        print(f"Team roster alias lookup failed: {e}")
+        res = None
+    aliases = {}
+    for row in (res.data or []) if res else []:
+        if row.get("discord_id") is None:
+            continue
+        aliases.setdefault(int(row["discord_id"]), []).append(
+            (row.get("alias_name") or "").strip())
+    rows = [
+        {"discord_id": discord_id,
+         "aliases": sorted(name for name in aliases.get(discord_id, []) if name)}
+        for discord_id in ids
+    ]
+    rows.sort(key=lambda row: (row["aliases"][0] if row["aliases"] else "￿", row["discord_id"]))
+    return rows
+
+
 def get_team_role_id(guild_id: int, channel_id: int):
     """The role configured on the team that owns this war/race channel, if any."""
     try:

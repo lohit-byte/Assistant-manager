@@ -178,13 +178,30 @@ CREATE TABLE IF NOT EXISTS teams (
     war_channel_id BIGINT,
     race_channel_id BIGINT,
     team_role_id BIGINT, -- role pinged by this team's war announcements (synced to wars.team_role_id)
+    attacks_required INTEGER, -- NULL = inherit war_settings.attacks_required
+    exempt_absent BOOLEAN, -- NULL = inherit war_settings.exempt_absent
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE (guild_id, name)
 );
+ALTER TABLE teams ADD COLUMN IF NOT EXISTS attacks_required INTEGER;
+ALTER TABLE teams ADD COLUMN IF NOT EXISTS exempt_absent BOOLEAN;
 CREATE UNIQUE INDEX IF NOT EXISTS teams_guild_war_channel_key
     ON teams (guild_id, war_channel_id) WHERE war_channel_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS teams_guild_race_channel_key
     ON teams (guild_id, race_channel_id) WHERE race_channel_id IS NOT NULL;
+
+-- Team roster: which players belong to which team. A player can be on one team
+-- per server; the bot moves them when they are added to another team. The roster
+-- is what `!war missing add` and the 12h reminder validate against, so a player
+-- who left a team stops being treated as an active member of it.
+CREATE TABLE IF NOT EXISTS team_players (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT REFERENCES teams(id) ON DELETE CASCADE,
+    discord_id BIGINT REFERENCES users(discord_id) ON DELETE CASCADE,
+    joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (team_id, discord_id)
+);
+CREATE INDEX IF NOT EXISTS team_players_team_idx ON team_players (team_id);
 
 -- Team captains: a captain is staff for their team channels only.
 CREATE TABLE IF NOT EXISTS team_captains (
@@ -222,6 +239,11 @@ CREATE POLICY teams_authenticated ON teams
 ALTER TABLE team_captains ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS team_captains_authenticated ON team_captains;
 CREATE POLICY team_captains_authenticated ON team_captains
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE team_players ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS team_players_authenticated ON team_players;
+CREATE POLICY team_players_authenticated ON team_players
     FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 ALTER TABLE war_logs ENABLE ROW LEVEL SECURITY;
