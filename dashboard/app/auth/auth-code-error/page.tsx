@@ -25,7 +25,7 @@ export default function AuthErrorPage() {
       </p>
       <Link
         href="/"
-        className="mt-2 inline-flex items-center border border-accent-500 bg-accent-500 px-4 py-2.5 text-sm font-semibold text-ink-950 transition-colors hover:border-slate-200 hover:bg-slate-200"
+        className="mt-2 inline-flex items-center border border-accent-500 bg-accent-500 px-4 py-2.5 text-sm font-semibold text-accent-ink transition-colors hover:border-slate-200 hover:bg-slate-200"
       >
         Return to sign in
       </Link>

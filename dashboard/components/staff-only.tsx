@@ -16,9 +16,15 @@ export function StaffOnlyPanel({ area }: { area: string }) {
           <ShieldAlert className="mx-auto mb-3 h-8 w-8 text-slate-600" aria-hidden />
           <p className="text-lg font-semibold tracking-tight text-slate-200">Staff only</p>
           <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-500">
-            {area} is limited to server staff. Team captains can manage their own team&apos;s war
-            and race channels, and read-only members cannot change server configuration. Ask a
-            server manager if you need something changed.
+            {area} is limited to server staff. Team captains can manage their own team’s war and
+            race channels, and read-only members cannot change server configuration. Ask a server
+            manager if you need something changed.
+          </p>
+          <p className="mx-auto mt-3 max-w-md text-xs leading-relaxed text-slate-500">
+            Need access? Ask a server manager to give you the staff role (or Manage Server) in
+            Discord. To work in another server, use{' '}
+            <span className="font-semibold text-slate-300">Switch server</span> at the top of the
+            sidebar.
           </p>
         </CardBody>
       </Card>

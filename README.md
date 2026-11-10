@@ -28,7 +28,9 @@ A unified Discord bot and web dashboard designed for Monster Legends alliances t
 * **One-stop Overview:** Server settings, teams, captains and the live per-team snapshot on one page.
 * **Teams & Captains:** Pair a war channel with a race channel, name the team, and assign captains who act as staff for that team only (bot commands + dashboard, never settings, billing or other teams).
 * **Activity Rating:** One war + race score and grade (A+ … D) per player, visible to members; the raw attack log and undo trail stay staff/captain-only.
-* **Discord OAuth2:** Secure login and server selection.
+* **Discord OAuth2:** Secure login and server selection. The landing page offers **Sign in** next to **Start free trial**, so returning staff reopen their dashboard without starting a new trial.
+* **Light & Dark appearance:** a per-browser Light / Dark / Match device switch under **Settings**, applied before first paint (no flash) and remembered on that device.
+* **In-context help and confirmations:** every staff control explains what it changes, and every successful save, edit or delete shows a success notification so staff can see it worked.
 * **Paywall & Trials:** 7-Day Free Trial system integrated with Cashfree subscriptions.
 * **Alias Management:** Player self-service alias creation, inline rename (live war lists move with the name) and Staff override tables.
 * **Local Timezones:** Automatic conversion of Maze discount times to the user's local time.

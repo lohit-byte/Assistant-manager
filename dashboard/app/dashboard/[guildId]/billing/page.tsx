@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
 import { ShieldCheck, ArrowRight, Sparkles, Check, Mail, Loader2, ShieldAlert, X, Clock } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
+import { useToast } from '@/lib/toast'
 import { Card, CardBody, CardHeader, Badge, ProgressBar, Alert, PageHeader } from '@/components/ui'
 import { StaffOnlyPanel } from '@/components/staff-only'
 import { formatDate, toDate } from '@/lib/format'
@@ -41,6 +42,10 @@ function BillingContent() {
   const [currency, setCurrency] = useState<Currency>('USD')
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null)
   const [paddle, setPaddle] = useState<Paddle | null>(null)
+  const [paymentError, setPaymentError] = useState<string | null>(null)
+  const toast = useToast()
+  // Keeps the checkout-return toast to one, even while the polling refresh re-renders.
+  const paymentToastShown = useRef(false)
   
   // Initialize Paddle for USD payments
   useEffect(() => {
@@ -75,6 +80,17 @@ function BillingContent() {
     return () => { clearInterval(id); clearTimeout(stop) }
   }, [searchParams, isPremium, refresh])
 
+  // Confirm the paid upgrade exactly once when the checkout redirect brings the user back.
+  useEffect(() => {
+    if (paymentToastShown.current) return
+    if (!searchParams.get('order_id') || !isPremium) return
+    paymentToastShown.current = true
+    toast.success(
+      'Payment received — premium is active.',
+      'The bot keeps running — nothing else is needed.',
+    )
+  }, [isPremium, searchParams, toast])
+
   let daysLeft = 0
   let trialExpired = false
   if (isTrial && trialEnd) {
@@ -89,8 +105,28 @@ function BillingContent() {
   const supportEmail = 'warbot.support@gmail.com'
   const supportHref = `mailto:${supportEmail}?subject=Billing%20Enquiry%20for%20Server%20${guildId}`
 
+  // Checkout failures stay on the page: staff needs the next step, not a browser alert.
+  const paymentErrorAlert = paymentError ? (
+    <Alert
+      tone="red"
+      title="Checkout could not start"
+      className="mb-6"
+      onDismiss={() => setPaymentError(null)}
+    >
+      {paymentError} Try again in a moment. If it still fails, email{' '}
+      <a
+        href={supportHref}
+        className="text-accent-400 underline decoration-accent-500/40 underline-offset-4 hover:text-accent-300"
+      >
+        {supportEmail}
+      </a>{' '}
+      with your server ID ({guildId}) and we’ll sort it out.
+    </Alert>
+  ) : null
+
   const handlePayment = async (plan: typeof PRICING_PLANS[0]) => {
     setLoadingPlan(plan.id)
+    setPaymentError(null)
     try {
       if (currency === 'INR') {
         // --- CASHFREE FLOW (INDIA) ---
@@ -120,7 +156,9 @@ function BillingContent() {
       }
     } catch (error) {
       console.error("Payment failed:", error)
-      alert(error instanceof Error ? error.message : "Could not initiate payment.")
+      setPaymentError(
+        error instanceof Error ? error.message : 'Could not start checkout.',
+      )
     } finally {
       setLoadingPlan(null)
     }
@@ -130,7 +168,12 @@ function BillingContent() {
   if (!isPremium && (!isTrial || trialExpired)) {
     return (
       <div className="max-w-3xl">
-        <h1 className="text-3xl font-bold mb-8">Billing & Plan</h1>
+        <h1 className="text-3xl font-bold mb-3">Billing &amp; Plan</h1>
+        <p className="mb-6 max-w-2xl text-sm leading-relaxed text-slate-400">
+          Pick a plan to turn the bot back on for this server. Prices are charged in {currency}:
+          USD goes through Paddle and INR goes through Cashfree.
+        </p>
+        {paymentErrorAlert}
         <div className="bg-slate-900 border border-danger-500/30 p-8 rounded-xl relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-danger-500 to-accent-500" />
           <div className="flex items-start space-x-4 mb-6">
@@ -155,14 +198,18 @@ function BillingContent() {
             </ul>
           </div>
           <div className="flex gap-4">
-            <button onClick={() => document.getElementById('pricing-plans')?.scrollIntoView({ behavior: 'smooth' })} className="flex-1 py-4 bg-accent-600 hover:bg-accent-500 text-ink-950 rounded-lg font-bold text-lg flex items-center justify-center space-x-2 transition-colors">
+            <button onClick={() => document.getElementById('pricing-plans')?.scrollIntoView({ behavior: 'smooth' })} className="flex-1 py-4 bg-accent-600 hover:bg-accent-500 text-accent-ink rounded-lg font-bold text-lg flex items-center justify-center space-x-2 transition-colors">
               <span>Reactivate Bot & Save Team</span>
               <ArrowRight className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        <div id="pricing-plans" className="mt-8 grid gap-4 sm:grid-cols-2">
+        <p className="mt-8 text-xs leading-relaxed text-slate-500">
+          Choose the plan that fits your team. Yearly plans cost less per month, and every plan
+          opens a secure hosted checkout.
+        </p>
+        <div id="pricing-plans" className="mt-3 grid gap-4 sm:grid-cols-2">
           {PRICING_PLANS.map((plan) => (
             <Card key={plan.id} className={`relative overflow-hidden ${plan.highlight ? 'border-accent-500/50 shadow-lg shadow-accent-900/20' : ''}`}>
               {plan.highlight && <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-accent-500 to-steel-400" />}
@@ -195,7 +242,7 @@ function BillingContent() {
                   <button 
                     onClick={() => handlePayment(plan)}
                     disabled={loadingPlan === plan.id}
-                    className="w-full mt-4 py-3 bg-accent-600 hover:bg-accent-500 text-ink-950 font-bold rounded-xl transition-colors flex justify-center items-center gap-2"
+                    className="w-full mt-4 py-3 bg-accent-600 hover:bg-accent-500 text-accent-ink font-bold rounded-xl transition-colors flex justify-center items-center gap-2"
                   >
                     {loadingPlan === plan.id ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Select Plan'}
                   </button>
@@ -205,9 +252,17 @@ function BillingContent() {
           ))}
         </div>
         <p className="mt-4 text-xs leading-relaxed text-slate-500">
-          Secure checkout via Paddle or Cashfree. Cancel any time; access continues to the end of
-          the paid period. Payments are non-refundable, as described in the{' '}
+          Secure checkout via Paddle (USD) or Cashfree (INR); the provider follows the currency
+          shown. Your card details stay with the payment provider and never touch our servers.
+          Cancel any time; access continues to the end of the paid period. Payments are
+          non-refundable, as described in the{' '}
           <a href="/legal#refund" className="inline-block py-1.5 text-accent-400 underline decoration-accent-500/40 underline-offset-4 hover:text-accent-300">refund policy</a>.
+        </p>
+        <p className="mt-2 text-xs leading-relaxed text-slate-500">
+          Paid but the plan still looks unchanged? Wait a few seconds for the payment provider to
+          confirm, then refresh this page. If it still shows the old plan, email{' '}
+          <a href={supportHref} className="inline-block py-1.5 text-accent-400 underline decoration-accent-500/40 underline-offset-4 hover:text-accent-300">{supportEmail}</a>{' '}
+          with your server ID ({guildId}) and we’ll fix it.
         </p>
       </div>
     )
@@ -219,13 +274,15 @@ function BillingContent() {
       <PageHeader
         eyebrow="Plan & Billing"
         title="Subscription"
-        description="Manage your server's premium status."
+        description={`Manage this server’s premium status. For billing help, email ${supportEmail} with your server ID (${guildId}).`}
         actions={
           <a href={supportHref} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-2 text-sm font-semibold text-slate-50 transition-colors hover:bg-slate-700">
             <Mail className="h-4 w-4" /> Contact Support
           </a>
         }
       />
+
+      {paymentErrorAlert}
 
       <Card className="mb-8">
         <CardBody className="flex flex-col sm:flex-row items-center justify-between gap-6 p-6">
@@ -238,7 +295,7 @@ function BillingContent() {
               <p className="text-sm text-slate-400 mt-1">
                 {isPremium 
                   ? 'Thank you for supporting the bot! Your server has full access.' 
-                  : `You have ${daysLeft} days left in your trial. (Ends ${formatDate(trialEnd)})`}
+                  : `You have ${daysLeft} days left in your trial, which ends ${formatDate(trialEnd)}. Nothing is deleted when it ends — the board just pauses.`}
               </p>
               
               {/* EXPIRY BAR */}
@@ -274,6 +331,11 @@ function BillingContent() {
           <h3 className="text-lg font-bold text-slate-50 flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-accent-400" /> Upgrade / Renew
           </h3>
+
+          <p className="text-xs leading-relaxed text-slate-500">
+            Pick a plan to start premium or keep it running. Yearly plans cost less per month, and
+            every plan opens a secure hosted checkout.
+          </p>
           
           <div className="grid gap-4 sm:grid-cols-2">
             {PRICING_PLANS.map((plan) => (
@@ -308,10 +370,10 @@ function BillingContent() {
                     <button 
                       onClick={() => handlePayment(plan)}
                       disabled={loadingPlan === plan.id}
-                      className="w-full mt-4 py-3 bg-accent-600 hover:bg-accent-500 text-ink-950 font-bold rounded-xl transition-colors flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full mt-4 py-3 bg-accent-600 hover:bg-accent-500 text-accent-ink font-bold rounded-xl transition-colors flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {loadingPlan === plan.id ? (
-                        <><Loader2 className="w-5 h-5 animate-spin" /> Processing...</>
+                        <><Loader2 className="w-5 h-5 animate-spin" /> Processing…</>
                       ) : (
                         <>{isPremium ? 'Extend Plan' : 'Select Plan'} <ArrowRight className="w-4 h-4" /></>
                       )}
@@ -322,9 +384,17 @@ function BillingContent() {
             ))}
           </div>
           <p className="mt-4 text-xs leading-relaxed text-slate-500">
-            Secure checkout via Paddle or Cashfree. Cancel any time; access continues to the end
-            of the paid period. Payments are non-refundable, as described in the{' '}
+            Secure checkout via Paddle (USD) or Cashfree (INR); the provider follows the currency
+            shown. Your card details stay with the payment provider and never touch our servers.
+            Cancel any time; access continues to the end of the paid period. Payments are
+            non-refundable, as described in the{' '}
             <a href="/legal#refund" className="inline-block py-1.5 text-accent-400 underline decoration-accent-500/40 underline-offset-4 hover:text-accent-300">refund policy</a>.
+          </p>
+          <p className="mt-2 text-xs leading-relaxed text-slate-500">
+            Paid but the plan still looks unchanged? Wait a few seconds for the payment provider to
+            confirm, then refresh this page. If it still shows the old plan, email{' '}
+            <a href={supportHref} className="inline-block py-1.5 text-accent-400 underline decoration-accent-500/40 underline-offset-4 hover:text-accent-300">{supportEmail}</a>{' '}
+            with your server ID ({guildId}) and we’ll fix it.
           </p>
         </div>
 
@@ -359,7 +429,7 @@ function BillingContent() {
             </Card>
           ) : null}
           <Card>
-            <CardHeader title="What's included" icon={<ShieldCheck className="w-5 h-5" />} />
+            <CardHeader title="What’s included" icon={<ShieldCheck className="w-5 h-5" />} />
             <CardBody>
               <ul className="space-y-3">
                 {PLAN_FEATURES.map((feature, idx) => (

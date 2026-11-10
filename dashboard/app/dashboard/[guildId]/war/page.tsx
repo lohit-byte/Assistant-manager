@@ -16,6 +16,7 @@ import {
 } from '@/lib/data'
 import { computeRatings, type RatingRow } from '@/lib/rating'
 import { createClient } from '@/lib/supabase/client'
+import { useToast } from '@/lib/toast'
 import { DEFAULT_ATTACKS_REQUIRED, MAX_ATTACKS_REQUIRED } from '@/lib/constants'
 import {
   formatDateTime, getWarWindow, isSnowflake, warPhaseLabel,
@@ -84,6 +85,7 @@ export default function WarPage() {
   const { guildId, isStaff, teams, canManageChannel } = useGuild()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const toast = useToast()
 
   const channelId = searchParams.get('channel')
   // Staff edit everywhere; a captain only edits the channels of the team they captain.
@@ -215,7 +217,10 @@ export default function WarPage() {
     setBusy('settings')
     try {
       await saveWarSettings(createClient(), guildId, { attacks_required: settings.attacks_required, exempt_absent: settings.exempt_absent })
-      setFeedback({ tone: 'green', text: 'War settings saved.' })
+      toast.success(
+        'War settings saved.',
+        `Every team in this server now needs ${settings.attacks_required} attacks per player to count as complete.`,
+      )
     } catch (caught) { setFeedback({ tone: 'red', text: 'Could not save.' }) } finally { setBusy(null) }
   }
 
@@ -231,12 +236,16 @@ export default function WarPage() {
       // reads, so both editors agree.
       await saveWarTeamRole(createClient(), channelId, ratingTeam?.id ?? null, roleId || null)
       setWar(await getWar(createClient(), channelId))
-      setFeedback({
-        tone: 'green',
-        text: roleId
-          ? `Team role saved — announcements in this channel will ping it${ratingTeam ? ', and the team setup shows it too' : ''}.`
-          : 'Team role cleared.',
-      })
+      if (roleId) {
+        toast.success(
+          'Team role saved.',
+          ratingTeam
+            ? 'Announcements in this channel ping it, and the team setup shows the same role.'
+            : 'Announcements in this channel ping it instead of @here.',
+        )
+      } else {
+        toast.success('Team role cleared.', 'Announcements in this channel fall back to @here.')
+      }
     } catch (caught) {
       setFeedback({ tone: 'red', text: 'Could not save the team role.' })
     } finally {
@@ -257,7 +266,10 @@ export default function WarPage() {
       await updateWar(createClient(), channelId, { missing_list: nextMissing })
       setMissingAlias('')
       await load('refresh')
-      setFeedback({ tone: 'green', text: `${missingAlias} added to the missing list.` })
+      toast.success(
+        `${alias.alias_name} added to the missing list.`,
+        'The bot’s war check now counts them as short.',
+      )
     } catch (caught) {
       setFeedback({ tone: 'red', text: 'Could not update the missing list.' })
     } finally {
@@ -273,6 +285,11 @@ export default function WarPage() {
         missing_list: missing.filter((entry) => entry.name.toLowerCase() !== name.toLowerCase()),
       })
       await load('refresh')
+      const displayName = aliases.find((entry) => entry.alias_name.toLowerCase() === name.toLowerCase())?.alias_name ?? name
+      toast.success(
+        `Removed ${displayName} from the missing list.`,
+        'This only edits the missing list; attack reports stay in the log.',
+      )
     } catch (caught) {
       setFeedback({ tone: 'red', text: 'Could not update the missing list.' })
     } finally {
@@ -287,7 +304,10 @@ export default function WarPage() {
       await addWarning(createClient(), guildId, warningId, warningReason, null)
       setWarnings(await listWarnings(createClient(), guildId))
       setWarningId(''); setWarningReason('')
-      setFeedback({ tone: 'green', text: 'Warning recorded successfully.' })
+      toast.success(
+        'Warning recorded.',
+        'Appears in Recorded warnings below. The bot does not message the player automatically.',
+      )
     } catch (e) { setFeedback({ tone: 'red', text: 'Could not record warning.' }) } finally { setBusy(null) }
   }
 
@@ -296,6 +316,7 @@ export default function WarPage() {
     try {
       await deleteWarning(createClient(), guildId, id)
       setWarnings((current) => current.filter((w) => w.id !== id))
+      toast.success('Warning removed.', 'It is deleted from this server’s warning list.')
     } finally {
       setBusy(null)
     }
@@ -308,6 +329,7 @@ export default function WarPage() {
       <PageHeader
         eyebrow="War Tracker (Multi-Team)"
         title="War"
+        description="Live war state for one team channel at a time. Pick a channel to see its timer, attendance and rating; the staff settings and warnings on the right apply to the whole server."
         actions={
           <div className="flex items-center gap-2">
             {availableChannels.length > 0 && (
@@ -315,6 +337,7 @@ export default function WarPage() {
                 <select
                   value={channelId || ''}
                   onChange={(e) => router.push(`?channel=${e.target.value}`)}
+                  aria-label="War channel"
                   className="appearance-none bg-slate-900 border border-slate-700 text-slate-50 text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:border-accent-500"
                 >
                   {availableChannels.map(id => <option key={id} value={id}>Team Channel ({id})</option>)}
@@ -322,7 +345,7 @@ export default function WarPage() {
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
               </div>
             )}
-            <Button variant="secondary" onClick={() => load('refresh')}><RefreshCw className="h-4 w-4" /></Button>
+            <Button variant="secondary" onClick={() => load('refresh')} aria-label="Refresh war data"><RefreshCw className="h-4 w-4" /></Button>
           </div>
         }
       />
@@ -366,7 +389,7 @@ export default function WarPage() {
                       <div className="grid grid-cols-3 gap-3 text-center">
                         <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><p className="text-xs text-slate-500">Missing</p><p className="mt-1 text-xl font-bold text-warn-300">{missing.length}</p></div>
                         <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><p className="text-xs text-slate-500">Excused</p><p className="mt-1 text-xl font-bold text-steel-400">{excused.length}</p></div>
-                        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><p className="text-xs text-slate-500">Logged</p><p className="mt-1 text-xl font-bold text-slate-50">{Object.keys(counts).length}</p></div>
+                        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><p className="text-xs text-slate-500" title="Players with at least one logged attack">Players logged</p><p className="mt-1 text-xl font-bold text-slate-50">{Object.keys(counts).length}</p></div>
                       </div>
                     </>
                   ) : <EmptyState icon={<Swords className="h-7 w-7" />} title="No active war for this channel" />}
@@ -378,7 +401,7 @@ export default function WarPage() {
                   <Card>
                     <CardHeader
                       title="Announcements (this channel)"
-                      description="Pings are only sent for war announcements."
+                      description="Per war channel. War announcements in this channel ping this role instead of @here."
                       icon={<Users className="h-5 w-5" />}
                     />
                     <CardBody className="space-y-3">
@@ -386,7 +409,7 @@ export default function WarPage() {
                         <>
                           <Field
                             label="Team role ID"
-                            hint="Announcements in this channel ping this role instead of @here. Leave empty to clear."
+                            hint="Paste the role ID (17–20 digits) from Discord. Saving changes what war announcements ping in this channel and updates the team setup. Leave empty to clear."
                           >
                             <TextInput
                               value={teamRole}
@@ -408,16 +431,24 @@ export default function WarPage() {
                   </Card>
 
                   <Card>
-                    <CardHeader title="Attendance & counts" description={`Required: ${required} attacks per player`} icon={<Swords className="h-5 w-5" />} />
+                    <CardHeader title="Attendance & counts" description={`Required: ${required} attacks per player, set in War settings on the right.`} icon={<Swords className="h-5 w-5" />} />
                     <CardBody className="space-y-4">
+                      {canManage ? (
+                        <p className="text-xs leading-relaxed text-slate-500">
+                          Add a player when the bot’s count is short: pick their alias and choose Add
+                          Missing. Removing a player only edits this missing list — it never changes
+                          the attack log.
+                        </p>
+                      ) : null}
                       {canManage ? (
                         <div className="flex flex-col gap-2 sm:flex-row">
                           <select
                             value={missingAlias}
                             onChange={(e) => setMissingAlias(e.target.value)}
+                            aria-label="Player to add to the missing list"
                             className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-50 focus:border-accent-500 sm:flex-1"
                           >
-                            <option value="" disabled>Select a player (alias)...</option>
+                            <option value="" disabled>Select a player (alias)…</option>
                             {aliases.map((alias) => (
                               <option key={alias.id} value={alias.alias_name.toLowerCase()}>
                                 {alias.alias_name}
@@ -576,7 +607,11 @@ export default function WarPage() {
         <div className="space-y-6">
           {!isStaff ? (
             <Card>
-              <CardHeader title="War Settings (Global)" icon={<Save className="h-5 w-5" />} />
+              <CardHeader
+                title="War Settings (Global)"
+                description="Server-wide: every team in this server uses the same target."
+                icon={<Save className="h-5 w-5" />}
+              />
               <CardBody className="space-y-2">
                 <p className="text-sm text-slate-300">
                   Required attacks per player:{' '}
@@ -587,11 +622,18 @@ export default function WarPage() {
             </Card>
           ) : (
             <Card>
-              <CardHeader title="War Settings (Global)" icon={<Save className="h-5 w-5" />} />
+              <CardHeader
+                title="War Settings (Global)"
+                description="Server-wide: every team in this server uses the same target."
+                icon={<Save className="h-5 w-5" />}
+              />
               <CardBody className="space-y-6">
-                <Field label="Required Attacks">
+                <Field
+                  label="Required Attacks"
+                  hint={`How many attacks each player should use in a war (1–${MAX_ATTACKS_REQUIRED}). It decides who shows as missing and feeds the war part of the team rating.`}
+                >
                   <div className="flex items-center gap-4">
-                    <input type="range" min="1" max={MAX_ATTACKS_REQUIRED} value={settings.attacks_required} onChange={(e) => setSettings({...settings, attacks_required: parseInt(e.target.value)})} className="w-full accent-accent-500" />
+                    <input type="range" min="1" max={MAX_ATTACKS_REQUIRED} value={settings.attacks_required} onChange={(e) => setSettings({...settings, attacks_required: parseInt(e.target.value)})} aria-label="Required attacks per player" className="w-full accent-accent-500" />
                     <div className="flex h-10 w-12 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-lg font-bold text-accent-300">{settings.attacks_required}</div>
                   </div>
                 </Field>
@@ -601,16 +643,29 @@ export default function WarPage() {
           )}
 
           <Card>
-            <CardHeader title="Warnings (Global)" description={isStaff ? 'Manage player warnings' : 'Recorded warnings — staff manage these'} icon={<AlertTriangle className="h-5 w-5" />} />
+            <CardHeader
+              title="Warnings (Global)"
+              description={
+                isStaff
+                  ? 'Staff records for this server. Adding one saves it here; the bot does not message the player automatically.'
+                  : 'Staff records for this server. Only staff can add or delete them.'
+              }
+              icon={<AlertTriangle className="h-5 w-5" />}
+            />
             <CardBody className="space-y-4">
               {isStaff ? (
                 <div className="space-y-3">
+                  <p className="text-xs leading-relaxed text-slate-500">
+                    Choose the player, type a short reason, then add the warning. It appears in
+                    Recorded warnings below and in Discord with `!warning list`.
+                  </p>
                   <select
                     value={warningId}
                     onChange={(e) => setWarningId(e.target.value)}
+                    aria-label="Player to warn"
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-50 focus:border-accent-500"
                   >
-                    <option value="" disabled>Select a player (alias)...</option>
+                    <option value="" disabled>Select a player (alias)…</option>
                     {aliases.map(a => (
                       <option key={a.id} value={String(a.discord_id)}>
                         {a.alias_name} ({a.discord_id})
@@ -618,7 +673,7 @@ export default function WarPage() {
                     ))}
                   </select>
 
-                  <TextInput placeholder="Reason for warning..." value={warningReason} onChange={e => setWarningReason(e.target.value)} />
+                  <TextInput placeholder="Reason for warning…" aria-label="Reason for warning" value={warningReason} onChange={e => setWarningReason(e.target.value)} />
 
                   <Button onClick={submitWarning} loading={busy === 'warning'} className="w-full">
                     <Plus className="h-4 w-4 mr-2" /> Add Warning

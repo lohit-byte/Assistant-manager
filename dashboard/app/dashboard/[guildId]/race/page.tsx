@@ -7,6 +7,7 @@ import { useGuild } from '@/components/guild-shell'
 import { Alert, Badge, Button, Card, CardBody, CardHeader, Divider, EmptyState, Field, PageHeader, ProgressBar, Spinner, Stat, TextInput } from '@/components/ui'
 import { getRaceState, listAliases, listRaceLogs, saveRaceState } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
+import { useToast } from '@/lib/toast'
 import { NODES_PER_LAP } from '@/lib/constants'
 import { formatDateTime, percent } from '@/lib/format'
 import { parseNodeSheet } from '@/lib/node-sheet'
@@ -45,6 +46,7 @@ export default function RacePage() {
   const { guildId, isStaff, canManageChannel } = useGuild()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const toast = useToast()
 
   const channelId = searchParams.get('channel')
   // Staff edit everywhere; captains only on the race channel of the team they captain.
@@ -135,7 +137,15 @@ export default function RacePage() {
     setBusy('target')
     try {
       await saveRaceState(createClient(), channelId, guildId, { target_laps: draft.target_laps })
-      setFeedback({ tone: 'green', text: 'Lap target updated.' })
+      const nextLaps = draft.target_laps ?? 0
+      if (nextLaps > 0) {
+        toast.success(
+          `Lap target set to ${nextLaps}.`,
+          'The progress hint on this page and the bot’s race status use it.',
+        )
+      } else {
+        toast.success('Lap target cleared.', 'This team no longer shows a target.')
+      }
     } catch (e) { setFeedback({ tone: 'red', text: 'Could not save target.' }) } finally { setBusy(null) }
   }
 
@@ -170,8 +180,15 @@ export default function RacePage() {
           tone: 'amber',
           text: `Sheet "${sheetName}" uploaded with ${nodeCount} node${nodeCount === 1 ? '' : 's'}; ${warnings.length} skipped: ${warnings.slice(0, 3).join(' ')}`,
         })
+        toast.success(
+          `Sheet “${sheetName}” uploaded.`,
+          `${nodeCount} node${nodeCount === 1 ? '' : 's'} saved; ${warnings.length} skipped. See the notice above.`,
+        )
       } else {
-        setFeedback({ tone: 'green', text: `Sheet "${sheetName}" uploaded with ${nodeCount} node${nodeCount === 1 ? '' : 's'}!` })
+        toast.success(
+          `Sheet “${sheetName}” uploaded.`,
+          `${nodeCount} node${nodeCount === 1 ? '' : 's'} saved for this server. Choose it under Active Node Sheet.`,
+        )
       }
       setSheetName('')
       load('refresh')
@@ -190,11 +207,14 @@ export default function RacePage() {
         // Empty `active_race_sheet` is exactly what the bot reads as "use the bundled sheet".
         await saveRaceState(createClient(), channelId, guildId, { active_race_sheet: null })
         setActiveSheet(null)
-        setFeedback({ tone: 'green', text: 'Now using the default (bundled) node sheet.' })
+        toast.success(
+          'Using the default (bundled) sheet.',
+          'This team uses the node sheet shipped with the bot.',
+        )
       } else {
         await saveRaceState(createClient(), channelId, guildId, { active_race_sheet: value })
         setActiveSheet(value)
-        setFeedback({ tone: 'green', text: `Now using sheet: ${value}` })
+        toast.success(`Using the sheet “${value}”.`, 'The bot reads its nodes from this sheet.')
       }
     } catch (e) {
       setFeedback({ tone: 'red', text: 'Could not select the sheet.' })
@@ -220,17 +240,18 @@ export default function RacePage() {
       <PageHeader
         eyebrow="Race Live Tracker"
         title="Race"
+        description="Live race progress for one team. The bot logs every task from Discord; staff and the team captain set the lap target and choose the node sheet here."
         actions={
           <div className="flex items-center gap-2">
             {availableChannels.length > 0 && (
               <div className="relative">
-                <select value={channelId} onChange={(e) => router.push(`?channel=${e.target.value}`)} className="appearance-none bg-slate-900 border border-slate-700 text-slate-50 text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:border-accent-500">
+                <select value={channelId} onChange={(e) => router.push(`?channel=${e.target.value}`)} aria-label="Race channel" className="appearance-none bg-slate-900 border border-slate-700 text-slate-50 text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:border-accent-500">
                   {availableChannels.map(id => <option key={id} value={id}>Team Channel ({id})</option>)}
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
               </div>
             )}
-            <Button variant="secondary" onClick={() => load('refresh')}><RefreshCw className="h-4 w-4" /></Button>
+            <Button variant="secondary" onClick={() => load('refresh')} aria-label="Refresh race data"><RefreshCw className="h-4 w-4" /></Button>
           </div>
         }
       />
@@ -292,11 +313,15 @@ export default function RacePage() {
 
           {canManage ? (
             <Card>
-              <CardHeader title="Race Automation" description="Choose the node sheet and, for staff, upload a community JSON sheet." icon={<ChevronRight className="h-5 w-5" />} />
+              <CardHeader title="Race Automation" description="Set this team’s lap target and node sheet. Staff can also upload a sheet that the whole server shares." icon={<ChevronRight className="h-5 w-5" />} />
               <CardBody className="space-y-6">
                 <div className="flex items-end gap-3">
-                  <Field label="Team Lap Target" className="flex-1">
-                    <TextInput type="number" value={String(targetLaps)} onChange={(e) => setDraft({...draft, target_laps: parseInt(e.target.value) || 0})} />
+                  <Field
+                    label="Team Lap Target"
+                    className="flex-1"
+                    hint="How many laps this team is racing for. It sets the % complete hint here and the target the bot shows in its race status. Enter 0 to clear it."
+                  >
+                    <TextInput type="number" aria-label="Team lap target" value={String(targetLaps)} onChange={(e) => setDraft({...draft, target_laps: parseInt(e.target.value) || 0})} />
                   </Field>
                   <Button onClick={updateTargetLaps} loading={busy === 'target'} className="mb-0.5">Save Target</Button>
                 </div>
@@ -306,12 +331,13 @@ export default function RacePage() {
                 <div className="space-y-4">
                   <Field
                     label="Active Node Sheet"
-                    hint="“default (bundled)” is the sheet shipped with the bot. Server sheets override it."
+                    hint="“default (bundled)” comes from the bot. Picking a server sheet overrides it for this team only, and the change applies immediately."
                   >
                     <select
                       value={bundled ? BUNDLED_SHEET : activeSheet ?? BUNDLED_SHEET}
                       onChange={(e) => void selectSheet(e.target.value)}
                       disabled={busy === 'select'}
+                      aria-label="Active node sheet"
                       className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-slate-50"
                     >
                       <option value={BUNDLED_SHEET}>default (bundled)</option>
@@ -322,11 +348,17 @@ export default function RacePage() {
                   {isStaff ? (
                     <>
                       <div className="grid gap-4 sm:grid-cols-[1fr_2fr]">
-                        <Field label="Sheet Name">
+                        <Field
+                          label="Sheet Name"
+                          hint="A short name you will recognise. Uploading with a name that already exists replaces that server sheet."
+                        >
                           <TextInput value={sheetName} onChange={e => setSheetName(e.target.value)} placeholder="e.g. Godzilla" />
                         </Field>
-                        <Field label="Paste JSON Data">
-                          <textarea value={jsonInput} onChange={e => setJsonInput(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm font-mono text-slate-300 h-24" />
+                        <Field
+                          label="Paste JSON Data"
+                          hint="Paste nodes keyed by lap.node, each with ofa, dyp and je strings. Malformed nodes are skipped and listed after upload."
+                        >
+                          <textarea value={jsonInput} onChange={e => setJsonInput(e.target.value)} aria-label="Node sheet JSON data" className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm font-mono text-slate-300 h-24" />
                         </Field>
                       </div>
                       <Button onClick={uploadSheet} loading={busy === 'sheet'} disabled={!sheetName || !jsonInput} className="w-full">

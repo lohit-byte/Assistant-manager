@@ -20,6 +20,7 @@ import { StaffOnlyPanel } from '@/components/staff-only'
 import { addAlias, deleteAlias, listAliases, renameAlias } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
 import { isSnowflake } from '@/lib/format'
+import { useToast } from '@/lib/toast'
 import type { Alias } from '@/lib/types'
 
 export default function AliasesPage() {
@@ -30,10 +31,11 @@ export default function AliasesPage() {
 
 function AliasesContent() {
   const { guildId } = useGuild()
+  const toast = useToast()
   const [aliases, setAliases] = useState<Alias[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
-  const [feedback, setFeedback] = useState<{ tone: 'green' | 'red'; text: string } | null>(null)
+  const [feedback, setFeedback] = useState<{ tone: 'red'; text: string } | null>(null)
 
   const [query, setQuery] = useState('')
   const [aliasName, setAliasName] = useState('')
@@ -67,17 +69,24 @@ function AliasesContent() {
       await addAlias(createClient(), guildId, discordId, name)
       setAliases(await listAliases(createClient(), guildId))
       setAliasName(''); setDiscordId('')
-      setFeedback({ tone: 'green', text: `Alias “${name}” saved.` })
+      toast.success(
+        `Alias “${name}” saved.`,
+        'War lists use this name instead of an @mention, so nobody gets pinged.',
+      )
     } catch (caught) { setFeedback({ tone: 'red', text: 'Could not save alias.' }) }
     finally { setBusy(null) }
   }
 
   const remove = async (alias: Alias) => {
-    if (!window.confirm(`Delete “${alias.alias_name}”?`)) return
+    if (!window.confirm(`Delete “${alias.alias_name}”? Past war history stays under this name.`)) return
     setBusy(`delete-${alias.id}`); setFeedback(null)
     try {
       await deleteAlias(createClient(), alias.id)
       setAliases((current) => current.filter((item) => item.id !== alias.id))
+      toast.success(
+        `Alias “${alias.alias_name}” deleted.`,
+        'It is gone from future war lists. Past war history stays under the name.',
+      )
     } catch (caught) { setFeedback({ tone: 'red', text: 'Could not delete alias.' }) }
     finally { setBusy(null) }
   }
@@ -102,10 +111,10 @@ function AliasesContent() {
       await renameAlias(createClient(), guildId, alias, name)
       setAliases(await listAliases(createClient(), guildId))
       cancelRename()
-      setFeedback({
-        tone: 'green',
-        text: `Renamed “${alias.alias_name}” to “${name.toLowerCase()}”. Live war counts, missing and absent lists were updated.`,
-      })
+      toast.success(
+        `Renamed “${alias.alias_name}” to “${name.toLowerCase()}”.`,
+        'Live war counts, missing and absent lists follow the new name.',
+      )
     } catch (caught) {
       // A duplicate name comes back as a user-facing message from renameAlias.
       setFeedback({
@@ -124,26 +133,30 @@ function AliasesContent() {
       <PageHeader
         eyebrow="Roster"
         title="Aliases"
-        description="Map in-game names to Discord users. The bot uses these instead of pinging users, and renaming keeps the player's live war data attached."
+        description="Map in-game names to Discord users. War lists use the alias instead of an @mention, so you can list players safely without pinging anyone. Renaming keeps the player’s live war counts and lists attached."
         actions={<Button variant="secondary" onClick={() => load('refresh')}><RefreshCw className="h-4 w-4" /> Refresh</Button>}
       />
 
       {feedback && <Alert tone={feedback.tone} className="mb-6" onDismiss={() => setFeedback(null)}>{feedback.text}</Alert>}
 
       <Card className="mb-6">
-        <CardHeader title="Add or update alias" description="Enter the user's ID and their alias." icon={<UserRound className="h-5 w-5" />} />
+        <CardHeader title="Add or update alias" description="Enter a Discord user ID and the name they use in game. Saving an alias that already exists updates its Discord ID; use the pencil to rename instead." icon={<UserRound className="h-5 w-5" />} />
         <CardBody>
           <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-end">
-            <Field label="Discord user ID" hint="Right-click user → Copy ID.">
+            <Field label="Discord user ID" hint="Right-click the user in Discord, then Copy ID.">
               <TextInput value={discordId} onChange={(event) => setDiscordId(event.target.value)} placeholder="e.g. 123456789012345678" inputMode="numeric" />
             </Field>
-            <Field label="Alias" hint="The name they use in-game.">
+            <Field label="Alias" hint="The name they use in war lists. It is saved lower-case.">
               <TextInput value={aliasName} onChange={(event) => setAliasName(event.target.value)} placeholder="e.g. lohit" />
             </Field>
             <Button onClick={submit} loading={busy === 'add'} disabled={!aliasName.trim() || !discordId.trim()} className="mb-0.5">
               <Plus className="h-4 w-4" /> Save
             </Button>
           </div>
+          <p className="mt-3 text-xs leading-relaxed text-slate-500">
+            Save adds the alias, or updates the Discord ID if that alias already exists. Aliases
+            keep war lists readable without mentioning anyone.
+          </p>
         </CardBody>
       </Card>
 
@@ -157,8 +170,14 @@ function AliasesContent() {
         <CardBody className="space-y-4">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-            <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search..." className="pl-9" />
+            <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search…" aria-label="Search aliases by name or Discord ID" className="pl-9" />
           </div>
+
+          <p className="text-xs leading-relaxed text-slate-500">
+            War lists use these names instead of @mentions. Deleting an alias removes it from
+            future lists — past war history stays under the name. Renaming with the pencil keeps
+            live war counts and lists.
+          </p>
 
           {filtered.length === 0 ? (
             <EmptyState icon={<Users className="h-7 w-7" />} title="No aliases found" description="Add the first alias above." />

@@ -4,74 +4,89 @@ import type { Config } from 'tailwindcss'
  * The war board theme.
  *
  * The app used Tailwind's default indigo/slate scales. They are remapped here to the board
- * palette so every existing page inherits the new system without a risky rewrite:
- *   slate  -> warm bone greys (AA checked on the #0c0d0a ground)
+ * palette so every existing page inherits the system without a risky rewrite:
+ *   slate  -> warm bone greys
  *   indigo -> signal orange, the one accent
  *   ink    -> matte board surfaces
+ *
+ * Every value is a CSS variable defined in app/globals.css, so the same utility classes render
+ * the dark board and the warm-paper light theme (`[data-theme="light"]`). The variables keep the
+ * alpha channel working, which is what the `white/[0.08]` hairlines across the app rely on.
  * The DESIGN.md file has the role names and contrast notes.
  */
+const token = (name: string) => `rgb(var(${name}) / <alpha-value>)`
+
 const config: Config = {
   content: [
     './pages/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
     './app/**/*.{js,ts,jsx,tsx,mdx}',
+    // lib/ holds shared UI (the toast viewport) whose utility classes must be generated too.
+    './lib/**/*.{js,ts,jsx,tsx,mdx}',
   ],
   theme: {
     extend: {
       colors: {
         ink: {
-          950: '#0c0d0a',
-          900: '#10110c',
-          800: '#12130e',
-          700: '#181a13',
-          600: '#23251c',
+          950: token('--c-ink-950'),
+          900: token('--c-ink-900'),
+          800: token('--c-ink-800'),
+          700: token('--c-ink-700'),
+          600: token('--c-ink-600'),
         },
         accent: {
-          100: '#ffe4d5',
-          200: '#ffc6ac',
-          300: '#ffa07a',
-          400: '#ff8148',
-          500: '#ff6b2c',
-          600: '#e2500f',
-          700: '#b23d0b',
-          800: '#7d2a07',
+          100: token('--c-accent-100'),
+          200: token('--c-accent-200'),
+          300: token('--c-accent-300'),
+          400: token('--c-accent-400'),
+          500: token('--c-accent-500'),
+          600: token('--c-accent-600'),
+          700: token('--c-accent-700'),
+          800: token('--c-accent-800'),
         },
+        // Text colour for anything sitting on a solid accent/danger/sage fill. It stays dark in
+        // both themes because the fill (the signal orange) stays bright in both.
+        'accent-ink': token('--c-accent-ink'),
+        // Small solid elements that must stay light in both themes (toggle knob, logo ticks).
+        paper: token('--c-paper'),
         steel: {
-          200: '#d3dee8',
-          300: '#c1d0dd',
-          400: '#a9bccf',
-          500: '#8ba1b6',
-          600: '#6d8499',
+          200: token('--c-steel-200'),
+          300: token('--c-steel-300'),
+          400: token('--c-steel-400'),
+          500: token('--c-steel-500'),
+          600: token('--c-steel-600'),
         },
         sage: {
-          300: '#b7ceb0',
-          400: '#a3c19a',
-          500: '#93b48a',
+          300: token('--c-sage-300'),
+          400: token('--c-sage-400'),
+          500: token('--c-sage-500'),
         },
         danger: {
-          300: '#f0a294',
-          400: '#e88a78',
-          500: '#e2604a',
-          600: '#c14432',
+          300: token('--c-danger-300'),
+          400: token('--c-danger-400'),
+          500: token('--c-danger-500'),
+          600: token('--c-danger-600'),
         },
         warn: {
-          300: '#efd39a',
-          400: '#e8bf6e',
-          500: '#d9a94e',
+          300: token('--c-warn-300'),
+          400: token('--c-warn-400'),
+          500: token('--c-warn-500'),
         },
+        // The alpha hairlines (`border-white/[0.1]`) flip to warm ink on paper in light mode.
+        white: token('--c-white'),
         // Warm replacements for Tailwind's cool slate scale.
         slate: {
-          50: '#f7f3ea',
-          100: '#f3eee2',
-          200: '#e4ded0',
-          300: '#cec7b7',
-          400: '#b3ac9d',
-          500: '#a29c8e',
-          600: '#8f897b',
-          700: '#5f5a50',
-          800: '#3a372f',
-          900: '#23211b',
-          950: '#12130f',
+          50: token('--c-slate-50'),
+          100: token('--c-slate-100'),
+          200: token('--c-slate-200'),
+          300: token('--c-slate-300'),
+          400: token('--c-slate-400'),
+          500: token('--c-slate-500'),
+          600: token('--c-slate-600'),
+          700: token('--c-slate-700'),
+          800: token('--c-slate-800'),
+          900: token('--c-slate-900'),
+          950: token('--c-slate-950'),
         },
       },
       fontFamily: {

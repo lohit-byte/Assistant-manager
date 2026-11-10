@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowUpRight,
   Check,
+  LogIn,
   Menu,
   X,
 } from 'lucide-react'
@@ -127,7 +128,17 @@ export default function Landing() {
             </a>
           ))}
         </nav>
-        <div className="hidden items-center gap-2 sm:flex">
+        <div className="hidden items-center gap-2 lg:flex">
+          <button
+            type="button"
+            onClick={signIn}
+            disabled={loading}
+            className={buttonClass('secondary', 'sm')}
+            title="Already have a dashboard? Sign in with Discord"
+          >
+            <LogIn className="h-3.5 w-3.5" aria-hidden />
+            {hero.loginCta}
+          </button>
           <button
             type="button"
             onClick={signIn}
@@ -140,7 +151,7 @@ export default function Landing() {
         </div>
         <button
           type="button"
-          className="border border-white/[0.14] p-2 text-slate-300 sm:hidden"
+          className="border border-white/[0.14] p-2 text-slate-300 lg:hidden"
           aria-expanded={menuOpen}
           aria-controls="mobile-nav"
           aria-label="Open menu"
@@ -188,6 +199,17 @@ export default function Landing() {
               <DiscordIcon className="h-4 w-4" />
               {hero.primaryCta}
             </Button>
+            <Button
+              size="lg"
+              variant="secondary"
+              onClick={signIn}
+              loading={loading}
+              className="w-full"
+            >
+              <LogIn className="h-4 w-4" aria-hidden />
+              {hero.loginCta} to your dashboard
+            </Button>
+            <p className="text-xs leading-relaxed text-slate-500">{hero.loginNote}</p>
             <p className="mono-label text-slate-500">
               {TRIAL_DAYS}-day trial / no card required
             </p>
@@ -216,17 +238,33 @@ export default function Landing() {
                   <DiscordIcon className="h-4 w-4" />
                   {hero.primaryCta}
                 </Button>
-                <a href="#board" className={buttonClass('secondary', 'lg', 'w-full sm:w-auto')}>
-                  {hero.secondaryCta}
-                  <ArrowDown className="h-4 w-4" />
-                </a>
+                <Button
+                  size="lg"
+                  variant="secondary"
+                  loading={loading}
+                  onClick={signIn}
+                  className="w-full sm:w-auto"
+                >
+                  <LogIn className="h-4 w-4" aria-hidden />
+                  {hero.loginCta}
+                </Button>
               </div>
+              <p className="mt-3 max-w-[48ch] text-[13px] leading-relaxed text-slate-500">
+                {hero.loginNote}
+              </p>
               {error ? (
                 <Alert tone="red" className="mt-6 max-w-xl" title="Sign-in failed">
                   {error}
                 </Alert>
               ) : null}
               <p className="mt-4 text-[13px] leading-relaxed text-slate-500">{hero.effortNote}</p>
+              <a
+                href="#board"
+                className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-semibold text-slate-400 transition-colors hover:text-accent-300"
+              >
+                {hero.secondaryCta}
+                <ArrowDown className="h-3.5 w-3.5" aria-hidden />
+              </a>
               <ul className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500">
                 {hero.highlights.map((item) => (
                   <li key={item} className="inline-flex items-center gap-1.5">
@@ -465,6 +503,10 @@ export default function Landing() {
                 <Button size="lg" loading={loading} onClick={signIn}>
                   <DiscordIcon className="h-4 w-4" />
                   {finale.cta}
+                </Button>
+                <Button size="lg" variant="secondary" loading={loading} onClick={signIn}>
+                  <LogIn className="h-4 w-4" aria-hidden />
+                  {finale.secondaryCta}
                 </Button>
                 <span className="mono-label text-slate-500">
                   {TRIAL_DAYS}-day trial / no card required

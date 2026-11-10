@@ -554,7 +554,7 @@ export default function OverviewPage() {
       <PageHeader
         eyebrow="Overview"
         title="Server overview"
-        description="Set up every team in one place and watch its war and race activity. Data is read from the same tables the bot writes."
+        description="Track every team’s war and race activity in one place. Staff set up teams, channels and captains above; the numbers below come from the tables the bot writes in Discord."
         actions={
           <Button variant="secondary" onClick={() => load('refresh')} loading={refreshing}>
             <RefreshCw className="h-4 w-4" />
@@ -620,6 +620,12 @@ export default function OverviewPage() {
           }
         />
       </div>
+
+      <p className="mb-3 text-xs leading-relaxed text-slate-500">
+        Every snapshot and activity rating below is read from the bot’s war, race and log tables.
+        Staff change teams and channels in Setup above; war settings and race sheets live on the War
+        and Race pages.
+      </p>
 
       {loading ? (
         <Spinner label="Loading teams…" />

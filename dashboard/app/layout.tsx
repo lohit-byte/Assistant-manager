@@ -32,8 +32,15 @@ export const viewport: Viewport = {
   themeColor: '#0c0d0a',
   width: 'device-width',
   initialScale: 1,
-  colorScheme: 'dark',
+  colorScheme: 'dark light',
 }
+
+/**
+ * Applies the stored appearance before first paint so a light-mode user never sees a dark
+ * flash. Kept inline (and tiny) because it must run before the browser paints; the Settings
+ * page takes over once React hydrates.
+ */
+const themeScript = `(function(){try{var p=localStorage.getItem('legends-theme')||'system';var s=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';var t=(p==='light'||p==='dark')?p:s;var e=document.documentElement;e.dataset.theme=t;e.style.colorScheme=t;var m=document.querySelector('meta[name="theme-color"]');if(m){m.setAttribute('content',t==='light'?'#f5efe2':'#0c0d0a');}}catch(_){}})();`
 
 const jsonLd = {
   '@context': 'https://schema.org',
@@ -53,8 +60,9 @@ const jsonLd = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${archivo.variable} ${mono.variable} dark`}>
+    <html lang="en" suppressHydrationWarning className={`${archivo.variable} ${mono.variable}`}>
       <body className="min-h-screen bg-ink-950 font-sans text-slate-200 antialiased">
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <a className="skip-link" href="#main">
           Skip to content
         </a>

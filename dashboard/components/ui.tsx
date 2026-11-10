@@ -146,13 +146,20 @@ export function buttonClass(
   const base =
     'inline-flex items-center justify-center gap-2 rounded-sm border font-semibold tracking-tight transition-[color,background-color,border-color,transform] duration-150 hover:-translate-y-px active:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950 disabled:cursor-not-allowed disabled:opacity-50'
   const variants: Record<ButtonVariant, string> = {
+    /*
+     * The primary button flips to a light fill on hover in dark mode. In light mode `slate-200`
+     * becomes dark and `ink-950` becomes paper, so the same classes still read: dark fill,
+     * paper text. Solid danger/success fills dim on hover instead of inverting, because their
+     * tokens double as text colours and would lose contrast.
+     */
     primary:
-      'border-accent-500 bg-accent-500 text-ink-950 hover:border-slate-200 hover:bg-slate-200 hover:text-ink-950',
+      'border-accent-500 bg-accent-500 text-accent-ink hover:border-slate-200 hover:bg-slate-200 hover:text-ink-950',
     secondary:
       'border-white/[0.16] bg-transparent text-slate-200 hover:border-accent-500/60 hover:text-slate-50',
     danger:
-      'border-danger-500 bg-danger-500 text-ink-950 hover:border-danger-400 hover:bg-danger-400',
-    success: 'border-sage-500 bg-sage-500 text-ink-950 hover:border-sage-400 hover:bg-sage-400',
+      'border-danger-500 bg-danger-500 text-accent-ink hover:border-danger-500 hover:bg-danger-500 hover:opacity-90',
+    success:
+      'border-sage-500 bg-sage-500 text-accent-ink hover:border-sage-500 hover:bg-sage-500 hover:opacity-90',
     ghost:
       'border-transparent bg-transparent text-slate-400 hover:border-white/[0.12] hover:text-slate-100',
   }
@@ -347,7 +354,7 @@ export function Toggle({
       >
         <span
           className={cn(
-            'absolute top-1 h-5 w-5 rounded-full bg-slate-100 shadow transition-transform',
+            'absolute top-1 h-5 w-5 rounded-full bg-paper shadow transition-transform',
             checked ? 'translate-x-6' : 'translate-x-1',
           )}
         />

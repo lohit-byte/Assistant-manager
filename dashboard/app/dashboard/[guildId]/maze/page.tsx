@@ -13,6 +13,7 @@ import { createClient } from '@/lib/supabase/client'
 import { MAZE_SCHEDULES, MAZE_TYPE_META } from '@/lib/constants'
 import { discountMoments, formatDateTime, formatRelative, fromDateTimeLocal, isSnowflake, nextDiscount, toDate, toDateTimeLocal } from '@/lib/format'
 import { useNow } from '@/lib/hooks'
+import { useToast } from '@/lib/toast'
 import type { MazePingMention, MazeSchedule } from '@/lib/types'
 
 /** Who the bot mentions on automatic maze discount pings. */
@@ -70,12 +71,13 @@ function draftFromRow(row: MazeSchedule | null): Draft {
 
 export default function MazePage() {
   const { guildId, isStaff, readOnly } = useGuild()
+  const toast = useToast()
   const now = useNow(30_000)
   const [draft, setDraft] = useState<Draft>(() => defaultDraft())
   const [existing, setExisting] = useState<MazeSchedule | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
-  const [feedback, setFeedback] = useState<{ tone: 'green' | 'red'; text: string } | null>(null)
+  const [feedback, setFeedback] = useState<{ tone: 'red'; text: string } | null>(null)
 
   const load = useCallback(async (mode: 'initial' | 'refresh' = 'initial') => {
     if (mode === 'initial') setLoading(true)
@@ -134,19 +136,25 @@ export default function MazePage() {
         ping_role_id: draft.ping_mention === 'role' ? roleId : null,
       })
       setExisting(await getMazeSchedule(createClient(), guildId))
-      setFeedback({ tone: 'green', text: 'Maze schedule saved.' })
+      toast.success(
+        'Maze schedule saved.',
+        'Discount pings follow this schedule in your local timezone.',
+      )
     } catch (caught) {
       setFeedback({ tone: 'red', text: 'Could not save maze schedule.' })
     } finally { setBusy(null) }
   }
 
   const remove = async () => {
-    if (!window.confirm('Delete the maze schedule for this server?')) return
+    if (!window.confirm('Delete the maze schedule for this server? Automatic discount pings stop until you save a new schedule.')) return
     setBusy('delete'); setFeedback(null)
     try {
       await deleteMazeSchedule(createClient(), guildId)
       setExisting(null); setDraft(defaultDraft())
-      setFeedback({ tone: 'green', text: 'Maze schedule deleted.' })
+      toast.success(
+        'Maze schedule deleted.',
+        'Automatic maze discount pings stop until you save a new schedule.',
+      )
     } catch (caught) {
       setFeedback({ tone: 'red', text: 'Could not delete maze schedule.' })
     } finally { setBusy(null) }
@@ -163,7 +171,7 @@ export default function MazePage() {
       <PageHeader
         eyebrow="Maze schedule"
         title="Maze"
-        description="Schedule the maze so the bot can auto-ping discounts."
+        description="Set the maze window so the bot posts automatic discount pings. The schedule is server-wide: it applies to this whole server, and read-only members can view it but not change it."
         actions={
           <>
             <Button variant="secondary" onClick={() => load('refresh')}><RefreshCw className="h-4 w-4" /> Refresh</Button>
@@ -176,9 +184,9 @@ export default function MazePage() {
 
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <Card>
-          <CardHeader title="Schedule" description={readOnly ? 'View only — staff manage this schedule.' : 'Maze type, timing and ping channel'} icon={<Map className="h-5 w-5" />} />
+          <CardHeader title="Schedule" description={readOnly ? 'View only — staff manage this schedule.' : 'Maze type, timing and ping settings. Saving replaces the current schedule.'} icon={<Map className="h-5 w-5" />} />
           <CardBody className="space-y-5">
-            <Field label="Maze type">
+            <Field label="Maze type" hint="7-day mazes have 8 discount steps; 3-day mazes have 4. Pick the type that matches the event.">
               <div className="grid grid-cols-2 gap-2">
                 {(['7d', '3d'] as const).map((type) => (
                   <button key={type} type="button" disabled={readOnly} onClick={() => changeType(type)} className={`rounded-xl border px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${draft.maze_type === type ? 'border-accent-500/60 bg-accent-500/10' : 'border-slate-700 bg-slate-950/60 hover:border-slate-600'}`}>
@@ -189,25 +197,28 @@ export default function MazePage() {
             </Field>
 
             <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
-              <Field label="Event start" hint="Your local timezone." className="min-w-0">
+              <Field label="Event start" hint="Your local timezone. The discount timeline below starts from this moment." className="min-w-0">
                 <TextInput className="w-full min-w-0 appearance-none" type="datetime-local" value={draft.event_start} disabled={readOnly} onChange={(event) => setStartAndDuration(event.target.value)} />
               </Field>
-              <Field label="Event end" hint={`Suggested: start + ${meta.days} days.`} className="min-w-0">
+              <Field label="Event end" hint={`Your local timezone. Suggested: start + ${meta.days} days.`} className="min-w-0">
                 <TextInput className="w-full min-w-0 appearance-none" type="datetime-local" value={draft.event_end} disabled={readOnly} onChange={(event) => setDraft((current) => ({ ...current, event_end: event.target.value }))} />
               </Field>
             </div>
 
             {/* QUICK SET BUTTONS */}
-            <div className="flex gap-2">
-              <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => setStartAndDuration(toDateTimeLocal(new Date()))}>Starts Now</Button>
-              <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => setStartAndDuration(toDateTimeLocal(new Date(Date.now() + 86400000)))}>Starts Tomorrow</Button>
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => setStartAndDuration(toDateTimeLocal(new Date()))}>Starts Now</Button>
+                <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => setStartAndDuration(toDateTimeLocal(new Date(Date.now() + 86400000)))}>Starts Tomorrow</Button>
+              </div>
+              <p className="text-xs leading-relaxed text-slate-500">Quick start fills both times for you: “Starts Now” uses this moment, “Starts Tomorrow” adds a day, and the end time follows the maze type.</p>
             </div>
 
-            <Field label="Ping channel ID" hint="Optional.">
+            <Field label="Ping channel ID" hint="Optional. Leave it empty to use the maze channel from your Overview setup.">
               <TextInput value={draft.channel_id} disabled={readOnly} onChange={(event) => setDraft((current) => ({ ...current, channel_id: event.target.value }))} placeholder="e.g. 123456789012345678" inputMode="numeric" />
             </Field>
 
-            <Field label="Ping mention" hint="Who the automatic maze discount pings mention.">
+            <Field label="Ping mention" hint="Who the automatic pings mention. A role limits the ping to that role; “No mention” posts the ping without notifying anyone.">
               <Select value={draft.ping_mention} disabled={readOnly} onChange={(event) => setDraft((current) => ({ ...current, ping_mention: event.target.value as MazePingMention }))}>
                 {PING_MENTIONS.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
@@ -216,13 +227,13 @@ export default function MazePage() {
             </Field>
 
             {draft.ping_mention === 'role' ? (
-              <Field label="Ping role ID" hint="Right-click the role in Discord → Copy ID.">
+              <Field label="Ping role ID" hint="Right-click the role in Discord, then Copy ID. Required when you choose “A role”.">
                 <TextInput value={draft.ping_role_id} disabled={readOnly} onChange={(event) => setDraft((current) => ({ ...current, ping_role_id: event.target.value }))} placeholder="e.g. 123456789012345678" inputMode="numeric" />
               </Field>
             ) : null}
 
             <div className="border-t border-slate-800 pt-5">
-              <Toggle checked={draft.ping_enabled_global} disabled={readOnly} onChange={(value) => setDraft((current) => ({ ...current, ping_enabled_global: value }))} label="Maze pings enabled" description="Players can still opt out individually." />
+              <Toggle checked={draft.ping_enabled_global} disabled={readOnly} onChange={(value) => setDraft((current) => ({ ...current, ping_enabled_global: value }))} label="Maze pings enabled" description="Turn automatic discount pings off without deleting the schedule. Players can still opt out individually." />
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm">
@@ -234,8 +245,18 @@ export default function MazePage() {
               ) : <p className="text-slate-500">Choose a start and end time to preview.</p>}
             </div>
 
-            {readOnly ? null : (
-              <Button onClick={save} loading={busy === 'save'} className="w-full"><Save className="h-4 w-4" /> Save schedule</Button>
+            {readOnly ? (
+              <p className="text-xs leading-relaxed text-slate-500">
+                This schedule is server-wide. Only staff can change or delete it.
+              </p>
+            ) : (
+              <>
+                <Button onClick={save} loading={busy === 'save'} className="w-full"><Save className="h-4 w-4" /> Save schedule</Button>
+                <p className="text-xs leading-relaxed text-slate-500">
+                  Saving replaces the current server-wide schedule, and the bot pings from the times
+                  above. Deleting stops every automatic maze ping until you save a new schedule.
+                </p>
+              </>
             )}
           </CardBody>
         </Card>
@@ -252,7 +273,7 @@ export default function MazePage() {
                   return (
                     <li key={`${moment.percent}-${index}`} className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 ${isNext ? 'border-accent-500/50 bg-accent-500/10' : moment.past ? 'border-slate-800/70 bg-slate-950/40' : 'border-slate-800 bg-slate-950/60'}`}>
                       <div className="flex items-center gap-3">
-                        <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${isNext ? 'bg-accent-500 text-ink-950' : moment.past ? 'bg-slate-800 text-slate-500' : 'bg-slate-800 text-slate-300'}`}>{index + 1}</span>
+                        <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${isNext ? 'bg-accent-500 text-accent-ink' : moment.past ? 'bg-slate-800 text-slate-500' : 'bg-slate-800 text-slate-300'}`}>{index + 1}</span>
                         <div>
                           <p className={`text-sm font-semibold ${isNext ? 'text-accent-200' : moment.past ? 'text-slate-500' : 'text-slate-200'}`}>{moment.percent} discount</p>
                           <p className="text-xs text-slate-500">{formatDateTime(moment.at)}</p>

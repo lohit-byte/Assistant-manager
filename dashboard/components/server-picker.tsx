@@ -6,17 +6,20 @@ import {
   ArrowRight,
   ExternalLink,
   LogOut,
+  Moon,
   Plus,
   RefreshCw,
   Search,
   Server,
+  Sun,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { canManageGuild, DiscordApiError, discordIdFromSession, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
-import { BOT_INVITE_URL, DISCORD_GUILD_ICON, PLAN_META } from '@/lib/constants'
+import { BOT_INVITE_URL, DISCORD_GUILD_ICON, PLAN_META, SUPPORT_EMAIL } from '@/lib/constants'
 import { Wordmark } from '@/components/brand'
 import { getGuild, isAliasMember, listCaptainTeams } from '@/lib/data'
 import { toDate } from '@/lib/format'
+import { useTheme } from '@/lib/theme'
 import type { Guild } from '@/lib/types'
 import {
   Alert,
@@ -46,6 +49,7 @@ type LoadError =
 
 export default function ServerPicker() {
   const router = useRouter()
+  const { resolved, setTheme } = useTheme()
   const [cards, setCards] = useState<GuildCard[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<LoadError | null>(null)
@@ -158,6 +162,16 @@ export default function ServerPicker() {
         <div className="mb-10 flex items-center justify-between border-b border-white/[0.1] pb-5">
           <Wordmark />
           <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTheme(resolved === 'light' ? 'dark' : 'light')}
+              aria-label={resolved === 'light' ? 'Switch to dark appearance' : 'Switch to light appearance'}
+              title={resolved === 'light' ? 'Switch to dark appearance' : 'Switch to light appearance'}
+            >
+              {resolved === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+              {resolved === 'light' ? 'Dark' : 'Light'}
+            </Button>
             <Button variant="ghost" size="sm" onClick={load} loading={loading}>
               <RefreshCw className="h-4 w-4" />
               Refresh
@@ -173,7 +187,7 @@ export default function ServerPicker() {
         <PageHeader
           eyebrow="00 / Server selection"
           title="Choose a server"
-          description={`You have access to ${cards.length} ${cards.length === 1 ? 'server' : 'servers'}${memberViews ? ` (${memberViews} read-only)` : ''}${captainServers ? ` (${captainServers} as team captain)` : ''}. ${botServers} ${botServers === 1 ? 'has' : 'have'} the bot installed.`}
+          description={`Pick a server to open its dashboard. You have access to ${cards.length} ${cards.length === 1 ? 'server' : 'servers'}${memberViews ? `, ${memberViews} read-only` : ''}${captainServers ? `, ${captainServers} as team captain` : ''}; ${botServers} ${botServers === 1 ? 'has' : 'have'} the bot installed.`}
           actions={
             <a
               href={BOT_INVITE_URL}
@@ -186,6 +200,32 @@ export default function ServerPicker() {
             </a>
           }
         />
+
+        <div className="mb-6 border border-white/[0.08] bg-white/[0.02] px-4 py-3.5">
+          <p className="mono-label text-slate-500">How this list works</p>
+          <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
+            A server appears here when you have Manage Server or Administrator, captain one of its
+            teams, or hold an alias in a premium server.
+          </p>
+          <ul className="mt-2.5 grid gap-x-6 gap-y-1.5 text-xs leading-relaxed text-slate-500 sm:grid-cols-2">
+            <li className="flex flex-wrap items-center gap-2">
+              <Badge tone="red">Bot not added</Badge>
+              <span>The bot is not in this server yet — invite it, then refresh.</span>
+            </li>
+            <li className="flex flex-wrap items-center gap-2">
+              <Badge tone="slate">Read-only</Badge>
+              <span>You hold an alias in a premium server: you can view data but change nothing.</span>
+            </li>
+            <li className="flex flex-wrap items-center gap-2">
+              <Badge tone="blue">Team captain</Badge>
+              <span>You captain a team here: you manage that team’s war and race channels.</span>
+            </li>
+            <li className="flex flex-wrap items-center gap-2">
+              <Badge tone="purple" dot>Premium</Badge>
+              <span>The plan: Free trial, Premium or Expired. An expired server is paused.</span>
+            </li>
+          </ul>
+        </div>
 
         {error ? (
           <Alert tone={error.kind === 'discord' ? 'amber' : 'red'} className="mb-6" title="Could not load servers">
@@ -311,6 +351,18 @@ export default function ServerPicker() {
             )}
           </>
         )}
+
+        <p className="mt-8 text-xs leading-relaxed text-slate-600">
+          Missing a server? Invite the bot, refresh, and check that you have Manage Server in
+          Discord. Still stuck? Email{' '}
+          <a
+            href={`mailto:${SUPPORT_EMAIL}?subject=Dashboard%20access%20help`}
+            className="text-accent-300 underline decoration-accent-500/40 underline-offset-4 hover:text-accent-200"
+          >
+            {SUPPORT_EMAIL}
+          </a>{' '}
+          with your server ID.
+        </p>
         </main>
       </div>
     </div>
