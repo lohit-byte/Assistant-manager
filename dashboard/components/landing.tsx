@@ -8,9 +8,12 @@ import {
   Check,
   LogIn,
   Menu,
+  Moon,
+  Sun,
   X,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { useTheme } from '@/lib/theme'
 import { BOT_INVITE_URL, SUPPORT_EMAIL, TRIAL_DAYS } from '@/lib/constants'
 import { Alert, Button, buttonClass } from '@/components/ui'
 import { Wordmark } from '@/components/brand'
@@ -44,6 +47,7 @@ export default function Landing() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const { resolved, setTheme } = useTheme()
   const menuRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
 
@@ -149,16 +153,31 @@ export default function Landing() {
             {loading ? 'Redirecting…' : 'Start free trial'}
           </button>
         </div>
-        <button
-          type="button"
-          className="border border-white/[0.14] p-2 text-slate-300 lg:hidden"
-          aria-expanded={menuOpen}
-          aria-controls="mobile-nav"
-          aria-label="Open menu"
-          onClick={() => setMenuOpen(true)}
-        >
-          <Menu className="h-5 w-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setTheme(resolved === 'dark' ? 'light' : 'dark')}
+            className="border border-white/[0.14] p-2 text-slate-300 transition-colors hover:border-white/[0.24] hover:text-slate-50"
+            aria-label={resolved === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={resolved === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {resolved === 'dark' ? (
+              <Sun className="h-4 w-4" aria-hidden />
+            ) : (
+              <Moon className="h-4 w-4" aria-hidden />
+            )}
+          </button>
+          <button
+            type="button"
+            className="border border-white/[0.14] p-2 text-slate-300 lg:hidden"
+            aria-expanded={menuOpen}
+            aria-controls="mobile-nav"
+            aria-label="Open menu"
+            onClick={() => setMenuOpen(true)}
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+        </div>
       </header>
 
       {menuOpen ? (

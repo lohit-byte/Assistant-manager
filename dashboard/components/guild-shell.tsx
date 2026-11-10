@@ -35,7 +35,7 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, signOutToHome } from '@/lib/supabase/client'
 import { canManageGuild, DiscordApiError, discordIdFromSession, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
 import { BOT_INVITE_URL, DISCORD_GUILD_ICON, PLAN_META, SUPPORT_EMAIL } from '@/lib/constants'
 import { getGuild, isAliasMember, listTeamCaptains, listTeams } from '@/lib/data'
@@ -458,11 +458,6 @@ export default function GuildShell({
     [canManageChannel, captainTeamIds, guild, guildId, isStaff, readOnly, refresh, teams],
   )
 
-  const signOut = async () => {
-    await createClient().auth.signOut()
-    router.replace('/')
-  }
-
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-ink-950">
@@ -646,7 +641,7 @@ export default function GuildShell({
                 </span>
                 <button
                   type="button"
-                  onClick={signOut}
+                  onClick={signOutToHome}
                   className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-white/[0.06] hover:text-slate-50"
                   aria-label="Sign out"
                   title="Sign out"
@@ -770,11 +765,6 @@ function AccessErrorScreen({
   error: AccessError | null
   onRetry: () => void
 }) {
-  const signOut = async () => {
-    await createClient().auth.signOut()
-    window.location.href = '/'
-  }
-
   if (!error) return null
 
   const title =
@@ -810,7 +800,7 @@ function AccessErrorScreen({
               </a>
             ) : null}
             {error.kind === 'discord' ? (
-              <Button onClick={signOut}>
+              <Button onClick={signOutToHome}>
                 <LogOut className="h-4 w-4" />
                 Sign in again
               </Button>

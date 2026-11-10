@@ -28,7 +28,7 @@ import {
   PageHeader,
   buttonClass,
 } from '@/components/ui'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, signOutToHome } from '@/lib/supabase/client'
 import { PLAN_META, SUPPORT_EMAIL, TRIAL_DAYS } from '@/lib/constants'
 import { toDate } from '@/lib/format'
 
@@ -91,11 +91,6 @@ export default function SettingsPage() {
       THEME_CONFIRMATION[next],
       'Saved for this browser. Other staff still see their own setting.',
     )
-  }
-
-  const signOut = async () => {
-    await createClient().auth.signOut()
-    window.location.href = '/'
   }
 
   return (
@@ -207,7 +202,7 @@ export default function SettingsPage() {
                 <ArrowLeft className="h-3.5 w-3.5" />
                 Switch server
               </Link>
-              <Button variant="ghost" size="sm" onClick={signOut}>
+              <Button variant="ghost" size="sm" onClick={signOutToHome}>
                 <LogOut className="h-4 w-4" />
                 Sign out
               </Button>

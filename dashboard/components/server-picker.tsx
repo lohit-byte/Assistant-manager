@@ -13,7 +13,7 @@ import {
   Server,
   Sun,
 } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, signOutToHome } from '@/lib/supabase/client'
 import { canManageGuild, DiscordApiError, discordIdFromSession, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
 import { BOT_INVITE_URL, DISCORD_GUILD_ICON, PLAN_META, SUPPORT_EMAIL } from '@/lib/constants'
 import { Wordmark } from '@/components/brand'
@@ -150,11 +150,6 @@ export default function ServerPicker() {
   const memberViews = cards.filter((card) => card.readOnly).length
   const captainServers = cards.filter((card) => card.captain).length
 
-  const signOut = async () => {
-    await createClient().auth.signOut()
-    router.replace('/')
-  }
-
   return (
     <div className="relative min-h-screen bg-ink-950 text-slate-100">
       <div className="bg-blueprint pointer-events-none absolute inset-x-0 top-0 h-72 opacity-60" aria-hidden />
@@ -176,7 +171,7 @@ export default function ServerPicker() {
               <RefreshCw className="h-4 w-4" />
               Refresh
             </Button>
-            <Button variant="secondary" size="sm" onClick={signOut}>
+            <Button variant="secondary" size="sm" onClick={signOutToHome}>
               <LogOut className="h-4 w-4" />
               Sign out
             </Button>
@@ -232,7 +227,7 @@ export default function ServerPicker() {
             <div className="flex flex-wrap items-center gap-3">
               <span>{error.message}</span>
               {error.kind === 'discord' ? (
-                <Button size="sm" onClick={signOut}>
+                <Button size="sm" onClick={signOutToHome}>
                   Sign in again
                 </Button>
               ) : (
