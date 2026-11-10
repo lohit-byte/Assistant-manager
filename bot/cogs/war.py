@@ -644,7 +644,7 @@ class WarTracker(commands.Cog):
         if key == "hours_12":
             # The 12h reminder points at the players who still owe attacks
             # instead of pinging everyone.
-            mentions = await self._missing_mentions(war)
+            mentions = await self._missing_mentions(war, getattr(channel, "guild", None))
             content = "⏱️ **12 hours left!** "
             if mentions:
                 content += "Missing attacks: " + ", ".join(mentions) + " — use `attacks done` or the **✅ I attacked** button after you attack."
@@ -674,9 +674,18 @@ class WarTracker(commands.Cog):
         return await self._send_ping(channel, f"⏰ **{label}**", embed, war=war,
                                      view=self.attack_view)
 
-    async def _missing_mentions(self, war):
+    async def _missing_mentions(self, war, guild=None):
+        def _present(discord_id):
+            if guild is None:
+                return True
+            try:
+                return guild.get_member(int(discord_id)) is not None
+            except (TypeError, ValueError):
+                return True
+
         missing = war.get("missing_list") or []
-        ids = [str(m["id"]) for m in missing if isinstance(m, dict) and m.get("id")]
+        ids = [str(m["id"]) for m in missing
+               if isinstance(m, dict) and m.get("id") and _present(m["id"])]
         names = [_entry_name(m) for m in missing
                  if not (isinstance(m, dict) and m.get("id"))]
         if names and war.get("guild_id"):
@@ -687,16 +696,32 @@ class WarTracker(commands.Cog):
                 )
                 wanted = {n.lower() for n in names if n}
                 for row in res.data:
-                    if (row.get("alias_name") or "").lower() in wanted:
+                    if (row.get("alias_name") or "").lower() in wanted and _present(row.get("discord_id")):
                         ids.append(str(row["discord_id"]))
             except Exception as e:
                 print(f"Missing alias lookup failed: {e}")
         seen, mentions = set(), []
         for discord_id in ids:
-            if discord_id not in seen:
+            if discord_id not in seen and _present(discord_id):
                 seen.add(discord_id)
                 mentions.append(f"<@{discord_id}>")
         return mentions[:50]
+
+    def _display_entries(self, items, guild):
+        """Comma-joined entry names, marking aliases whose member left the guild."""
+        labels = []
+        for entry in items:
+            label = _entry_label(entry)
+            entry_id = entry.get("id") if isinstance(entry, dict) else None
+            if entry_id is not None and guild is not None:
+                try:
+                    if guild.get_member(int(entry_id)) is None:
+                        label = f"{label} (left)"
+                except (TypeError, ValueError):
+                    pass
+            labels.append(label)
+        text = ", ".join(labels)
+        return text[:1000] if len(text) > 1000 else text
 
     def build_embed(self, war, channel=None, title_prefix=None):
         start = to_utc(war.get("war_start")) if war else None
@@ -713,12 +738,13 @@ class WarTracker(commands.Cog):
         sent_count = sum(1 for key, _o, _l in PING_SCHEDULE if key in sent)
         team = f" — {channel.name}" if getattr(channel, "name", None) else ""
 
+        guild = getattr(channel, "guild", None)
         if current == "ended":
             return discord.Embed(
                 title=f"🏁 WAR ENDED{team}",
                 color=discord.Color.red(),
                 description=(
-                    f"**Missing attacks ({len(missing)})**: {join_names(missing) or 'None'}\n"
+                    f"**Missing attacks ({len(missing)})**: {self._display_entries(missing, guild) or 'None'}\n"
                     f"**Pings sent:** {sent_count + (1 if WAR_END_KEY in sent else 0)}/{total}"
                 ),
             )
@@ -748,10 +774,11 @@ class WarTracker(commands.Cog):
             lines.insert(0, title_prefix)
 
         embed = discord.Embed(title=title, color=color, description="\n".join(lines))
-        embed.add_field(name=f"⚠️ Missing ({len(missing)})", value=join_names(missing) or "None", inline=False)
+        embed.add_field(name=f"⚠️ Missing ({len(missing)})",
+                        value=self._display_entries(missing, guild) or "None", inline=False)
         embed.add_field(
             name=f"🏖️ Excused (absence channel) — {len(absent)}",
-            value=join_names(absent) or "None",
+            value=self._display_entries(absent, guild) or "None",
             inline=False,
         )
         team_role = self._team_role(channel, war)
@@ -1057,7 +1084,7 @@ class WarTracker(commands.Cog):
             if sub == "list":
                 if not missing:
                     return await ctx.send("✅ The missing list is empty.")
-                return await ctx.send("⚠️ **Missing:** " + join_names(missing))
+                return await ctx.send("⚠️ **Missing:** " + (self._display_entries(missing, ctx.guild) or "None"))
             if sub == "remove":
                 name = await self._removal_name(ctx, args)
                 if not name:
@@ -1102,7 +1129,7 @@ class WarTracker(commands.Cog):
             if sub == "list":
                 if not absent:
                     return await ctx.send("✅ The excused list is empty.")
-                return await ctx.send("🏖️ **Excused:** " + join_names(absent))
+                return await ctx.send("🏖️ **Excused:** " + (self._display_entries(absent, ctx.guild) or "None"))
             if sub == "remove":
                 name = await self._removal_name(ctx, args)
                 if not name:

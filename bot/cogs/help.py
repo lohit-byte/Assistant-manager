@@ -22,7 +22,7 @@ def build_overview(is_staff):
         inline=False,
     )
     if is_staff:
-        e.add_field(name="🔧 Admin", value="`!alias add @user <name>` · `!alias list` · `!warning`", inline=False)
+        e.add_field(name="🔧 Admin", value="`!alias add @user <name>` · `!alias list` · `!alias prune` · `!warning`", inline=False)
         e.add_field(
             name="🪪 Setup helpers",
             value=("`!ids` — server, channel, member and user IDs\n"
@@ -56,7 +56,7 @@ def build_topic(topic, is_staff):
         return e
     if topic == "race":
         e = _embed("🏁 Race Commands", discord.Color.green())
-        e.add_field(name="Everyone", value="`!race status`\n`!race ofa` · `!race ofa done`\n`!race dyp` (`dmp` works too)\n`!race je +500k` · `!race je done`", inline=False)
+        e.add_field(name="Everyone", value="`!race status`\n`!race ofa` · `!race ofa done`\n`!race dyp` (`dmp` works too)\n`!race je +500k` · `!race je done`\n*Logging a task needs your alias — ask staff for* `!alias add @you <name>`.", inline=False)
         e.add_field(
             name="Captains",
             value=("A team captain can run the team race commands in their team's race channel: "
@@ -90,7 +90,9 @@ def build_topic(topic, is_staff):
             e.add_field(
                 name="Commands",
                 value=("`!alias add @user <alias>`\n`!alias remove <alias>`\n"
-                       "`!alias rename <old> <new>` — keeps the current war counts/lists\n`!alias list`"),
+                       "`!alias rename <old> <new>` — keeps the current war counts/lists\n"
+                       "`!alias list` — flags aliases whose member left the server\n"
+                       "`!alias prune` — removes those aliases and clears them from active war lists"),
                 inline=False,
             )
         else:

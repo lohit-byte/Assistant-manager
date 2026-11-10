@@ -259,6 +259,7 @@ def test_race_set_desc_does_not_store_the_keyword(clean_db):
 
 def test_race_dyp_without_target_does_not_report_completion(clean_db):
     db = clean_db
+    seed_alias(db, 1, "tester")
     seed_race(db, dyp_target=0, dyp_contributors=[])
     ctx = make_ctx(channel_id=CHANNEL)
 
@@ -283,6 +284,7 @@ def test_race_ofa_release_clears_the_holder(clean_db):
 
 def test_race_dmp_logs_contribution(clean_db):
     db = clean_db
+    seed_alias(db, 1, "tester")
     seed_race(db, dyp_target=5, dyp_progress=0, dyp_contributors=[])
     ctx = make_ctx(channel_id=CHANNEL)
 
@@ -545,6 +547,7 @@ def test_war_attacks_lowering_count_readds_to_missing(clean_db):
 
 def test_race_je_accepts_text_target_from_sheet(clean_db):
     db = clean_db
+    seed_alias(db, 1, "tester")
     seed_race(db, je_target="Breed 36 C", je_progress="0", je_done=False)
     ctx = make_ctx(channel_id=CHANNEL)
 
@@ -558,6 +561,7 @@ def test_race_je_accepts_text_target_from_sheet(clean_db):
 
 def test_race_log_insert_does_not_report_failure(clean_db, capsys):
     db = clean_db
+    seed_alias(db, 1, "tester")
     seed_race(db, dyp_target=5, dyp_progress=0, dyp_contributors=[])
     ctx = make_ctx(channel_id=CHANNEL)
 
@@ -917,6 +921,7 @@ def test_war_12h_reminder_mentions_team_role_and_missing_players(clean_db):
                    missing_list=[{"name": "sam", "id": 200}])
     _bot, guild, channel = _maze_bot()
     guild.roles.append(FakeRole(777, "Team A"))
+    guild.members.append(FakeMember(200, "Sam", guild=guild))
     tracker = war_cog()
 
     run(tracker.send_reminder(channel, war, start, "hours_12", "12h warning"))
@@ -1617,6 +1622,7 @@ def test_race_sheets_lists_guild_sheets_and_the_bundled_default(clean_db, monkey
 
 def test_race_log_records_channel_and_node(clean_db):
     db = clean_db
+    seed_alias(db, 1, "tester")
     seed_race(db, current_lap=1, current_node=1)
     ctx = make_ctx(channel_id=CHANNEL)
 
@@ -2347,6 +2353,7 @@ def test_race_status_truncates_a_long_node_description(clean_db):
 
 def test_je_unknown_input_tells_the_user_the_usage(clean_db):
     db = clean_db
+    seed_alias(db, 1, "tester")
     db.seed("race_state", {
         "channel_id": CHANNEL, "guild_id": GUILD, "current_lap": 1, "current_node": 2,
         "task_description": "OFA: x | DYP: y | JE: z", "is_event_active": True,
@@ -2581,6 +2588,7 @@ def test_race_clean_val_and_parse_amount_survive_huge_numbers():
 
 def test_je_stays_completed_after_more_progress(clean_db):
     db = clean_db
+    seed_alias(db, 1, "tester")
     seed_race(db, je_done=True, je_progress="1000", je_target="1000", task_description="JE done")
     ctx = make_ctx(channel_id=CHANNEL)
 
@@ -2724,3 +2732,83 @@ def test_alias_add_and_remove_accept_quoted_names(clean_db):
 
     run(call(Admin.alias_group, admin_cog(), ctx, "remove", args='"sam smith"'))
     assert db.one("aliases", guild_id=GUILD) is None
+
+
+# --------------------------------------- aliases: identity and departed members
+
+def test_race_task_without_alias_tells_the_player_to_set_one(clean_db):
+    db = clean_db
+    seed_race(db, dyp_target=5, dyp_progress=0, dyp_contributors=[])
+    ctx = make_ctx(channel_id=CHANNEL, author_id=7, display_name="Lone", administrator=False)
+
+    run(race_cog().handle_task(ctx, "dyp", None, None))
+
+    assert any("set your alias first" in text.lower() for text in ctx.texts)
+    assert db.one("race_state", channel_id=CHANNEL)["dyp_progress"] == 0
+
+
+def test_race_task_logs_the_alias_instead_of_the_display_name(clean_db):
+    db = clean_db
+    seed_race(db, dyp_target=5, dyp_progress=0, dyp_contributors=[])
+    seed_alias(db, 1, "sam")
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(race_cog().handle_task(ctx, "dyp", None, None))
+
+    assert db.rows("race_logs")[-1]["player_name"] == "sam"
+    assert any("sam" in text for text in ctx.texts)
+
+
+def test_alias_list_marks_members_who_left_the_server(clean_db):
+    db = clean_db
+    db.seed("users", {"discord_id": 200})
+    db.seed("aliases", {"guild_id": GUILD, "discord_id": 200, "alias_name": "gone"})
+    ctx = make_ctx()  # guild.members contains only the author
+
+    run(call(Admin.alias_group, admin_cog(), ctx, "list"))
+
+    description = ctx.sent[-1][1].description or ""
+    assert "left" in description.lower()
+
+
+def test_alias_prune_removes_departed_aliases_and_active_war_lists(clean_db):
+    db = clean_db
+    seed_alias(db, 1, "here")
+    seed_alias(db, 200, "gone")
+    seed_war(db, missing_list=[{"name": "here", "id": 1}, {"name": "gone", "id": 200}],
+             absent_list=[{"name": "gone", "id": 200}],
+             attack_counts={"here": 2, "gone": 4})
+    ctx = make_ctx()
+
+    run(call(Admin.alias_group, admin_cog(), ctx, "prune"))
+
+    assert [row["alias_name"] for row in db.rows("aliases")] == ["here"]
+    war = db.one("wars", channel_id=CHANNEL)
+    assert [entry["name"] for entry in war["missing_list"]] == ["here"]
+    assert war["absent_list"] == []
+    assert war["attack_counts"] == {"here": 2, "gone": 4}  # history is kept
+
+
+def test_war_missing_list_marks_a_member_who_left(clean_db):
+    db = clean_db
+    seed_war(db, missing_list=[{"name": "gone", "id": 200}])
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(WarTracker.war_missing(war_cog(), ctx, "list", None))
+
+    assert "left" in ctx.texts[-1].lower()
+
+
+def test_12h_reminder_skips_members_who_left(clean_db):
+    db = clean_db
+    seed_alias(db, 900, "sam")
+    ctx = make_ctx(channel_id=CHANNEL)
+    ctx.guild.members.append(FakeMember(900, "Sam", guild=ctx.guild))
+
+    mentions = run(war_cog()._missing_mentions(
+        {"guild_id": GUILD, "missing_list": [{"name": "gone", "id": 200},
+                                             {"name": "sam", "id": 900}]},
+        ctx.guild,
+    ))
+
+    assert mentions == ["<@900>"]

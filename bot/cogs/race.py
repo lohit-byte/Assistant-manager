@@ -445,20 +445,28 @@ class RaceTracker(commands.Cog):
             if not state or state.get('task_description') in (None, "No Active Node"): 
                 return await ctx.send("❌ No active node.")
             
-            display_name = await get_alias(ctx.guild.id, ctx.author.id, ctx.author.display_name)
             lap, node = state.get('current_lap'), state.get('current_node')
 
+            if action == "ofa" and subaction in ("cancel", "release"):
+                if not await is_team_staff(ctx.author, ctx.channel.id):
+                    return await ctx.send("❌ Staff only.")
+                fields = {"pending_ofa_message_id": None, "pending_ofa_user_id": None}
+                if subaction == "release":
+                    # Let staff hand the OFA slot back without losing the node.
+                    fields.update({"ofa_holder_id": None, "ofa_done": False})
+                await asyncio.to_thread(supabase.table("race_state").update(fields).eq("channel_id", ctx.channel.id).execute)
+                return await ctx.send("✅ OFA released." if subaction == "release" else "✅ Pending OFA claim cancelled.")
+
+            # Race actions are logged against the player's alias (same identity
+            # as war tracking), so someone without one is asked to set it first.
+            display_name = await get_alias(ctx.guild.id, ctx.author.id, None)
+            if not display_name:
+                return await ctx.send(
+                    "❌ Set your alias first — ask staff to run "
+                    "`!alias add @you <your in-game name>` so your race actions are tracked."
+                )
+
             if action == "ofa":
-                if subaction in ("cancel", "release"):
-                    if not await is_team_staff(ctx.author, ctx.channel.id):
-                        return await ctx.send("❌ Staff only.")
-                    fields = {"pending_ofa_message_id": None, "pending_ofa_user_id": None}
-                    if subaction == "release":
-                        # Let staff hand the OFA slot back without losing the node.
-                        fields.update({"ofa_holder_id": None, "ofa_done": False})
-                    await asyncio.to_thread(supabase.table("race_state").update(fields).eq("channel_id", ctx.channel.id).execute)
-                    return await ctx.send("✅ OFA released." if subaction == "release" else "✅ Pending OFA claim cancelled.")
-                    
                 if subaction == "done":
                     if not state.get('ofa_holder_id') or (ctx.author.id != state['ofa_holder_id'] and not await is_team_staff(ctx.author, ctx.channel.id)): 
                         return await ctx.send("❌ You don't hold OFA.")

@@ -235,6 +235,57 @@ def _migrate_war_names(guild_id: int, old: str, new: str) -> None:
             print(f"Alias war-data migration failed for channel {war.get('channel_id')}: {e}")
 
 
+def _entry_alias_name(entry) -> str:
+    if isinstance(entry, dict):
+        return (entry.get("name") or "").strip().lower()
+    return str(entry or "").strip().lower()
+
+
+def prune_departed_aliases(guild_id: int, present_ids) -> list:
+    """Delete aliases whose Discord user left the guild.
+
+    Also removes those players from the guild's active war missing/absent lists
+    so reminders and boards stop waiting on someone who is gone. Attack counts
+    are history and are left untouched. Returns the removed alias names.
+    """
+    present = {int(member_id) for member_id in present_ids}
+    res = supabase.table("aliases").select("alias_name, discord_id").eq("guild_id", guild_id).execute()
+    gone = [
+        row for row in (res.data or [])
+        if row.get("discord_id") is None or int(row["discord_id"]) not in present
+    ]
+    if not gone:
+        return []
+    gone_ids = {int(row["discord_id"]) for row in gone if row.get("discord_id") is not None}
+    gone_names = {(row.get("alias_name") or "").strip().lower() for row in gone if row.get("alias_name")}
+    if gone_ids:
+        supabase.table("aliases").delete().eq("guild_id", guild_id).in_(
+            "discord_id", sorted(gone_ids)).execute()
+    try:
+        wars = supabase.table("wars").select(
+            "channel_id, missing_list, absent_list").eq("guild_id", guild_id).eq(
+            "is_active", True).execute()
+    except Exception as e:
+        print(f"Departed-alias war cleanup lookup failed: {e}")
+        wars = None
+    def _departed(entry):
+        if isinstance(entry, dict) and entry.get("id") is not None:
+            try:
+                return int(entry["id"]) in gone_ids
+            except (TypeError, ValueError):
+                pass
+        return _entry_alias_name(entry) in gone_names
+    for war in (wars.data or []) if wars else []:
+        missing = [entry for entry in war.get("missing_list") or [] if not _departed(entry)]
+        absent = [entry for entry in war.get("absent_list") or [] if not _departed(entry)]
+        if len(missing) == len(war.get("missing_list") or []) and len(absent) == len(war.get("absent_list") or []):
+            continue
+        supabase.table("wars").update({
+            "missing_list": missing, "absent_list": absent,
+        }).eq("channel_id", war["channel_id"]).execute()
+    return sorted(gone_names)
+
+
 def rename_alias(guild_id: int, old_name: str, new_name: str):
     """Rename an alias in place, keeping its current war counts/lists attached.
 

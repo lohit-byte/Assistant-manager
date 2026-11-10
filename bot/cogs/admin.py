@@ -2,7 +2,8 @@ import shlex
 
 import discord
 from discord.ext import commands
-from database import supabase, is_staff_member, ensure_user, rename_alias
+from database import (supabase, is_staff_member, ensure_user, prune_departed_aliases,
+                      rename_alias)
 import asyncio
 
 
@@ -20,7 +21,7 @@ class Admin(commands.Cog):
     @commands.command(name="alias")
     @commands.guild_only()
     async def alias_group(self, ctx, action: str = None, *, args: str = None):
-        """Manage player aliases. Usage: !alias add @user Sam | !alias remove Sam | !alias rename <old> <new> | !alias list"""
+        """Manage player aliases. Usage: !alias add @user Sam | !alias remove Sam | !alias rename <old> <new> | !alias list | !alias prune"""
         if not await is_staff_member(ctx.author):
             return await ctx.send("❌ Only Admins can manage aliases.")
 
@@ -41,8 +42,20 @@ class Admin(commands.Cog):
             if not res.data:
                 return await ctx.send("ℹ️ No aliases configured for this server yet.")
 
-            lines = [f"• `{row['alias_name']}` → <@{row['discord_id']}>" for row in res.data]
+            lines, departed = [], 0
+            for row in res.data:
+                member = (
+                    ctx.guild.get_member(int(row["discord_id"]))
+                    if row.get("discord_id") is not None else None
+                )
+                suffix = ""
+                if member is None:
+                    departed += 1
+                    suffix = " ⚠️ left the server"
+                lines.append(f"• `{row['alias_name']}` → <@{row['discord_id']}>{suffix}")
             text = "\n".join(lines)
+            if departed:
+                text += f"\n\n⚠️ {departed} alias(es) belong to members who left — `!alias prune` cleans them."
             embed = discord.Embed(
                 title=f"🏷️ Aliases ({len(lines)})",
                 description=text if len(text) <= 4000 else text[:3990] + "\n…",
@@ -50,9 +63,25 @@ class Admin(commands.Cog):
             )
             return await ctx.send(embed=embed)
 
+        if action in ("prune", "clean"):
+            present = {member.id for member in ctx.guild.members}
+            try:
+                removed = await asyncio.to_thread(
+                    prune_departed_aliases, ctx.guild.id, present)
+            except Exception as e:
+                return await ctx.send(f"❌ Database error: {e}")
+            if not removed:
+                return await ctx.send("✅ Every alias belongs to a current member — nothing to prune.")
+            names = ", ".join(f"`{name}`" for name in removed[:20])
+            more = " …" if len(removed) > 20 else ""
+            return await ctx.send(
+                f"🧹 Removed {len(removed)} alias(es) for members who left: {names}{more}\n"
+                "They were also cleared from active war missing/excused lists."
+            )
+
         if not action or not args:
             return await ctx.send(
-                "Usage: `!alias add @user <alias>`, `!alias remove <alias>`, `!alias rename <old> <new>` or `!alias list`"
+                "Usage: `!alias add @user <alias>`, `!alias remove <alias>`, `!alias rename <old> <new>`, `!alias list` or `!alias prune`"
             )
 
         if action == "add":
@@ -126,7 +155,7 @@ class Admin(commands.Cog):
             )
         else:
             await ctx.send(
-                "Usage: `!alias add @user <alias>`, `!alias remove <alias>`, `!alias rename <old> <new>` or `!alias list`"
+                "Usage: `!alias add @user <alias>`, `!alias remove <alias>`, `!alias rename <old> <new>`, `!alias list` or `!alias prune`"
             )
 
     @commands.command(name="ids")

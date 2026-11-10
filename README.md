@@ -32,7 +32,7 @@ A unified Discord bot and web dashboard designed for Monster Legends alliances t
 * **Light & Dark appearance:** a per-browser Light / Dark / Match device switch under **Settings**, applied before first paint (no flash) and remembered on that device.
 * **In-context help and confirmations:** every staff control explains what it changes, and every successful save, edit or delete shows a success notification so staff can see it worked.
 * **Paywall & Trials:** 7-Day Free Trial system integrated with Cashfree subscriptions.
-* **Alias Management:** Player self-service alias creation, inline rename (live war lists move with the name) and Staff override tables.
+* **Alias Management:** Player self-service alias creation, inline rename (live war lists move with the name), Staff override tables, and departed-member checks — `!alias list` flags members who left and `!alias prune` removes them from the alias list and active war lists.
 * **Local Timezones:** Automatic conversion of Maze discount times to the user's local time.
 
 ## 🛠️ Tech Stack
