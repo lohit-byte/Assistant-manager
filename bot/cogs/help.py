@@ -28,7 +28,17 @@ def build_overview(is_staff):
                       "`!team remove @user`")
     e.add_field(name="👥 Teams", value=team_help, inline=False)
     if is_staff:
-        e.add_field(name="🔧 Admin", value="`!alias add @user <name>` · `!alias list` · `!alias prune` · `!warning`", inline=False)
+        e.add_field(
+            name="🏷️ Aliases",
+            value="`!alias add @user <name>` · `!alias list` · `!alias prune`",
+            inline=False,
+        )
+        e.add_field(
+            name="⚠️ Warnings",
+            value=("`!warning add @user <reason>` · `!warning list` · `!warning remove <id>`\n"
+                   "*Separate from aliases; shown on the dashboard.*"),
+            inline=False,
+        )
         e.add_field(
             name="🪪 Setup helpers",
             value=("`!ids` — server, channel, member and user IDs\n"
