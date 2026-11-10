@@ -11,12 +11,12 @@ import {
   Map,
   RefreshCw,
   ShieldCheck,
-  Swords,
   Target,
   Trophy,
   Users,
 } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
+import { WarSpine } from '@/components/war-spine'
 import {
   Alert,
   Badge,
@@ -37,31 +37,12 @@ import { MAZE_SCHEDULES, NODES_PER_LAP, PLAN_META, TRIAL_DAYS } from '@/lib/cons
 import {
   discountMoments,
   formatDateTime,
-  formatDuration,
   formatRelative,
   getWarWindow,
   nextDiscount,
   toDate,
-  warPhaseLabel,
 } from '@/lib/format'
 import { useNow } from '@/lib/hooks'
-
-function Metric({
-  label,
-  value,
-  tone = 'text-slate-50',
-}: {
-  label: string
-  value: React.ReactNode
-  tone?: string
-}) {
-  return (
-    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
-      <p className="text-[11px] uppercase tracking-wider text-slate-500">{label}</p>
-      <p className={`mt-1 text-base font-semibold tracking-tight ${tone}`}>{value}</p>
-    </div>
-  )
-}
 
 export default function OverviewPage() {
   const { guildId, guild } = useGuild()
@@ -104,17 +85,6 @@ export default function OverviewPage() {
   const warMissing = summary?.war?.missing_list?.length ?? 0
   const warExcused = summary?.war?.absent_list?.length ?? 0
   const warLogged = Object.keys(summary?.war?.attack_counts ?? {}).length
-  // Progress across the whole 48h war, matching the War page's "Total War
-  // Progress" bar. The phase bar reset every 24h, which made 9% look wrong next
-  // to a 21h countdown drawn from the 48h war clock.
-  const warProgress = useMemo(() => {
-    if (!warWindow.active || !warWindow.start || !warWindow.warEnd) return null
-    return {
-      value: now.getTime() - warWindow.start.getTime(),
-      max: Math.max(1, warWindow.warEnd.getTime() - warWindow.start.getTime()),
-    }
-  }, [warWindow, now])
-
   const race = summary?.race
   const raceLap = race?.current_lap ?? 0
   const raceNode = race?.current_node ?? 0
@@ -160,6 +130,12 @@ export default function OverviewPage() {
         }
       />
 
+      <WarSpine
+        guildId={guildId}
+        war={warWindow}
+        counts={{ missing: warMissing, excused: warExcused, logged: warLogged }}
+      />
+
       {setupDone < setupSteps.length ? (
         <Card className="mb-6">
           <CardBody className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -192,7 +168,7 @@ export default function OverviewPage() {
         </Alert>
       ) : null}
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Stat
           label="Plan"
           value={plan.label}
@@ -206,20 +182,6 @@ export default function OverviewPage() {
           footer={
             guild.premium_status === 'trial' ? (
               <ProgressBar value={trialDays} max={TRIAL_DAYS} tone={plan.tone} size="sm" />
-            ) : undefined
-          }
-        />
-        <Stat
-          label="War"
-          value={warWindow.active ? warPhaseLabel(warWindow.phase) : 'Idle'}
-          hint={
-            warWindow.active && warWindow.warEnd ? formatRelative(warWindow.warEnd, now) : 'No active war'
-          }
-          icon={<Swords className="h-4 w-4" />}
-          tone={warWindow.active ? 'amber' : 'slate'}
-          footer={
-            warProgress ? (
-              <ProgressBar value={warProgress.value} max={warProgress.max} tone="amber" size="sm" />
             ) : undefined
           }
         />
@@ -261,89 +223,7 @@ export default function OverviewPage() {
       {loading ? (
         <Spinner label="Loading server data…" />
       ) : (
-        <div className="grid gap-5 lg:grid-cols-2">
-          <Card>
-            <CardHeader
-              title="War"
-              description="Phase timer and attendance"
-              icon={<Swords className="h-4 w-4" />}
-              action={
-                <Link
-                  href={`/dashboard/${guildId}/war`}
-                  className="-my-1 inline-flex items-center gap-1 py-1.5 text-xs font-semibold text-accent-300 transition-colors hover:text-accent-200"
-                >
-                  Manage <ArrowRight className="h-3.5 w-3.5" />
-                </Link>
-              }
-            />
-            <CardBody className="space-y-5">
-              {summary?.war ? (
-                <>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge
-                      tone={
-                        warWindow.active
-                          ? warWindow.phase === 'attack'
-                            ? 'red'
-                            : 'blue'
-                          : 'slate'
-                      }
-                      dot
-                    >
-                      {warWindow.active ? warPhaseLabel(warWindow.phase) : 'Inactive'}
-                    </Badge>
-                    {warWindow.phaseEnd ? (
-                      <span className="text-xs text-slate-500">
-                        Phase ends {formatDateTime(warWindow.phaseEnd)}
-                      </span>
-                    ) : null}
-                    {warWindow.warEnd ? (
-                      <span className="text-xs text-slate-600">
-                        <span className="hidden sm:inline">· </span>War ends {formatDateTime(warWindow.warEnd)}
-                      </span>
-                    ) : null}
-                  </div>
-
-                  {warProgress ? (
-                    <div>
-                      <ProgressBar
-                        value={warProgress.value}
-                        max={warProgress.max}
-                        tone="amber"
-                        label="Total War Progress"
-                      />
-                      <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
-                        <Clock className="h-3.5 w-3.5" />
-                        {warWindow.warEnd ? (
-                          <span>
-                            <span className="font-semibold text-slate-300">
-                              {formatDuration(warWindow.warEnd.getTime() - now.getTime())}
-                            </span>{' '}
-                            left in the war
-                          </span>
-                        ) : (
-                          <span>No timer</span>
-                        )}
-                      </p>
-                    </div>
-                  ) : null}
-
-                  <div className="grid grid-cols-3 gap-2.5">
-                    <Metric label="Missing" value={warMissing} tone="text-warn-300" />
-                    <Metric label="Excused" value={warExcused} tone="text-steel-400" />
-                    <Metric label="Logged" value={warLogged} />
-                  </div>
-                </>
-              ) : (
-                <EmptyState
-                  icon={<Swords className="h-7 w-7" />}
-                  title="No war data yet"
-                  description="Start a war in Discord with !war defence ends 24h. Its state will appear here."
-                />
-              )}
-            </CardBody>
-          </Card>
-
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
           <Card>
             <CardHeader
               title="Race"

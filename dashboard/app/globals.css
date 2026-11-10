@@ -238,6 +238,20 @@
     vertical-align: 0.35em;
   }
 
+  /* Same board on the in-app overview, scaled to sit under a 36px page title. */
+  .board-clock--page {
+    font-size: clamp(2rem, 4.4vw, 3.1rem);
+    letter-spacing: -0.045em;
+  }
+
+  /* Thumb-sized controls: 28px is fine with a mouse, not with a phone in one hand. */
+  @media (pointer: coarse) {
+    .board-switch button {
+      min-height: 40px;
+      padding-inline: 14px;
+    }
+  }
+
   .board-switch {
     display: inline-flex;
     border: 1px solid var(--line);

@@ -121,7 +121,7 @@ export default function Landing() {
             <a
               key={item.href}
               href={item.href}
-              className="relative py-2 text-[13px] font-medium text-slate-400 transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-px after:origin-left after:scale-x-0 after:bg-accent-500 after:transition-transform after:duration-200 hover:text-slate-50 hover:after:scale-x-100"
+              className="relative py-2.5 text-[13px] font-medium text-slate-400 transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-px after:origin-left after:scale-x-0 after:bg-accent-500 after:transition-transform after:duration-200 hover:text-slate-50 hover:after:scale-x-100"
             >
               {item.label}
             </a>
@@ -507,7 +507,7 @@ export default function Landing() {
                       href={BOT_INVITE_URL}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-block py-1.5 text-slate-300 hover:text-accent-400"
+                      className="inline-block py-2.5 text-slate-300 hover:text-accent-400"
                     >
                       Add the bot
                     </a>
@@ -515,7 +515,7 @@ export default function Landing() {
                   <li>
                     <a
                       href="#clock"
-                      className="inline-block py-1.5 text-slate-300 hover:text-accent-400"
+                      className="inline-block py-2.5 text-slate-300 hover:text-accent-400"
                     >
                       War clock
                     </a>
@@ -528,7 +528,7 @@ export default function Landing() {
                   <li>
                     <a
                       href={`mailto:${SUPPORT_EMAIL}`}
-                      className="inline-block py-1.5 text-slate-300 hover:text-accent-400"
+                      className="inline-block py-2.5 text-slate-300 hover:text-accent-400"
                     >
                       {SUPPORT_EMAIL}
                     </a>
@@ -537,7 +537,7 @@ export default function Landing() {
                     <li key={link.label}>
                       <Link
                         href={link.href}
-                        className="inline-block py-1.5 text-slate-300 hover:text-accent-400"
+                        className="inline-block py-2.5 text-slate-300 hover:text-accent-400"
                       >
                         {link.label}
                       </Link>

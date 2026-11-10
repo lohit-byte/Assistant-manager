@@ -4,7 +4,8 @@ Two different things live here. Read this before touching either.
 
 - `DESIGN.md` (one level up) is the **source of truth** for the shipped war board system:
   palette roles, type scale, grid, shape, motion. It describes what is live.
-- This folder holds **proposal and audit artifacts**, not shipped code.
+- This folder holds **audit and proposal artifacts**, not shipped code. The overview proposal
+  below has since been implemented — see "Status".
 
 ## Live audit — `LIVE-AUDIT.md`
 
@@ -19,9 +20,6 @@ Measured against the deployed site (<https://drlohithealth.com>) on 10 Nov 2026:
 | Raster images | 0 (hero board is live HTML/CSS) |
 | `mono-label` contrast | 7.4:1 |
 
-Open gaps: inner dashboard screens inherit tokens but not the board composition; a few landing
-touch targets are 28–36 px tall; no current capture of the auth-gated overview exists.
-
 ## Overview proposal — `overview-proposal.html`
 
 A static mockup of the inner overview screen composed on the same system the landing page uses:
@@ -33,5 +31,21 @@ open overview-proposal.html      # macOS
 xdg-open overview-proposal.html  # Linux
 ```
 
-It is a mockup, not the app: fonts load from Google Fonts, and all data is sample data. It is not
-wired into any route and is not deployed.
+It is a mockup: fonts load from Google Fonts, and all data is sample data.
+
+## Status — implemented (10 Nov 2026)
+
+The spine half of the proposal is now shipped:
+
+- `components/war-spine.tsx` — the live war board: real phase, countdown, 48h rail, and the
+  missing / excused / logged counters, built from the same `.war-board` / `.rail` / `.board-count`
+  styles as the landing hero.
+- `app/dashboard/[guildId]/page.tsx` — the spine sits under the page header; the duplicate war
+  stat card and war detail card are gone; plan / race / maze stats remain and the detail cards are
+  a three-up grid.
+- `app/globals.css` — `.board-clock--page` scales the clock for in-app use, plus coarse-pointer
+  min-heights on the phase switch.
+- `components/landing.tsx` — footer links and the desktop nav now clear 40 px hit areas.
+
+Still open: the attack-log pips per player (needs a per-player attacks-required value from the bot),
+and the maze rows keep their current card until that section is reworked.
