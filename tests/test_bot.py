@@ -2988,3 +2988,49 @@ def test_team_captain_can_set_the_team_exemption_rule(clean_db):
 
     assert db.one("teams", id=1)["exempt_absent"] is False
     assert not any("Staff only" in text for text in ctx.texts)
+
+
+# --------------------------------------------- warnings DM the warned player
+
+def _warning_ctx(db):
+    seed_alias(db, 200, "sam")
+    ctx = make_ctx()
+    member = FakeMember(200, "Sam", guild=ctx.guild)
+    ctx.guild.members.append(member)
+    ctx.message.mentions = [member]
+    return ctx, member
+
+
+def test_warning_add_dms_the_warned_player(clean_db):
+    db = clean_db
+    ctx, member = _warning_ctx(db)
+
+    run(call(WarTracker.warning_group, war_cog(), ctx, "add",
+             member.mention, reason="missed 4 attacks"))
+
+    assert db.rows("warnings"), "the warning should still be stored"
+    assert member.dms, "the warned player should receive a DM"
+    _content, embed = member.dms[-1]
+    assert embed is not None
+    assert "missed 4 attacks" in (embed.description or "")
+    assert "Test Guild" in (embed.footer.text or "")
+
+
+def test_warning_is_recorded_when_the_dm_cannot_be_delivered(clean_db, monkeypatch):
+    import discord
+
+    db = clean_db
+    ctx, member = _warning_ctx(db)
+
+    async def closed_dms(**kwargs):
+        raise discord.Forbidden(types.SimpleNamespace(status=403, reason="Forbidden"),
+                                "Cannot send messages to this user")
+
+    monkeypatch.setattr(member, "send", closed_dms)
+
+    run(call(WarTracker.warning_group, war_cog(), ctx, "add",
+             member.mention, reason="late again"))
+
+    assert db.rows("warnings")
+    assert any("dm" in text.lower() and "couldn't" in text.lower()
+               for text in ctx.texts), "staff should be told the DM failed"

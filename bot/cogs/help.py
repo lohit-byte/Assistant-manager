@@ -119,7 +119,9 @@ def build_topic(topic, is_staff):
     if topic in ("warning", "warnings"):
         e = _embed("⚠️ Warnings", discord.Color.red(), "Warnings are tracked per server and shown on the dashboard.")
         if is_staff:
-            e.add_field(name="Commands", value="`!warning add @user <reason>`\n`!warning list` — recent server warnings\n`!warning list @user`\n`!warning remove <id>`", inline=False)
+            e.add_field(name="Commands", value=("`!warning add @user <reason>` — records it and DMs the player\n"
+                                                "`!warning list` — recent server warnings\n`!warning list @user`\n"
+                                                "`!warning remove <id>`"), inline=False)
         return e
     if topic in ("ids", "id"):
         e = _embed("🪪 ID Lookup", discord.Color.teal(), "Staff only.")

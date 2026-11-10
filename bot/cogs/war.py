@@ -1401,15 +1401,28 @@ class WarTracker(commands.Cog):
                 alias_row = await self._lookup_alias(ctx.guild.id, discord_id=member.id)
                 if not alias_row:
                     return await ctx.send("❌ That member has no alias yet. Add one with `!alias add @user <alias>` — warnings use aliases like the dashboard.")
+                reason_text = (reason or "No reason provided").strip()
                 # warnings.discord_id is a foreign key into users.
                 await asyncio.to_thread(ensure_user, member.id)
                 await asyncio.to_thread(
                     supabase.table("warnings").insert({
                         "guild_id": ctx.guild.id, "discord_id": member.id,
-                        "reason": reason or "No reason", "issued_by": ctx.author.id,
+                        "reason": reason_text, "issued_by": ctx.author.id,
                     }).execute
                 )
                 await ctx.send(f"📌 **{alias_row['alias_name']}** has been warned.")
+                # DM the warned player so the warning is not only visible to
+                # staff. Closed DMs / a blocked bot must never break the command.
+                dm = discord.Embed(
+                    title="⚠️ Warning received",
+                    description=_short(reason_text, 1500),
+                    color=discord.Color.red(),
+                )
+                dm.set_footer(text=f"From {ctx.guild.name}")
+                try:
+                    await member.send(embed=dm)
+                except discord.HTTPException:
+                    await ctx.send("*(Couldn't DM them — their DMs may be closed.)*")
             else:
                 res = await asyncio.to_thread(
                     supabase.table("warnings").select("*")
