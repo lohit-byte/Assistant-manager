@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Legends Assistant — overview on the war board system</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,100..900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ground:#0c0d0a; --panel:#12130e; --raised:#181a13; --line:#2b2c23; --line-strong:#3a3b30;
+    --ink:#f1ece0; --muted:#a29c8e; --accent:#ff6b2c; --accent-ink:#180c05; --accent-300:#ffa07a;
+    --steel:#a9bccf; --sage:#93b48a; --amber:#d9a94e; --red:#e2604a;
+    --font-sans:'Archivo',ui-sans-serif,system-ui,sans-serif;
+    --font-mono:'JetBrains Mono',ui-monospace,monospace;
+    --ease:cubic-bezier(.16,1,.3,1);
+  }
+  *{box-sizing:border-box;margin:0}
+  html,body{height:100%}
+  body{background:var(--ground);color:var(--ink);font-family:var(--font-sans);font-size:14px;
+    -webkit-font-smoothing:antialiased}
+  body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:60;opacity:.04;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E")}
+  .display{font-family:var(--font-sans);font-weight:800;font-stretch:118%;letter-spacing:-.035em;line-height:.95;text-wrap:balance}
+  .mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+  .label{font-family:var(--font-mono);font-size:10px;line-height:1.4;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--muted)}
+  .app{display:grid;grid-template-columns:248px 1fr;min-height:100vh}
+
+  /* ---------------- sidebar ---------------- */
+  aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:18px 0 14px}
+  .brand{display:flex;align-items:center;gap:10px;padding:0 20px 20px}
+  .mark{position:relative;width:32px;height:32px;border:1px solid rgba(241,236,224,.18);background:var(--raised);
+    display:inline-flex;align-items:center;justify-content:center;gap:2px}
+  .mark i{display:block;width:2px;height:13px;background:#d9d3c5}
+  .mark u{position:absolute;right:6px;bottom:7px;width:5px;height:5px;background:var(--accent)}
+  .brand b{display:block;font-size:12.5px;font-weight:600;letter-spacing:-.01em}
+  .brand small{display:block;margin-top:5px;font-family:var(--font-mono);font-size:8.5px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--muted)}
+  .guild{display:flex;align-items:center;gap:9px;margin:0 12px;border:1px solid var(--line);padding:8px 10px;
+    background:var(--raised)}
+  .guild .g{width:22px;height:22px;border:1px solid var(--line-strong);display:grid;place-items:center;
+    font-family:var(--font-mono);font-size:9px;color:var(--steel)}
+  .guild .n{display:block;font-size:11.5px;font-weight:600;line-height:1.15}
+  .guild .s{display:block;font-family:var(--font-mono);font-size:9px;color:var(--muted);margin-top:2px}
+  .guild .c{margin-left:auto;color:var(--muted);font-size:9px}
+  .ng{margin-top:22px;padding:0 12px}
+  .ng>p{padding:0 8px;margin-bottom:7px;font-family:var(--font-mono);font-size:8.5px;letter-spacing:.2em;
+    text-transform:uppercase;color:#6c6659}
+  .nav{display:flex;align-items:center;gap:9px;padding:7px 8px;font-size:12px;color:var(--muted);
+    border-left:2px solid transparent;transition:color .16s var(--ease),background .16s var(--ease)}
+  .nav svg{opacity:.7}
+  .nav .k{margin-left:auto;font-family:var(--font-mono);font-size:9.5px;color:#6c6659}
+  .nav.on{color:var(--ink);background:rgba(255,107,44,.055);border-left-color:var(--accent)}
+  .nav.on svg{opacity:1;color:var(--accent)}
+  .side-foot{margin-top:auto;padding:0 12px}
+  .trial{border:1px solid rgba(255,107,44,.32);padding:10px 11px;background:rgba(255,107,44,.05)}
+  .trial .t{display:flex;justify-content:space-between;align-items:baseline;font-family:var(--font-mono);
+    font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-300)}
+  .trial .t b{font-size:15px;letter-spacing:-.02em;color:var(--ink)}
+  .trial p{margin-top:6px;font-family:var(--font-mono);font-size:9px;line-height:1.5;color:var(--muted)}
+  .me{display:flex;align-items:center;gap:9px;margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+  .me .a{width:24px;height:24px;border:1px solid var(--line-strong);display:grid;place-items:center;
+    font-family:var(--font-mono);font-size:9px;color:var(--muted)}
+  .me .n{display:block;font-size:11px;font-weight:600}
+  .me .r{display:block;font-family:var(--font-mono);font-size:8.5px;color:var(--muted)}
+
+  /* ---------------- main ---------------- */
+  main{min-width:0;display:flex;flex-direction:column}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;height:46px;
+    padding:0 28px;border-bottom:1px solid var(--line)}
+  .crumb{display:flex;align-items:center;gap:9px;font-family:var(--font-mono);font-size:10px;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .crumb b{color:var(--ink);font-weight:500;letter-spacing:.1em}
+  .crumb i{color:#4a4b3e;font-style:normal}
+  .status{display:flex;align-items:center;gap:14px}
+  .live{display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:9.5px;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .dot{position:relative;width:6px;height:6px;border-radius:99px;background:var(--accent)}
+  .dot::after{content:"";position:absolute;inset:-4px;border:1px solid var(--accent);border-radius:99px;
+    animation:live 2.4s var(--ease) infinite}
+  @keyframes live{0%{transform:scale(.6);opacity:.7}70%,100%{transform:scale(1.9);opacity:0}}
+  .stamp{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted);border:1px solid var(--line);padding:4px 8px}
+  .stamp.acc{color:var(--accent-300);border-color:rgba(255,107,44,.32);background:rgba(255,107,44,.06)}
+
+  .content{padding:26px 28px 0;display:flex;flex-direction:column;gap:20px;flex:1}
+  .phead{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;
+    padding-bottom:16px;border-bottom:1px solid rgba(241,236,224,.1)}
+  .stamprow{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px}
+  .phead h1{font-size:36px}
+  .phead p{margin-top:9px;max-width:560px;font-size:13px;line-height:1.6;color:var(--muted)}
+  .acts{display:flex;gap:8px}
+  .btn{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;letter-spacing:-.01em;
+    padding:9px 14px;border:1px solid var(--line-strong);background:transparent;color:var(--ink);
+    text-decoration:none;cursor:pointer}
+  .btn:hover{border-color:rgba(255,107,44,.6)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .btn.primary:hover{background:#ff8a56;border-color:#ff8a56}
+
+  /* --- war spine --- */
+  .spine{position:relative;border:1px solid var(--line-strong);background:
+    linear-gradient(180deg,rgba(255,255,255,.02),transparent 34%),var(--panel);
+    box-shadow:inset 0 1px 0 rgba(241,236,224,.05)}
+  .spine::before,.spine::after{content:"";position:absolute;top:-11px;width:38px;height:10px;
+    border:1px solid rgba(241,236,224,.13);background:rgba(241,236,224,.07);pointer-events:none}
+  .spine::before{left:22px;transform:rotate(-2.5deg)}
+  .spine::after{right:22px;transform:rotate(2deg)}
+  .spine-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    border-bottom:1px solid var(--line);padding:9px 16px}
+  .ph{display:flex;align-items:center;gap:10px}
+  .phase{border:1px solid rgba(255,107,44,.35);background:rgba(255,107,44,.08);color:var(--accent-300);
+    font-family:var(--font-mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;padding:3px 8px}
+  .switch{display:inline-flex;border:1px solid var(--line)}
+  .switch button{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;
+    padding:5px 10px;background:transparent;border:0;color:var(--muted);cursor:pointer}
+  .switch button+button{border-left:1px solid var(--line)}
+  .switch button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+  .spine-body{display:grid;grid-template-columns:1fr 300px;gap:26px;padding:18px 16px 20px;align-items:center}
+  .clock{font-family:var(--font-mono);font-size:56px;line-height:1;letter-spacing:-.055em;
+    font-variant-numeric:tabular-nums;color:var(--ink)}
+  .clock small{font-size:.3em;letter-spacing:.06em;color:var(--muted);margin-left:.5em;vertical-align:.35em}
+  .clock-line{margin-top:10px;font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--muted)}
+  .clock-line b{color:var(--steel);font-weight:400}
+  .rail{margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:2px;height:6px;position:relative}
+  .rail i{height:100%;display:block}
+  .rail .d{background:rgba(169,188,207,.38)}
+  .rail .a{background:rgba(255,107,44,.5)}
+  .rail .m{position:absolute;top:-5px;left:74%;width:2px;height:16px;background:var(--ink);
+    box-shadow:0 0 0 3px rgba(12,13,10,.55)}
+  .rail-legend{display:flex;justify-content:space-between;margin-top:8px;font-family:var(--font-mono);
+    font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#6c6659}
+  .counts{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+    border:1px solid var(--line)}
+  .count{background:var(--panel);padding:10px 12px}
+  .count .v{font-family:var(--font-mono);font-size:22px;line-height:1.1;margin-top:6px}
+  .count .s{font-family:var(--font-mono);font-size:9px;color:#6c6659;margin-top:3px;letter-spacing:.08em}
+
+  /* --- grid of tools --- */
+  .cols{display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:16px}
+  .card{border:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;
+    box-shadow:inset 0 1px 0 rgba(241,236,224,.04)}
+  .chead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:11px 14px;
+    border-bottom:1px solid var(--line)}
+  .chead .t{font-family:var(--font-sans);font-weight:700;font-size:13px;letter-spacing:-.01em}
+  .chead .s{margin-top:4px;font-family:var(--font-mono);font-size:9px;letter-spacing:.1em;
+    text-transform:uppercase;color:#6c6659}
+  .chead a{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--muted);text-decoration:none;white-space:nowrap}
+  .chead a:hover{color:var(--accent-300)}
+  .cbody{padding:12px 14px 14px;display:flex;flex-direction:column;gap:12px;flex:1}
+
+  .logrow{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;padding:7px 0;
+    border-top:1px solid rgba(241,236,224,.07);font-family:var(--font-mono);font-size:10.5px;color:var(--muted)}
+  .logrow:first-child{border-top:0}
+  .logrow .p{color:var(--ink)}
+  .pips{display:flex;gap:3px}
+  .pip{width:8px;height:8px;border:1px solid rgba(241,236,224,.22)}
+  .pip[data-on="true"]{background:var(--accent);border-color:var(--accent)}
+  .pip.miss{border-color:rgba(226,96,74,.5)}
+  .rowl{display:flex;justify-content:space-between;align-items:baseline;font-family:var(--font-mono);
+    font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:#6c6659}
+  .rowl b{font-size:10.5px;letter-spacing:0;text-transform:none;color:var(--muted);font-weight:400}
+  .bar{height:5px;background:rgba(241,236,224,.07);margin-top:7px;overflow:hidden}
+  .bar i{display:block;height:100%}
+  .bar.steel i{background:rgba(169,188,207,.55)}
+  .bar.sage i{background:rgba(147,180,138,.65)}
+  .bar.acc i{background:var(--accent)}
+  .laps{display:flex;gap:4px;margin-top:8px}
+  .laps i{flex:1;height:6px;background:rgba(241,236,224,.08)}
+  .laps i.on{background:rgba(147,180,138,.7)}
+  .task{border:1px solid var(--line);background:var(--raised);padding:8px 10px;display:flex;
+    justify-content:space-between;gap:10px;align-items:center;font-size:11px;color:#cfc9bb}
+  .task b{font-family:var(--font-mono);font-size:10px;color:var(--sage);font-weight:500}
+  .tags{display:flex;gap:5px;flex-wrap:wrap}
+  .tag{border:1px solid var(--line-strong);padding:3px 7px;font-family:var(--font-mono);font-size:9px;
+    letter-spacing:.06em;color:var(--muted)}
+  .tag.acc{border-color:rgba(255,107,44,.4);color:var(--accent-300)}
+  .mrow{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid rgba(241,236,224,.07);
+    font-family:var(--font-mono);font-size:10px;color:var(--muted)}
+  .mrow:first-child{border-top:0}
+  .mrow .pct{width:34px;font-size:12px}
+  .mrow .w{flex:1;color:#cfc9bb}
+  .mrow .tm{color:#6c6659}
+  .mrow.next .pct,.mrow.next .w{color:var(--accent-300)}
+  .mrow.past .pct,.mrow.past .w,.mrow.past .tm{color:#5c5749}
+  .mrow.past .w{text-decoration:line-through;text-decoration-color:#3d3a2f}
+  .rgrid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line)}
+  .rgrid .c{background:var(--panel);padding:11px 12px}
+  .rgrid .v{font-family:var(--font-mono);font-size:20px;margin-top:6px}
+  .rgrid a{display:inline-block;margin-top:7px;font-family:var(--font-mono);font-size:9px;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--muted);text-decoration:none}
+  .planbar{display:flex;justify-content:space-between;align-items:center;border:1px solid rgba(255,107,44,.3);
+    background:rgba(255,107,44,.05);padding:8px 10px;font-family:var(--font-mono);font-size:9.5px;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--accent-300)}
+
+  .footnote{display:flex;justify-content:space-between;align-items:center;padding:14px 28px;
+    border-top:1px solid var(--line);margin-top:auto;font-family:var(--font-mono);font-size:9.5px;
+    letter-spacing:.14em;text-transform:uppercase;color:#6c6659}
+  .footnote b{color:var(--muted);font-weight:400}
+
+  @media (max-width:900px){
+    .app{grid-template-columns:1fr}
+    aside{display:none}
+    .content{padding:16px 16px 0;gap:14px}
+    .topbar{height:auto;flex-wrap:wrap;gap:8px;padding:10px 16px}
+    .crumb{font-size:9px}
+    .status{gap:10px;flex-wrap:wrap}
+    .stamprow{flex-direction:column;gap:4px;align-items:flex-start}
+    .phead{flex-direction:column;align-items:flex-start;gap:14px}
+    .phead h1{font-size:27px}
+    .phead p{font-size:12.5px}
+    .acts{width:100%}
+    .acts .btn{flex:1;justify-content:center}
+    .spine-body{grid-template-columns:1fr;gap:16px;padding:14px}
+    .clock{font-size:40px}
+    .clock-line{font-size:9px;letter-spacing:.06em}
+    .cols{grid-template-columns:1fr!important}
+    .logrow{font-size:10px;gap:8px}
+    .pip{width:7px;height:7px}
+    .footnote{padding:12px 16px;flex-direction:column;gap:6px;align-items:flex-start}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand">
+      <span class="mark"><i></i><i></i><i></i><u></u></span>
+      <span><b>Legends Assistant</b><small>Alliance ops</small></span>
+    </div>
+    <div class="guild">
+      <span class="g">ML</span>
+      <span><span class="n">Monster Legends Elite</span><span class="s">GUILD 123</span></span>
+      <span class="c">⌃⌄</span>
+    </div>
+    <div class="ng">
+      <p>Workspace</p>
+      <a class="nav on"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Overview</a>
+    </div>
+    <div class="ng">
+      <p>Events</p>
+      <a class="nav"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4h16M4 20h16M7 4v16M17 4v16"/></svg>War<span class="k">3</span></a>
+      <a class="nav"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 21h8M12 17v4M7 4h10v6a5 5 0 0 1-10 0V4Z"/></svg>Race<span class="k">5/8</span></a>
+      <a class="nav"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"/><path d="M9 3v15M15 6v15"/></svg>Maze<span class="k">42m</span></a>
+    </div>
+    <div class="ng">
+      <p>Manage</p>
+      <a class="nav"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>Aliases<span class="k">24</span></a>
+      <a class="nav"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v6M12 15v6M3 12h6M15 12h6"/></svg>Updates</a>
+    </div>
+    <div class="ng">
+      <p>Account</p>
+      <a class="nav"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m12 3 2.4 5.6L20 11l-5.6 2.4L12 19l-2.4-5.6L4 11l5.6-2.4L12 3Z"/></svg>Pricing</a>
+      <a class="nav"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2" y="5" width="20" height="14"/><path d="M2 10h20"/></svg>Billing</a>
+    </div>
+    <div class="side-foot">
+      <div class="trial">
+        <div class="t"><span>Trial</span><b>05:00:00</b></div>
+        <p>5 days left · premium stops after day 7</p>
+      </div>
+      <div class="me">
+        <span class="a">DE</span>
+        <span><span class="n">Demo Admin</span><span class="r">DISCORD</span></span>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="topbar">
+      <div class="crumb"><b>Monster Legends Elite</b><i>/</i>Overview</div>
+      <div class="status">
+        <span class="live"><span class="dot"></span>Bot live · synced 2m</span>
+        <span class="stamp acc">Trial · 5 days</span>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="stamprow">
+        <span class="label">01 / Overview</span>
+        <span class="label">Board state · <span class="mono" style="color:var(--muted)">13 NOV 2026 17:22 IST</span></span>
+      </div>
+
+      <div class="phead" style="border-bottom:0;padding-bottom:0;margin-bottom:-4px">
+        <div>
+          <h1 class="display">Server snapshot</h1>
+          <p>One board for the 48-hour war, race laps, maze windows and the roster. Everything below is read from the same tables the bot writes.</p>
+        </div>
+        <div class="acts">
+          <a class="btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>Refresh</a>
+          <a class="btn primary">Open war room →</a>
+        </div>
+      </div>
+
+      <!-- the 48h spine -->
+      <section class="spine">
+        <div class="spine-head">
+          <div class="ph">
+            <span class="live"><span class="dot"></span>War</span>
+            <span class="phase">Attack phase</span>
+          </div>
+          <div class="switch"><button>Defence</button><button aria-pressed="true">Attack</button></div>
+        </div>
+        <div class="spine-body">
+          <div>
+            <div class="clock">21:48:18<small>left</small></div>
+            <p class="clock-line">Phase ends 13 Nov · <b>war clock 21h 48m</b> · auto-switch at 24h</p>
+            <div class="rail"><i class="d"></i><i class="a"></i><span class="m"></span></div>
+            <div class="rail-legend"><span>48h left</span><span>24h left</span><span>0h</span></div>
+          </div>
+          <div class="counts">
+            <div class="count"><span class="label">Missing</span><div class="v" style="color:var(--red)">3</div><div class="s">NO LOG</div></div>
+            <div class="count"><span class="label">Excused</span><div class="v">1</div><div class="s">APPROVED</div></div>
+            <div class="count"><span class="label">Logged</span><div class="v" style="color:var(--sage)">5</div><div class="s">OF 9</div></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="cols">
+        <section class="card">
+          <div class="chead">
+            <div><div class="t">Missing attacks</div><div class="s">Attack log · sample roster</div></div>
+            <a href="#">Manage →</a>
+          </div>
+          <div class="cbody">
+            <div class="logrow"><span class="p">Kael</span><span class="pips"><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em></span><span>6/6</span></div>
+            <div class="logrow"><span class="p">Mira</span><span class="pips"><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em></span><span>6/6</span></div>
+            <div class="logrow"><span class="p">Enzo</span><span class="pips"><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip"></em></span><span>5/6</span></div>
+            <div class="logrow"><span class="p">Tobi</span><span class="pips"><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip miss"></em><em class="pip miss"></em><em class="pip miss"></em><em class="pip miss"></em></span><span style="color:var(--red)">2/6</span></div>
+            <div class="logrow"><span class="p">Rhea</span><span class="pips"><em class="pip miss"></em><em class="pip miss"></em><em class="pip miss"></em><em class="pip miss"></em><em class="pip miss"></em><em class="pip miss"></em></span><span style="color:var(--red)">0/6</span></div>
+            <div class="rowl" style="margin-top:2px"><span>Warnings</span><b>3 open · 1 sent today</b></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="chead">
+            <div><div class="t">Race</div><div class="s">OFA · lap 5 of 8</div></div>
+            <a href="#">Manage →</a>
+          </div>
+          <div class="cbody">
+            <div class="rowl"><span>Laps claimed</span><b>5 / 8</b></div>
+            <div class="laps"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div>
+            <div class="task"><span>Collect 40 fire orbs — volcano node</span><span><b>12 / 40</b></span></div>
+            <div><div class="rowl"><span>DYP</span><b>12 / 20</b></div><div class="bar sage"><i style="width:60%"></i></div></div>
+            <div class="tags"><span class="tag acc">OFA claimed</span><span class="tag">JE 2/5</span><span class="tag">3 contributors</span></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="chead">
+            <div><div class="t">Maze windows</div><div class="s">Local time · IST</div></div>
+            <a href="#">Manage →</a>
+          </div>
+          <div class="cbody">
+            <div class="mrow past"><span class="pct">20%</span><span class="w">Passed · 7-day maze</span><span class="tm">09:12</span></div>
+            <div class="mrow past"><span class="pct">10%</span><span class="w">Passed · pings on</span><span class="tm">14:40</span></div>
+            <div class="mrow next"><span class="pct">10%</span><span class="w">In 42m · 24 opted in</span><span class="tm">17:22</span></div>
+            <div class="mrow"><span class="pct">20%</span><span class="w">Tomorrow</span><span class="tm">09:12</span></div>
+            <div class="mrow"><span class="pct">30%</span><span class="w">13 Nov</span><span class="tm">14:40</span></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="cols" style="grid-template-columns:1.35fr 1fr 1fr">
+        <section class="card">
+          <div class="chead">
+            <div><div class="t">Roster &amp; discipline</div><div class="s">Aliases mapped to Discord</div></div>
+            <a href="#">Manage →</a>
+          </div>
+          <div class="cbody">
+            <div class="rgrid">
+              <div class="c"><span class="label">Aliases</span><div class="v">24</div><a href="#">Manage →</a></div>
+              <div class="c"><span class="label">Warnings</span><div class="v" style="color:var(--red)">3</div><a href="#">Open →</a></div>
+              <div class="c"><span class="label">Unmapped</span><div class="v" style="color:var(--amber)">2</div><a href="#">Review →</a></div>
+              <div class="c"><span class="label">Staff</span><div class="v" style="color:var(--steel)">4</div><a href="#">Roles →</a></div>
+            </div>
+          </div>
+        </section>
+        <section class="card">
+          <div class="chead">
+            <div><div class="t">Clock</div><div class="s">Next event</div></div>
+            <a href="#">War →</a>
+          </div>
+          <div class="cbody">
+            <div class="mrow"><span class="pct">1</span><span class="w">Attack phase ends</span><span class="tm">21:48</span></div>
+            <div class="mrow"><span class="pct">2</span><span class="w">Maze 10% window</span><span class="tm">42m</span></div>
+            <div class="mrow"><span class="pct">3</span><span class="w">Trial ends</span><span class="tm">5d</span></div>
+            <div class="rowl"><span>All times local</span><b>Asia/Calcutta</b></div>
+          </div>
+        </section>
+        <section class="card">
+          <div class="chead">
+            <div><div class="t">Plan</div><div class="s">Free trial</div></div>
+            <a href="#">Pricing →</a>
+          </div>
+          <div class="cbody">
+            <div class="rowl"><span>Trial remaining</span><b>5 days</b></div>
+            <div class="bar acc"><i style="width:71%"></i></div>
+            <div class="planbar"><span>Keep the board after day 7</span><span>₹299/mo</span></div>
+            <a class="btn" style="justify-content:center">Upgrade →</a>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="footnote">
+      <span>Guild 123 · synced 2m ago</span>
+      <span>All times in your timezone · Asia/Calcutta</span>
+      <span>Fig. 02 / Overview</span>
+    </div>
+  </main>
+</div>
+</body>
+</html>
