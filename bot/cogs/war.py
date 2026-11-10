@@ -7,6 +7,7 @@ import asyncio
 from collections import defaultdict
 from database import (
     supabase,
+    check_premium_status,
     is_staff_member,
     is_team_staff,
     ensure_user,
@@ -93,9 +94,35 @@ def phase_bounds(start: datetime, phase: str):
     if phase == "defence": return start, start + PHASE
     return start + PHASE, start + WAR
 
+def _entry_name(entry):
+    """Name of a missing/absent list entry (dict ``{"name": ...}`` or legacy str)."""
+    if isinstance(entry, dict):
+        return (entry.get("name") or "").strip().lower()
+    return str(entry or "").strip().lower()
+
+
+def _entry_label(entry):
+    """Display name of a missing/absent list entry (dict or legacy plain string)."""
+    if isinstance(entry, dict):
+        return (entry.get("name") or "").strip()
+    return str(entry or "").strip()
+
+
+def _normalise_entries(entries):
+    """Upgrade legacy plain-string list entries to ``{"name": ...}`` dicts."""
+    return [entry if isinstance(entry, dict) else {"name": _entry_name(entry)}
+            for entry in entries or []]
+
+
 def join_names(items, limit=1000):
-    text = ", ".join(i["name"] for i in items)
+    text = ", ".join(_entry_label(i) for i in items)
     return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
+def _short(text, limit):
+    """Clip user-provided text to an embed-field-safe length."""
+    text = str(text or "").strip() or "No reason"
+    return text if len(text) <= limit else text[:limit - 1] + "…"
 
 def progress_bar(current, total, length=20):
     if total == 0: return "░" * length
@@ -112,7 +139,13 @@ def fmt_td(td):
 
 async def get_war(channel_id):
     res = await asyncio.to_thread(supabase.table("wars").select("*").eq("channel_id", channel_id).limit(1).execute)
-    return res.data[0] if res.data else None
+    war = res.data[0] if res.data else None
+    if war:
+        # Rows written by older versions store plain alias strings in these
+        # lists; every command below assumes the {"name": ...} shape.
+        war["missing_list"] = _normalise_entries(war.get("missing_list"))
+        war["absent_list"] = _normalise_entries(war.get("absent_list"))
+    return war
 
 async def get_settings(guild_id):
     res = await asyncio.to_thread(supabase.table("war_settings").select("*").eq("guild_id", guild_id).limit(1).execute)
@@ -130,13 +163,6 @@ async def check_team_limit(guild_id):
     max_teams = (res.data[0].get("max_teams") if res.data else None) or 1
     active = await asyncio.to_thread(supabase.table("wars").select("channel_id").eq("guild_id", guild_id).eq("is_active", True).execute)
     return len(active.data) < max_teams
-
-
-def _entry_name(entry):
-    """Name of a missing/absent list entry (dict ``{"name": ...}`` or legacy str)."""
-    if isinstance(entry, dict):
-        return (entry.get("name") or "").strip().lower()
-    return str(entry or "").strip().lower()
 
 
 def apply_attack(war, alias, delta, required):
@@ -622,8 +648,9 @@ class WarTracker(commands.Cog):
 
     async def _missing_mentions(self, war):
         missing = war.get("missing_list") or []
-        ids = [str(m["id"]) for m in missing if m.get("id")]
-        names = [m.get("name") or "" for m in missing if not m.get("id")]
+        ids = [str(m["id"]) for m in missing if isinstance(m, dict) and m.get("id")]
+        names = [_entry_name(m) for m in missing
+                 if not (isinstance(m, dict) and m.get("id"))]
         if names and war.get("guild_id"):
             try:
                 res = await asyncio.to_thread(
@@ -882,6 +909,10 @@ class WarTracker(commands.Cog):
                 channel_id = getattr(getattr(interaction, "channel", None), "id", None)
             if guild is None or user is None or channel_id is None or getattr(user, "bot", False):
                 return
+            if not await asyncio.to_thread(check_premium_status, guild.id):
+                return await self._reply_ephemeral(
+                    interaction,
+                    "❌ This server's trial has expired. Please upgrade via the dashboard.")
 
             async with self.locks[channel_id]:
                 war = await get_war(channel_id)
@@ -1102,8 +1133,8 @@ class WarTracker(commands.Cog):
         cfg = await get_settings(ctx.guild.id)
         required = cfg["attacks_required"]
         counts = {k.lower(): int(v or 0) for k, v in (war.get("attack_counts") or {}).items()}
-        absent = {a["name"].lower() for a in war.get("absent_list") or []}
-        missing = {m["name"].lower() for m in war.get("missing_list") or []}
+        absent = {_entry_name(a) for a in war.get("absent_list") or []}
+        missing = {_entry_name(m) for m in war.get("missing_list") or []}
         names = set(counts) | missing 
         short = sorted(((n, counts.get(n, 0)) for n in names if not (cfg["exempt_absent"] and n in absent) and counts.get(n, 0) < required), key=lambda x: (x[1], x[0]))
         embed = discord.Embed(title=f"📋 Below {required} attacks", color=discord.Color.orange())
@@ -1159,7 +1190,7 @@ class WarTracker(commands.Cog):
                 embed = discord.Embed(title=f"⚠️ Warnings ({len(res.data)})", color=discord.Color.red())
                 for w in res.data:
                     embed.add_field(name=f"ID {w['id']} · <@{w['discord_id']}>",
-                                    value=w.get("reason") or "No reason", inline=False)
+                                    value=_short(w.get("reason"), 300), inline=False)
                 return await ctx.send(embed=embed)
 
             if not target:
@@ -1189,7 +1220,8 @@ class WarTracker(commands.Cog):
                 )
                 if not res.data: return await ctx.send(f"✅ **{member.display_name}** has no warnings.")
                 embed = discord.Embed(title=f"Warnings for {member.display_name}", color=discord.Color.red())
-                for w in res.data: embed.add_field(name=f"ID {w['id']}", value=w['reason'] or "No reason", inline=False)
+                for w in res.data:
+                    embed.add_field(name=f"ID {w['id']}", value=_short(w.get("reason"), 500), inline=False)
                 await ctx.send(embed=embed)
         except Exception as e:
             await ctx.send(f"❌ Error: {e}")
@@ -1207,6 +1239,9 @@ class WarTracker(commands.Cog):
     async def on_message(self, message):
         if message.author.bot or not message.guild: return
         if not DONE_RE.search(message.content): return
+        # This path bypasses the command-level premium gate in main.py.
+        if not await asyncio.to_thread(check_premium_status, message.guild.id):
+            return
 
         async with self.locks[message.channel.id]:
             war = await get_war(message.channel.id)

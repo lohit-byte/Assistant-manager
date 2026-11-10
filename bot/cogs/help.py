@@ -6,10 +6,13 @@ def _embed(title, color, desc=None):
     return discord.Embed(title=title, description=desc, color=color)
 
 def build_overview(is_staff):
+    topics = "`war`, `race`, `maze`, `alias`"
+    if is_staff:
+        topics += ", `ids`, `roles`, `warning`, `pings`"
     e = _embed("📖 Bot Help", discord.Color.blurple(),
-               "Use `!help <topic>` for details: `war`, `race`, `maze`, `alias`, `ids`, `warning`, `pings`")
+               f"Use `!help <topic>` for details: {topics}")
     e.add_field(name="🛡️ War", value="`!war status` · `!war missing list`\nType `attacks done` to log your attacks", inline=False)
-    e.add_field(name="🏁 Race", value="`!race status` · `!race ofa` · `!race dmp` · `!race je +500k`", inline=False)
+    e.add_field(name="🏁 Race", value="`!race status` · `!race ofa` · `!race dyp` · `!race je +500k`", inline=False)
     e.add_field(name="🗺️ Maze", value="`!maze status` · `!maze alerts dm|here|off` · `!maze start 7d 6d12h`", inline=False)
     e.add_field(
         name="👑 Captains",
@@ -19,7 +22,13 @@ def build_overview(is_staff):
         inline=False,
     )
     if is_staff:
-        e.add_field(name="🔧 Admin", value="`!alias add @user <name>` · `!alias list` · `!ids` · `!warning`", inline=False)
+        e.add_field(name="🔧 Admin", value="`!alias add @user <name>` · `!alias list` · `!warning`", inline=False)
+        e.add_field(
+            name="🪪 Setup helpers",
+            value=("`!ids` — server, channel, member and user IDs\n"
+                   "`!roles` — every role with its ID and member count · `!roles @role` — who has it"),
+            inline=False,
+        )
     e.set_footer(text="Staff-only commands are shown to staff only.")
     return e
 
@@ -47,7 +56,7 @@ def build_topic(topic, is_staff):
         return e
     if topic == "race":
         e = _embed("🏁 Race Commands", discord.Color.green())
-        e.add_field(name="Everyone", value="`!race status`\n`!race ofa` · `!race ofa done`\n`!race dmp`\n`!race je +500k` · `!race je done`", inline=False)
+        e.add_field(name="Everyone", value="`!race status`\n`!race ofa` · `!race ofa done`\n`!race dyp` (`dmp` works too)\n`!race je +500k` · `!race je done`", inline=False)
         e.add_field(
             name="Captains",
             value=("A team captain can run the team race commands in their team's race channel: "
@@ -96,11 +105,23 @@ def build_topic(topic, is_staff):
         e = _embed("🪪 ID Lookup", discord.Color.teal(), "Staff only.")
         if is_staff:
             e.add_field(name="Commands", value="`!ids` — this server, channel and your ID\n`!ids roles` — all role IDs\n`!ids members [search]` — member IDs\n`!ids @user` — one user's ID and roles", inline=False)
+            e.add_field(name="Roles", value="`!roles` — role IDs with member counts\n`!roles @role` — the members holding that role", inline=False)
+        return e
+    if topic in ("roles", "role"):
+        e = _embed("🎭 Roles & IDs", discord.Color.teal(), "Staff only.")
+        if is_staff:
+            e.add_field(name="Commands", value=(
+                "`!roles` — every role with its ID and member count\n"
+                "`!roles <name>` or `!roles @role` — the members holding that role\n"
+                "`!ids` — this server, channel and your ID\n"
+                "`!ids roles` — role IDs only\n"
+                "`!ids members [search]` — member IDs\n"
+                "`!ids @user` — one user's ID and roles"), inline=False)
         return e
     if topic in ("ping", "pings"):
         e = _embed("🔔 Pings", discord.Color.gold())
         e.add_field(name="Automatic", value="Maze discount pings go to the configured Maze channel at each discount time (set in the dashboard or with `!maze start`).", inline=False)
-        e.add_field(name="Manual", value="`!maze ping 20%` sends an @everyone discount alert (staff).", inline=False)
+        e.add_field(name="Manual", value="`!maze ping 20%` sends a discount alert using the configured ping mention (staff).", inline=False)
         return e
     return None
 
@@ -116,7 +137,7 @@ class Help(commands.Cog):
             return await ctx.send(embed=build_overview(staff))
         e = build_topic(topic.lower(), staff)
         if e is None:
-            return await ctx.send("❌ Unknown topic. Try `!help`, `!help war`, `!help race`, `!help maze`.")
+            return await ctx.send("❌ Unknown topic. Try `!help`, `!help war`, `!help race`, `!help maze`, `!help ids`, `!help roles`.")
         await ctx.send(embed=e)
 
 async def setup(bot):

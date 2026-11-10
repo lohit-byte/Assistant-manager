@@ -160,7 +160,53 @@ class Admin(commands.Cog):
         e.set_footer(text="Try: !ids roles | !ids members <name> | !ids @user")
         await ctx.send(embed=e)
 
-    async def _send_pages(self, ctx, title, lines):
+    @commands.command(name="roles")
+    @commands.guild_only()
+    async def roles_command(self, ctx, *, query: str = None):
+        """Staff: list roles with IDs/member counts, or the members holding one role."""
+        if not await is_staff_member(ctx.author):
+            return await ctx.send("❌ Staff only.")
+
+        guild = ctx.guild
+        roles = [r for r in reversed(guild.roles) if r != guild.default_role]
+        if not roles:
+            return await ctx.send("ℹ️ This server has no roles yet.")
+
+        role = None
+        if ctx.message.role_mentions:
+            role = ctx.message.role_mentions[0]
+        else:
+            q = (query or "").strip().lower()
+            if q:
+                matches = [r for r in roles if r.name.lower() == q]
+                if not matches:
+                    matches = [r for r in roles if q in r.name.lower()]
+                if not matches:
+                    return await ctx.send(f"❌ No role matching `{query.strip()}`.")
+                if len(matches) > 1 and matches[0].name.lower() != q:
+                    names = ", ".join(f"`{r.name}`" for r in matches[:10])
+                    return await ctx.send(f"❌ Several roles match: {names}. Use the exact name or @mention the role.")
+                role = matches[0]
+
+        if role is not None:
+            members = [m for m in guild.members if not m.bot and self._holds_role(m, role)]
+            members.sort(key=lambda m: m.display_name.lower())
+            lines = [f"{m.display_name} — `{m.id}`" for m in members]
+            return await self._send_pages(ctx, f"🎭 Members with {role.name}", lines,
+                                          hint="Use `!roles` to see every role.")
+
+        lines = []
+        for r in roles:
+            count = sum(1 for m in guild.members if self._holds_role(m, r))
+            lines.append(f"**{r.name}** — `{r.id}` — {count} member{'s' if count != 1 else ''}")
+        await self._send_pages(ctx, "🎭 Role IDs", lines,
+                               hint="Use `!roles <name>` to see one role's members.")
+
+    @staticmethod
+    def _holds_role(member, role):
+        return any(getattr(r, "id", None) == role.id for r in getattr(member, "roles", []))
+
+    async def _send_pages(self, ctx, title, lines, hint=None):
         if not lines:
             return await ctx.send("Nothing found.")
         page, size = [], 0
@@ -174,7 +220,7 @@ class Admin(commands.Cog):
             e = discord.Embed(title=f"{title} — {i}/{min(len(pages), 5)}", description="\n".join(p), color=discord.Color.teal())
             await ctx.send(embed=e)
         if len(pages) > 5:
-            await ctx.send("…list truncated. Use `!ids members <name>` to narrow it down.")
+            await ctx.send(f"…list truncated. {hint or 'Use a narrower search.'}")
 
 async def setup(bot):
     await bot.add_cog(Admin(bot))

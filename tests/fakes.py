@@ -242,11 +242,13 @@ class FakeMember:
 
 class FakeMessage:
     def __init__(self, content="", author=None, mentions=None, attachments=None,
-                 guild=None, channel=None, message_id=None, embed=None):
+                 guild=None, channel=None, message_id=None, embed=None,
+                 role_mentions=None):
         self.id = message_id if message_id is not None else next(_next_message_id)
         self.content = content
         self.author = author
         self.mentions = mentions or []
+        self.role_mentions = role_mentions or []
         self.attachments = attachments or []
         self.guild = guild
         self.channel = channel

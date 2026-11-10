@@ -1,0 +1,4 @@
+dashboard/node_modules/
+dashboard/.next/
+dashboard/.shots/
+graphify-out/

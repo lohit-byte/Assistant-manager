@@ -61,6 +61,25 @@ Set these as process environment variables (Fly secrets / Wispbyte env) or in a
 | `DASHBOARD_URL` | optional | Link shown in billing notices |
 | `NODESHEET_PATH` | optional | Path to the bundled race node sheet. Defaults to `nodesheet.json` in the bot's working directory |
 
+## 🔐 Bot intents and permissions
+
+Enable both **privileged intents** in the Discord Developer Portal (Bot → Privileged
+Gateway Intents) before inviting the bot:
+
+| Intent | Why the bot needs it |
+| --- | --- |
+| **Message Content** | `!commands`, `attacks done` messages and race screenshot attachments |
+| **Server Members** | member lists, staff/captain role checks, `!ids members`, `!roles` |
+
+The invite URL lives in `dashboard/lib/constants.ts` and requests the permissions the
+bot may use: View Channels, Send Messages, Manage Messages, Embed Links, Attach Files,
+Read Message History, Mention Everyone and Add Reactions (`permissions=257088`).
+No bot command assigns roles, so **Manage Roles is not required** — `!war set role`
+only stores which role the channel's announcements ping.
+
+If a server re-invites the bot with fewer permissions, live boards, embeds and
+war/maze pings fail silently; re-invite with that URL after granting the two intents.
+
 ## 🗂️ Race node sheet
 
 The bot reads one shared node sheet from disk and offers it as **default (bundled)** to every

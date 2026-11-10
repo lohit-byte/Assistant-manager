@@ -17,6 +17,12 @@ def parse_amount(s):
     if not m: raise ValueError(f"bad amount: {s}")
     return _to_number(m.group(1)) * UNITS.get((m.group(2) or '').upper(), 1)
 
+def _clip(text, limit=1020):
+    """Keep user/sheet text inside Discord's 1024-char field limit."""
+    text = str(text or "")
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
 def _to_number(num):
     """Normalise OCR/typed numbers: '1,200' -> 1200, '1,5' -> 1.5."""
     if "." in num and "," in num:
@@ -388,7 +394,7 @@ class RaceTracker(commands.Cog):
             "ofa_holder_id": None, "ofa_target": ofa_t, "ofa_done": False, "dyp_progress": dyp_p, "dyp_target": dyp_t, "dyp_contributors": [],
             "je_progress": je_p, "je_target": je_t, "je_done": False, "pending_ofa_message_id": None, "pending_ofa_user_id": None
         }, on_conflict="channel_id").execute)
-        await ctx.send(f"✅ Node initialized: **Lap {lap}.{node}**\n*Tasks:* {desc}")
+        await ctx.send(f"✅ Node initialized: **Lap {lap}.{node}**\n*Tasks:* {_clip(desc, 1500)}")
         await self.show_status(ctx)
 
     async def manual_set(self, ctx, subaction, args):
@@ -506,6 +512,8 @@ class RaceTracker(commands.Cog):
                                         channel_id=ctx.channel.id, lap=lap, node=node)
                     await ctx.send(f"✅ JE logged for **{display_name}**. Progress: `{format_amount(new_val)}/{target_label}`")
                     if done: await ctx.send("🎉 **JE Target Reached!**")
+                else:
+                    return await ctx.send("Usage: `!race je +500k` or `!race je done`")
 
     async def show_status(self, ctx):
         state = await get_race(ctx.channel.id)
@@ -515,10 +523,10 @@ class RaceTracker(commands.Cog):
         curr_lap = state.get('current_lap') or 0
         target = state.get('target_laps') or 0
         target_str = f" (Target: {target})" if target > 0 else ""
-        sheet_str = f"\n**Sheet:** {state.get('active_race_sheet')}" if state.get('active_race_sheet') else ""
+        sheet_str = f"\n**Sheet:** {str(state.get('active_race_sheet'))[:100]}" if state.get('active_race_sheet') else ""
         
-        embed.add_field(name="Progress", value=f"**Lap {curr_lap}.{state.get('current_node') or 0}**{target_str}{sheet_str}", inline=False)
-        embed.add_field(name="Tasks", value=state.get('task_description', 'None'), inline=False)
+        embed.add_field(name="Progress", value=_clip(f"**Lap {curr_lap}.{state.get('current_node') or 0}**{target_str}{sheet_str}"), inline=False)
+        embed.add_field(name="Tasks", value=_clip(state.get('task_description', 'None')), inline=False)
         
         if state.get('task_description') == "No Active Node" or not state.get('task_description'):
             embed.add_field(name="OFA", value="Not Set ⏳", inline=True)
@@ -529,7 +537,7 @@ class RaceTracker(commands.Cog):
         if state.get('ofa_holder_id'):
             holder = await get_alias(ctx.guild.id, state['ofa_holder_id'], f"<@{state['ofa_holder_id']}>")
             ofa_status = f"✅ Completed by {holder}" if state.get('ofa_done') else f"⏳ In Progress by {holder}"
-            ofa_status += f" (Target: {state.get('ofa_target') or 'Not set'})"
+            ofa_status = _clip(ofa_status + f" (Target: {state.get('ofa_target') or 'Not set'})")
         elif state.get('pending_ofa_message_id'): 
             ofa_status = f"⏳ Pending approval for <@{state['pending_ofa_user_id']}>"
         else: 
@@ -550,9 +558,9 @@ class RaceTracker(commands.Cog):
         if state.get('je_done'):
             je_status = "✅ Completed"
         elif str(je_targ) in ("", "0"):
-            je_status = f"{je_curr} (target not set)"
+            je_status = _clip(f"{je_curr} (target not set)")
         else:
-            je_status = f"{je_curr}/{je_targ}"
+            je_status = _clip(f"{je_curr}/{je_targ}")
         embed.add_field(name="Joint Effort (JE)", value=je_status, inline=True)
         
         await ctx.send(embed=embed)

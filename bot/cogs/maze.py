@@ -479,7 +479,7 @@ class MazeTracker(commands.Cog):
             await ctx.send(embed=embed)
 
         elif action == "ping":
-            raw = (arg1 or "") + (arg2 or "")
+            raw = ((arg1 or "") + (arg2 or "")).replace(" ", "")
             m = re.fullmatch(r"(\d{1,3})%", raw)
             
             if not m or not (1 <= int(m.group(1)) <= 100):

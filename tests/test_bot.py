@@ -27,6 +27,7 @@ from fakes import (
 )
 
 from cogs.admin import Admin
+from cogs.help import Help
 from cogs.maze import MazeTracker
 from cogs.race import RaceTracker, format_amount, parse_amount, parse_node_args, parse_sheet_csv
 from cogs.war import (
@@ -36,6 +37,7 @@ from cogs.war import (
     _initial_sent,
     apply_attack,
     fmt_td,
+    join_names,
     log_attack,
     parse_time,
     phase_at,
@@ -2106,3 +2108,304 @@ def test_war_set_role_survives_a_team_sync_failure(clean_db, monkeypatch):
 
     assert db.one("wars", channel_id=CHANNEL)["team_role_id"] == 777
     assert any("will ping" in text for text in ctx.texts)
+
+
+# --------------------------------- help embed: !ids and !roles visibility
+
+def _embed_text(embed):
+    return "\n".join(f"{field.name}\n{field.value}" for field in embed.fields)
+
+
+def test_help_overview_lists_ids_and_roles_for_staff(clean_db):
+    ctx = make_ctx()
+
+    run(call(Help.help_command, Help(FakeBot()), ctx))
+
+    embed = ctx.sent[-1][1]
+    text = _embed_text(embed)
+    assert "!ids" in text, "staff help should advertise the ID lookup command"
+    assert "!roles" in text, "staff help should advertise the role lookup command"
+
+
+def test_help_overview_hides_staff_utilities_from_plain_members(clean_db):
+    ctx = make_ctx(administrator=False)
+
+    run(call(Help.help_command, Help(FakeBot()), ctx))
+
+    text = _embed_text(ctx.sent[-1][1])
+    assert "!ids" not in text
+    assert "!roles" not in text
+
+
+def test_help_roles_topic_documents_the_roles_command(clean_db):
+    ctx = make_ctx()
+
+    run(call(Help.help_command, Help(FakeBot()), ctx, "roles"))
+
+    embed = ctx.sent[-1][1]
+    text = _embed_text(embed)
+    assert "role" in embed.title.lower()
+    assert "!roles" in text
+    assert "!ids" in text
+
+
+def test_roles_lists_role_ids_and_cached_member_counts(clean_db):
+    ctx = make_ctx()
+    team_role = FakeRole(777, "Team A")
+    captain_role = FakeRole(888, "Captain")
+    ctx.guild.roles.extend([team_role, captain_role])
+    sam = FakeMember(42, "Sam", guild=ctx.guild)
+    sam.roles = [team_role]
+    ctx.guild.members.append(sam)
+
+    run(call(Admin.roles_command, admin_cog(), ctx))
+
+    embed = ctx.sent[-1][1]
+    text = embed.description or ""
+    assert "Team A" in text and "777" in text and "1 member" in text
+    assert "Captain" in text and "888" in text and "0 member" in text
+    assert "@everyone" not in text
+
+
+def test_roles_filters_members_by_role_name(clean_db):
+    ctx = make_ctx()
+    team_role = FakeRole(777, "Team A")
+    ctx.guild.roles.append(team_role)
+    sam = FakeMember(42, "Sam", guild=ctx.guild)
+    sam.roles = [team_role]
+    other = FakeMember(43, "Other", guild=ctx.guild)
+    ctx.guild.members.extend([sam, other])
+
+    run(call(Admin.roles_command, admin_cog(), ctx, query="team a"))
+
+    text = ctx.sent[-1][1].description or ""
+    assert "Sam" in text and "42" in text
+    assert "Other" not in text
+
+
+def test_roles_accepts_a_role_mention(clean_db):
+    ctx = make_ctx()
+    team_role = FakeRole(777, "Team A")
+    ctx.guild.roles.append(team_role)
+    sam = FakeMember(42, "Sam", guild=ctx.guild)
+    sam.roles = [team_role]
+    ctx.guild.members.append(sam)
+    ctx.message.role_mentions = [team_role]
+
+    run(call(Admin.roles_command, admin_cog(), ctx))
+
+    text = ctx.sent[-1][1].description or ""
+    assert "Sam" in text and "42" in text
+
+
+def test_roles_unknown_role_explains_instead_of_crashing(clean_db):
+    ctx = make_ctx()
+    ctx.guild.roles.append(FakeRole(777, "Team A"))
+
+    run(call(Admin.roles_command, admin_cog(), ctx, query="ghost"))
+
+    assert any("No role" in text for text in ctx.texts)
+
+
+def test_roles_is_staff_only(clean_db):
+    ctx = make_ctx(administrator=False)
+    ctx.guild.roles.append(FakeRole(777, "Team A"))
+
+    run(call(Admin.roles_command, admin_cog(), ctx))
+
+    assert any("Staff only" in text for text in ctx.texts)
+    assert not any(embed is not None for _content, embed in ctx.sent)
+
+
+# ------------------------------- legacy war rows (plain-string list entries)
+
+def test_join_names_accepts_legacy_plain_string_entries():
+    assert join_names(["sam", {"name": "bob"}]) == "sam, bob"
+
+
+def test_get_war_normalises_legacy_plain_string_entries(clean_db):
+    db = clean_db
+    seed_war(db, missing_list=["sam"], absent_list=["bob"])
+
+    import cogs.war as war_module
+
+    war = run(war_module.get_war(CHANNEL))
+
+    assert war["missing_list"] == [{"name": "sam"}]
+    assert war["absent_list"] == [{"name": "bob"}]
+
+
+def test_war_check_handles_legacy_string_missing_and_absent_entries(clean_db):
+    db = clean_db
+    seed_war(db, missing_list=["sam", "bob"], absent_list=["cara"])
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(WarTracker.war_check(war_cog(), ctx))
+
+    embed = ctx.sent[-1][1]
+    assert "sam" in (embed.description or "")
+    assert "bob" in (embed.description or "")
+
+
+def test_missing_list_command_handles_legacy_string_entries(clean_db):
+    db = clean_db
+    seed_war(db, missing_list=["sam"])
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(WarTracker.war_missing(war_cog(), ctx, "list", None))
+
+    assert any("sam" in text for text in ctx.texts)
+
+
+def test_12h_reminder_mentions_legacy_string_missing_entries(clean_db):
+    db = clean_db
+    seed_alias(db, 200, "sam")
+
+    mentions = run(war_cog()._missing_mentions({"guild_id": GUILD, "missing_list": ["sam"]}))
+
+    assert mentions == ["<@200>"]
+
+
+def test_12h_reminder_keeps_stored_discord_ids(clean_db):
+    mentions = run(war_cog()._missing_mentions(
+        {"guild_id": GUILD, "missing_list": [{"name": "sam", "id": 200}]}))
+
+    assert mentions == ["<@200>"]
+
+
+# ----------------------------------------- help embeds stay inside Discord limits
+
+def test_every_help_page_stays_within_discord_embed_limits(clean_db):
+    topics = (None, "war", "race", "maze", "alias", "ids", "roles", "warning", "pings")
+
+    for topic in topics:
+        ctx = make_ctx()
+        run(call(Help.help_command, Help(FakeBot()), ctx, topic))
+
+        embed = ctx.sent[-1][1]
+        assert embed is not None, f"topic {topic!r} produced no embed"
+        assert len(embed) <= 6000, f"topic {topic!r} exceeds the 6000-char embed limit"
+        for field in embed.fields:
+            assert len(field.name) <= 256, f"topic {topic!r} has an over-long field name"
+            assert len(field.value) <= 1024, f"topic {topic!r} has an over-long field value"
+
+
+# ------------------------------------- long user text must not break embeds
+
+def test_warning_list_keeps_long_reasons_inside_embed_limits(clean_db):
+    db = clean_db
+    for i in range(15):
+        db.seed("warnings", {"id": i + 1, "guild_id": GUILD, "discord_id": 200,
+                             "reason": "x" * 1000, "issued_by": 1})
+    ctx = make_ctx()
+
+    run(call(WarTracker.warning_group, war_cog(), ctx, "list"))
+
+    embed = ctx.sent[-1][1]
+    assert embed is not None
+    assert len(embed) <= 6000
+    assert all(len(field.value) <= 1024 for field in embed.fields)
+
+
+def test_member_warning_list_keeps_long_reasons_inside_embed_limits(clean_db):
+    db = clean_db
+    for i in range(10):
+        db.seed("warnings", {"id": i + 1, "guild_id": GUILD, "discord_id": 200,
+                             "reason": "x" * 1000, "issued_by": 1})
+    ctx = make_ctx()
+    sam = FakeMember(200, "Sam", guild=ctx.guild)
+    ctx.guild.members.append(sam)
+    ctx.message.mentions = [sam]
+
+    run(call(WarTracker.warning_group, war_cog(), ctx, "list", "sam"))
+
+    embed = ctx.sent[-1][1]
+    assert embed is not None
+    assert len(embed) <= 6000
+    assert all(len(field.value) <= 1024 for field in embed.fields)
+
+
+def test_race_status_truncates_a_long_node_description(clean_db):
+    db = clean_db
+    db.seed("race_state", {
+        "channel_id": CHANNEL, "guild_id": GUILD, "current_lap": 1, "current_node": 2,
+        "task_description": "x" * 5000, "is_event_active": True,
+        "ofa_holder_id": None, "pending_ofa_message_id": None, "ofa_done": False,
+        "dyp_progress": 0, "dyp_target": 0, "je_progress": "0", "je_target": "0",
+        "je_done": False, "target_laps": 10, "active_race_sheet": None,
+    })
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(RaceTracker.show_status(race_cog(), ctx))
+
+    embed = ctx.sent[-1][1]
+    assert embed is not None
+    assert len(embed) <= 6000
+    assert all(len(field.value) <= 1024 for field in embed.fields)
+
+
+def test_je_unknown_input_tells_the_user_the_usage(clean_db):
+    db = clean_db
+    db.seed("race_state", {
+        "channel_id": CHANNEL, "guild_id": GUILD, "current_lap": 1, "current_node": 2,
+        "task_description": "OFA: x | DYP: y | JE: z", "is_event_active": True,
+        "ofa_holder_id": None, "pending_ofa_message_id": None, "ofa_done": False,
+        "dyp_progress": 0, "dyp_target": 0, "je_progress": "0", "je_target": "0",
+        "je_done": False, "target_laps": 10, "active_race_sheet": None,
+    })
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(RaceTracker.race_group, race_cog(), ctx, "je", args="banana"))
+
+    assert any("+" in text or "usage" in text.lower() for text in ctx.texts)
+
+
+# ------------------------- premium gate covers message/button attack logging
+
+def test_expired_server_does_not_log_attacks_from_a_message(clean_db):
+    db = clean_db
+    db.reset()
+    db.seed("guilds", {"guild_id": GUILD, "premium_status": "expired",
+                       "trial_ends_at": "2020-01-01T00:00:00+00:00"})
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[{"name": "sam"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, display_name="Sam")
+    message = FakeMessage(content="attacks done", author=ctx.author,
+                          guild=ctx.guild, channel=ctx.channel)
+
+    run(war_cog().on_message(message))
+
+    assert db.one("wars", channel_id=CHANNEL)["attack_counts"] == {}
+    assert not message.replies
+
+
+def test_expired_server_does_not_log_attacks_from_the_button(clean_db):
+    db = clean_db
+    db.reset()
+    db.seed("guilds", {"guild_id": GUILD, "premium_status": "expired",
+                       "trial_ends_at": "2020-01-01T00:00:00+00:00"})
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[{"name": "sam"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, display_name="Sam")
+    interaction = FakeInteraction(user=ctx.author, guild=ctx.guild, channel=ctx.channel)
+
+    run(war_cog()._handle_attack_press(interaction))
+
+    assert db.one("wars", channel_id=CHANNEL)["attack_counts"] == {}
+    assert any("premium" in text.lower() or "trial" in text.lower()
+               for text in interaction.texts)
+
+
+def test_maze_ping_accepts_a_space_before_the_percent(clean_db):
+    db = clean_db
+    db.seed("maze_schedules", {"guild_id": GUILD, "event_end": "2099-01-01T00:00:00+00:00",
+                               "ping_enabled_global": True, "ping_mention": "none"})
+    bot, _guild, channel = _maze_bot()
+    ctx = make_ctx(channel_id=CHANNEL)
+    ctx.channel = channel
+    ctx.bot = bot
+
+    run(call(MazeTracker.maze_group, MazeTracker(bot), ctx, "ping", "20", arg2=" %"))
+
+    embed = ctx.sent[-1][1]
+    assert embed is not None and "20% Discount" in (embed.description or "")
