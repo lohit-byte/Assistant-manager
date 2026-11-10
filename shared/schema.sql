@@ -13,7 +13,7 @@ CREATE TABLE guilds (
     max_teams INTEGER DEFAULT 1, -- war/race team channels allowed by the plan
     last_order_id TEXT, -- last processed payment order (webhook idempotency)
     last_renewal_ping INTEGER DEFAULT 0, -- 0 none, 3 three-day warning, 1 one-day warning, -1 expired
-    required_attacks INTEGER DEFAULT 6,
+    required_attacks INTEGER DEFAULT 6, -- legacy; war_settings.attacks_required is authoritative
 
     -- Channel configurations
     war_channel_id BIGINT,
@@ -69,10 +69,12 @@ CREATE TABLE wars (
     guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
     war_start TIMESTAMP WITH TIME ZONE,
     phase TEXT, -- 'defence' or 'attack' (then 'ended')
-    missing_list JSONB DEFAULT '[]'::jsonb, -- [{ "name": "Sam", "id": 12345 }]
+    missing_list JSONB DEFAULT '[]'::jsonb, -- [{ "name": "sam" }]; id is optional when known
     absent_list JSONB DEFAULT '[]'::jsonb,
     attack_counts JSONB DEFAULT '{}'::jsonb, -- { "sam": 6 }
-    status_message_id BIGINT,
+    status_message_id BIGINT, -- live war board message; NULL = auto-create, -1 = stopped by staff
+    sent_pings JSONB DEFAULT '[]'::jsonb, -- reminder keys already sent, e.g. ["hours_12"]
+    team_role_id BIGINT, -- role pinged by announcements in this team's war channel
     is_active BOOLEAN DEFAULT TRUE
 );
 
@@ -125,18 +127,103 @@ CREATE TABLE maze_schedules (
     event_end TIMESTAMP WITH TIME ZONE,
     maze_type TEXT DEFAULT '7d', -- '7d' or '3d'
     channel_id BIGINT, -- channel the discount pings are sent to
-    discount_schedule JSONB, -- optional custom offsets; SCHEDULE_7D/3D in bot/cogs/maze.py are the defaults
-    ping_enabled_global BOOLEAN DEFAULT TRUE
+    discount_schedule JSONB, -- optional [[hours, minutes, "pct"], ...]; SCHEDULE_7D/3D are the defaults
+    ping_enabled_global BOOLEAN DEFAULT TRUE,
+    ping_mention TEXT DEFAULT 'here', -- 'here', 'everyone', 'role', 'none'
+    ping_role_id BIGINT -- role pinged when ping_mention = 'role'
 );
 
--- 10. PLAYER PING PREFERENCES (players can opt out of maze pings)
+-- 10. PLAYER PING PREFERENCES (players choose channel @here, DM alerts, or off)
 CREATE TABLE player_ping_settings (
     guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
     discord_id BIGINT REFERENCES users(discord_id) ON DELETE CASCADE,
-    maze_pings_enabled BOOLEAN DEFAULT TRUE,
+    maze_pings_enabled BOOLEAN DEFAULT TRUE, -- legacy mirror of maze_alert_mode != 'off'
+    maze_alert_mode TEXT DEFAULT 'here', -- 'here' (channel @here), 'dm', 'off'
     PRIMARY KEY (guild_id, discord_id)
 );
 
--- Security: the Python bot uses the service role key (bypasses RLS).
--- The dashboard reads with the anon key, so enable RLS and add policies that
--- let a user read only the guilds they manage through the Discord OAuth token.
+-- ============================================================================
+-- MIGRATIONS for existing databases (safe to run repeatedly)
+-- ============================================================================
+ALTER TABLE wars ADD COLUMN IF NOT EXISTS sent_pings JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE wars ADD COLUMN IF NOT EXISTS team_role_id BIGINT;
+ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS ping_mention TEXT DEFAULT 'here';
+ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS ping_role_id BIGINT;
+ALTER TABLE player_ping_settings ADD COLUMN IF NOT EXISTS maze_alert_mode TEXT DEFAULT 'here';
+ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS channel_id BIGINT;
+ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS lap INTEGER;
+ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS node INTEGER;
+CREATE INDEX IF NOT EXISTS race_logs_channel_idx ON race_logs (channel_id, created_at DESC);
+UPDATE player_ping_settings
+   SET maze_alert_mode = 'off'
+ WHERE maze_pings_enabled = FALSE AND maze_alert_mode = 'here';
+
+-- ----------------------------------------------------------------------------
+-- MIGRATION 2026-11: teams, team captains and the war attack log.
+-- Existing servers keep working without this block; running it enables the
+-- one-stop team setup, captains, the "I attacked" button and the activity rating.
+-- Every statement is idempotent, so the whole block can be re-run.
+-- ----------------------------------------------------------------------------
+
+-- Teams: a team pairs one war channel with one race channel and owns captains.
+CREATE TABLE IF NOT EXISTS teams (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    war_channel_id BIGINT,
+    race_channel_id BIGINT,
+    team_role_id BIGINT, -- role pinged by this team's war announcements (synced to wars.team_role_id)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (guild_id, name)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS teams_guild_war_channel_key
+    ON teams (guild_id, war_channel_id) WHERE war_channel_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS teams_guild_race_channel_key
+    ON teams (guild_id, race_channel_id) WHERE race_channel_id IS NOT NULL;
+
+-- Team captains: a captain is staff for their team channels only.
+CREATE TABLE IF NOT EXISTS team_captains (
+    team_id BIGINT REFERENCES teams(id) ON DELETE CASCADE,
+    discord_id BIGINT REFERENCES users(discord_id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (team_id, discord_id)
+);
+
+-- War logs: one row per attack report (button = +1, text = delta, staff = correction, undo = negative).
+CREATE TABLE IF NOT EXISTS war_logs (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    channel_id BIGINT NOT NULL,
+    war_start TIMESTAMP WITH TIME ZONE,
+    discord_id BIGINT,
+    player_name TEXT,
+    attacks INTEGER NOT NULL DEFAULT 1, -- signed delta
+    source TEXT DEFAULT 'self',         -- 'self' | 'staff' | 'undo'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS war_logs_channel_idx ON war_logs (channel_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS war_logs_guild_idx ON war_logs (guild_id, created_at DESC);
+
+-- Security: the Python bot uses the service role key (bypasses RLS). The dashboard reads
+-- and writes with the anon key, so the dashboard-facing tables need permissive RLS policies
+-- for signed-in users (the same trust model the existing dashboard tables use: staff and
+-- captain scoping is enforced by the UI, not by Postgres). Tighten these if the project ever
+-- moves permission checks server-side.
+ALTER TABLE teams ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS teams_authenticated ON teams;
+CREATE POLICY teams_authenticated ON teams
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE team_captains ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS team_captains_authenticated ON team_captains;
+CREATE POLICY team_captains_authenticated ON team_captains
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE war_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS war_logs_read ON war_logs;
+CREATE POLICY war_logs_read ON war_logs
+    FOR SELECT TO authenticated USING (true);
+
+-- Legacy single-team channel columns (guilds.war_channel_id / race_channel_id) are no
+-- longer used by the bot; teams own those channels now. maze_channel_id and staff_role_id
+-- stay guild-level and are edited from the Overview setup card.

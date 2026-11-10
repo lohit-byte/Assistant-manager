@@ -17,7 +17,7 @@ export default function NotFound() {
         <div className="mt-8 flex flex-wrap gap-3">
           <Link
             href="/"
-            className="inline-flex items-center gap-2 border border-accent-500 bg-accent-500 px-5 py-3 text-sm font-semibold text-ink-950 transition-[color,background-color,border-color,transform] hover:-translate-y-0.5 hover:border-slate-200 hover:bg-slate-200"
+            className="inline-flex items-center gap-2 border border-accent-500 bg-accent-500 px-5 py-3 text-sm font-semibold text-accent-ink transition-[color,background-color,border-color,transform] hover:-translate-y-0.5 hover:border-slate-200 hover:bg-slate-200"
           >
             Back to the board
           </Link>

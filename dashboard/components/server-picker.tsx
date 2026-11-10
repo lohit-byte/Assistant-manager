@@ -6,17 +6,20 @@ import {
   ArrowRight,
   ExternalLink,
   LogOut,
+  Moon,
   Plus,
   RefreshCw,
   Search,
   Server,
+  Sun,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { canManageGuild, DiscordApiError, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
-import { BOT_INVITE_URL, DISCORD_GUILD_ICON, PLAN_META } from '@/lib/constants'
+import { canManageGuild, DiscordApiError, discordIdFromSession, fetchDiscordGuilds, type DiscordGuild } from '@/lib/discord'
+import { BOT_INVITE_URL, DISCORD_GUILD_ICON, PLAN_META, SUPPORT_EMAIL } from '@/lib/constants'
 import { Wordmark } from '@/components/brand'
-import { getGuild } from '@/lib/data'
+import { getGuild, isAliasMember, listCaptainTeams } from '@/lib/data'
 import { toDate } from '@/lib/format'
+import { useTheme } from '@/lib/theme'
 import type { Guild } from '@/lib/types'
 import {
   Alert,
@@ -33,6 +36,10 @@ import {
 interface GuildCard {
   guild: DiscordGuild
   row: Guild | null
+  /** Alias member of a premium server: dashboard opens in read-only mode. */
+  readOnly: boolean
+  /** The viewer captains at least one team here: dashboard opens with team-scoped write. */
+  captain: boolean
 }
 
 type LoadError =
@@ -42,6 +49,7 @@ type LoadError =
 
 export default function ServerPicker() {
   const router = useRouter()
+  const { resolved, setTheme } = useTheme()
   const [cards, setCards] = useState<GuildCard[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<LoadError | null>(null)
@@ -71,23 +79,46 @@ export default function ServerPicker() {
       }
 
       const guilds = (await fetchDiscordGuilds(session.provider_token))
-        .filter(canManageGuild)
         .sort((a, b) => a.name.localeCompare(b.name))
+      const discordId = discordIdFromSession(session.user)
 
       const rows = await Promise.allSettled(
         guilds.map(async (guild) => ({ guild, row: await getGuild(supabase, guild.id) })),
       )
 
-      const resolved: GuildCard[] = rows
-        .filter((item): item is PromiseFulfilledResult<GuildCard> => item.status === 'fulfilled')
+      const resolved = rows
+        .filter((item): item is PromiseFulfilledResult<Omit<GuildCard, 'readOnly' | 'captain'>> => item.status === 'fulfilled')
         .map((item) => item.value)
 
-      resolved.sort((a, b) => {
+      // A captain row is an access grant on any plan, with no alias required, so captain
+      // servers must show up even when the viewer cannot manage the server.
+      const captainTeams = discordId ? await listCaptainTeams(supabase, discordId) : []
+      const captainGuildIds = new Set(captainTeams.map((team) => String(team.guild_id)))
+
+      // Managers see their servers. A premium server's alias members also see it,
+      // read-only — same rule as the guild dashboard itself.
+      const visible: GuildCard[] = []
+      for (const card of resolved) {
+        if (canManageGuild(card.guild)) {
+          visible.push({ ...card, readOnly: false, captain: false })
+          continue
+        }
+        if (captainGuildIds.has(card.guild.id)) {
+          visible.push({ ...card, readOnly: false, captain: true })
+          continue
+        }
+        if (!discordId || card.row?.premium_status !== 'premium') continue
+        if (await isAliasMember(supabase, card.guild.id, discordId)) {
+          visible.push({ ...card, readOnly: true, captain: false })
+        }
+      }
+
+      visible.sort((a, b) => {
         if (Boolean(a.row) !== Boolean(b.row)) return a.row ? -1 : 1
         return a.guild.name.localeCompare(b.guild.name)
       })
 
-      setCards(resolved)
+      setCards(visible)
     } catch (caught) {
       if (caught instanceof DiscordApiError) {
         setError({ kind: 'discord', message: caught.message })
@@ -116,6 +147,8 @@ export default function ServerPicker() {
   }, [cards, query])
 
   const botServers = cards.filter((card) => card.row).length
+  const memberViews = cards.filter((card) => card.readOnly).length
+  const captainServers = cards.filter((card) => card.captain).length
 
   const signOut = async () => {
     await createClient().auth.signOut()
@@ -129,6 +162,16 @@ export default function ServerPicker() {
         <div className="mb-10 flex items-center justify-between border-b border-white/[0.1] pb-5">
           <Wordmark />
           <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTheme(resolved === 'light' ? 'dark' : 'light')}
+              aria-label={resolved === 'light' ? 'Switch to dark appearance' : 'Switch to light appearance'}
+              title={resolved === 'light' ? 'Switch to dark appearance' : 'Switch to light appearance'}
+            >
+              {resolved === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+              {resolved === 'light' ? 'Dark' : 'Light'}
+            </Button>
             <Button variant="ghost" size="sm" onClick={load} loading={loading}>
               <RefreshCw className="h-4 w-4" />
               Refresh
@@ -144,7 +187,7 @@ export default function ServerPicker() {
         <PageHeader
           eyebrow="00 / Server selection"
           title="Choose a server"
-          description={`You can manage ${cards.length} ${cards.length === 1 ? 'server' : 'servers'}. ${botServers} ${botServers === 1 ? 'has' : 'have'} the bot installed.`}
+          description={`Pick a server to open its dashboard. You have access to ${cards.length} ${cards.length === 1 ? 'server' : 'servers'}${memberViews ? `, ${memberViews} read-only` : ''}${captainServers ? `, ${captainServers} as team captain` : ''}; ${botServers} ${botServers === 1 ? 'has' : 'have'} the bot installed.`}
           actions={
             <a
               href={BOT_INVITE_URL}
@@ -157,6 +200,32 @@ export default function ServerPicker() {
             </a>
           }
         />
+
+        <div className="mb-6 border border-white/[0.08] bg-white/[0.02] px-4 py-3.5">
+          <p className="mono-label text-slate-500">How this list works</p>
+          <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
+            A server appears here when you have Manage Server or Administrator, captain one of its
+            teams, or hold an alias in a premium server.
+          </p>
+          <ul className="mt-2.5 grid gap-x-6 gap-y-1.5 text-xs leading-relaxed text-slate-500 sm:grid-cols-2">
+            <li className="flex flex-wrap items-center gap-2">
+              <Badge tone="red">Bot not added</Badge>
+              <span>The bot is not in this server yet — invite it, then refresh.</span>
+            </li>
+            <li className="flex flex-wrap items-center gap-2">
+              <Badge tone="slate">Read-only</Badge>
+              <span>You hold an alias in a premium server: you can view data but change nothing.</span>
+            </li>
+            <li className="flex flex-wrap items-center gap-2">
+              <Badge tone="blue">Team captain</Badge>
+              <span>You captain a team here: you manage that team’s war and race channels.</span>
+            </li>
+            <li className="flex flex-wrap items-center gap-2">
+              <Badge tone="purple" dot>Premium</Badge>
+              <span>The plan: Free trial, Premium or Expired. An expired server is paused.</span>
+            </li>
+          </ul>
+        </div>
 
         {error ? (
           <Alert tone={error.kind === 'discord' ? 'amber' : 'red'} className="mb-6" title="Could not load servers">
@@ -199,7 +268,7 @@ export default function ServerPicker() {
                   </p>
                   <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">
                     {cards.length === 0
-                      ? 'You need the Manage Server or Administrator permission in a Discord server to see it here.'
+                      ? 'You need the Manage Server or Administrator permission, a team captain assignment, or an alias in a premium server, to see it here.'
                       : 'Try a different search term.'}
                   </p>
                   {cards.length === 0 ? (
@@ -217,7 +286,7 @@ export default function ServerPicker() {
               </Card>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {filtered.map(({ guild, row }) => {
+                {filtered.map(({ guild, row, readOnly, captain }) => {
                   const meta = PLAN_META[row?.premium_status ?? ''] ?? null
                   const daysLeft =
                     row?.premium_status === 'trial' && row.trial_ends_at
@@ -269,6 +338,8 @@ export default function ServerPicker() {
                         ) : (
                           <Badge tone="slate">Unknown plan</Badge>
                         )}
+                        {readOnly ? <Badge tone="slate">Read-only</Badge> : null}
+                        {captain ? <Badge tone="blue">Team captain</Badge> : null}
                         {daysLeft !== null ? (
                           <span className="text-xs text-slate-500">{daysLeft}d left</span>
                         ) : null}
@@ -280,6 +351,18 @@ export default function ServerPicker() {
             )}
           </>
         )}
+
+        <p className="mt-8 text-xs leading-relaxed text-slate-600">
+          Missing a server? Invite the bot, refresh, and check that you have Manage Server in
+          Discord. Still stuck? Email{' '}
+          <a
+            href={`mailto:${SUPPORT_EMAIL}?subject=Dashboard%20access%20help`}
+            className="text-accent-300 underline decoration-accent-500/40 underline-offset-4 hover:text-accent-200"
+          >
+            {SUPPORT_EMAIL}
+          </a>{' '}
+          with your server ID.
+        </p>
         </main>
       </div>
     </div>

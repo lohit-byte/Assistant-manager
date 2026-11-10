@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import os
 import asyncio
+import traceback
 from dotenv import load_dotenv
 
 from database import supabase, get_or_create_guild, check_premium_status
@@ -55,8 +56,12 @@ async def on_ready():
         print(f"❌ Supabase connection failed: {e}")
         
     for g in bot.guilds:
-        await asyncio.to_thread(get_or_create_guild, g.id)
-        
+        # One bad guild must not abort the backfill for every later guild.
+        try:
+            await asyncio.to_thread(get_or_create_guild, g.id)
+        except Exception as e:
+            print(f"❌ Could not initialise guild {g.id}: {e}")
+
     print("🚀 Bot is ready.")
 
 @bot.event
@@ -71,8 +76,16 @@ async def on_command_error(ctx, error):
         return await ctx.send("❌ This command only works in a server.")
     if isinstance(error, commands.CheckFailure):
         return # The check itself already sends a message
-        
+    if isinstance(error, commands.UserInputError):
+        # Bad arguments, unknown members, missing required arguments, ...
+        return await ctx.send(f"❌ {error}")
+
     print(f"❌ Command Error in {ctx.command}: {error}")
+    traceback.print_exception(type(error), error, error.__traceback__)
+    try:
+        await ctx.send("❌ Something went wrong while running that command. The bot owner has the details.")
+    except discord.HTTPException:
+        pass
 
 @bot.check
 async def premium_gate(ctx):
@@ -80,9 +93,15 @@ async def premium_gate(ctx):
     if ctx.author.id == DEVELOPER_ID:
         return True
 
+    # Help must stay reachable when a trial expires so people can find support.
+    if ctx.command is not None and ctx.command.name == "help":
+        return True
+
     if ctx.guild is None:
-        return False
-        
+        # Let the command's own guild-only check raise NoPrivateMessage, which
+        # is answered in on_command_error (global checks run before those).
+        return True
+
     ok = await asyncio.to_thread(check_premium_status, ctx.guild.id)
     if not ok:
         await ctx.send("❌ This server's 7-day trial has expired or the server is blocked. Please upgrade via the dashboard.")
@@ -97,7 +116,13 @@ async def force_command(ctx, action: str = None):
     if action and action.lower() == "premium":
         try:
             await asyncio.to_thread(
-                supabase.table("guilds").update({"premium_status": "premium"}).eq("guild_id", ctx.guild.id).execute
+                supabase.table("guilds").update({
+                    "premium_status": "premium",
+                    # An expired subscription keeps its past end date; clear it or
+                    # check_premium_status will still deny everyone.
+                    "premium_ends_at": None,
+                    "last_renewal_ping": 0,
+                }).eq("guild_id", ctx.guild.id).execute
             )
             await ctx.send("✅ **Server force-upgraded to Premium!** You can now use all commands.")
         except Exception as e:

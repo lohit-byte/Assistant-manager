@@ -43,6 +43,7 @@ export interface War {
   attack_counts: Record<string, number> | null
   is_active: boolean | null
   status_message_id: Id | null
+  team_role_id: Id | null
 }
 
 export interface RaceState {
@@ -67,6 +68,9 @@ export interface RaceState {
   active_race_sheet: string | null
 }
 
+/** Who the automatic maze discount pings mention (`maze_schedules.ping_mention`). */
+export type MazePingMention = 'here' | 'everyone' | 'role' | 'none'
+
 export interface MazeSchedule {
   id: Id
   guild_id: Id
@@ -75,6 +79,8 @@ export interface MazeSchedule {
   maze_type: '7d' | '3d' | string | null
   channel_id: Id | null
   ping_enabled_global: boolean | null
+  ping_mention: MazePingMention | string | null
+  ping_role_id: Id | null
   discount_schedule?: unknown
 }
 
@@ -91,5 +97,52 @@ export interface Warning {
   discord_id: Id
   reason: string | null
   issued_by: Id | null
+  created_at: string | null
+}
+
+/**
+ * A team pairs one war channel with one race channel and owns its captains.
+ * Either channel may be null (one-sided team, e.g. imported from a detected channel).
+ */
+export interface Team {
+  id: number
+  guild_id: Id
+  name: string
+  war_channel_id: Id | null
+  race_channel_id: Id | null
+  team_role_id: Id | null
+  created_at: string | null
+}
+
+/** A captain is staff for their team only (assigned by Discord user id). */
+export interface TeamCaptain {
+  team_id: number
+  discord_id: Id
+  created_at: string | null
+}
+
+/** One row per attack report: button = +1, text = delta, staff undo = negative. */
+export interface WarLog {
+  id: number
+  guild_id: Id
+  channel_id: Id
+  war_start: string | null
+  discord_id: Id | null
+  player_name: string | null
+  attacks: number
+  source: string
+  created_at: string | null
+}
+
+/** Race activity feed. Rows written before the migration have no channel/lap/node. */
+export interface RaceLog {
+  id: number
+  guild_id: Id
+  channel_id: Id | null
+  lap: number | null
+  node: number | null
+  discord_id: Id | null
+  player_name: string | null
+  action_type: string
   created_at: string | null
 }

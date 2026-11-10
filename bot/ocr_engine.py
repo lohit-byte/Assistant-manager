@@ -1,4 +1,5 @@
 import aiohttp
+import asyncio
 import re
 import io
 import os
@@ -6,11 +7,38 @@ from PIL import Image
 
 def clean_val(v_str):
     try:
-        m = re.match(r'\s*([\d.]+)\s*([KMB])?', str(v_str).upper())
+        m = re.match(r'\s*([\d.,]+)\s*([KMB])?', str(v_str).upper())
         if not m: return 0.0
-        return float(m.group(1)) * {'K': 1e3, 'M': 1e6, 'B': 1e9}.get(m.group(2), 1)
+        num = m.group(1)
+        if "." in num and "," in num:
+            num = num.replace(",", "")          # 1,234.5 -> 1234.5
+        elif "," in num:
+            parts = num.split(",")
+            num = "".join(parts) if all(len(p) == 3 for p in parts[1:]) else num.replace(",", ".")
+        try:
+            value = float(num)
+        except ValueError:
+            return 0.0
+        return value * {'K': 1e3, 'M': 1e6, 'B': 1e9}.get(m.group(2), 1)
     except (ValueError, AttributeError):
         return 0.0
+
+
+def _prepare_jpeg(image_bytes):
+    """Decode, crop to the race columns and compress to a <1MB JPEG."""
+    # `with` guarantees the decoded bitmap is released even on error.
+    with Image.open(io.BytesIO(image_bytes)) as source:
+        w, h = source.size
+        img = source.crop((int(w * 0.55), 0, w, h)).convert('RGB')
+        best = b""
+        for quality in (90, 80, 70, 60, 50):
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=quality)
+            best = buf.getvalue()
+            if len(best) < 1_000_000:
+                break
+        return best
+
 
 async def process_race_image(image_bytes):
     try:
@@ -19,23 +47,14 @@ async def process_race_image(image_bytes):
             print("❌ Missing OCR_SPACE_API_KEY in environment variables.")
             return None
 
-        img = Image.open(io.BytesIO(image_bytes))
-        w, h = img.size
-        img = img.crop((int(w * 0.55), 0, w, h))
-        img = img.convert('RGB')
-        
-        buf = io.BytesIO()
-        for quality in (90, 80, 70, 60, 50):
-            buf = io.BytesIO()
-            img.save(buf, format='JPEG', quality=quality)
-            if buf.tell() < 1_000_000:
-                break
-                
+        # Pillow decode/crop/encode is CPU work: keep it off the event loop.
+        jpeg = await asyncio.to_thread(_prepare_jpeg, image_bytes)
+
         payload = {'language': 'eng', 'isOverlayRequired': 'true', 'isTable': 'false', 'OCREngine': '2'}
         headers = {'apikey': api_key}
         
         form = aiohttp.FormData()
-        form.add_field('file', buf.getvalue(), filename='scan.jpg', content_type='image/jpeg')
+        form.add_field('file', jpeg, filename='scan.jpg', content_type='image/jpeg')
         for k, v in payload.items():
             form.add_field(k, v)
 
@@ -104,9 +123,10 @@ async def process_race_image(image_bytes):
             if "hatch" in text_block: return "Hatch Monsters"
             if "breed" in text_block: return "Breed Monsters"
             if "rank up" in text_block: return "Rank Up Monsters"
-            if "level up" in text_block and "relic" in text_block: 
-                color = "Gold" if "gold relic" in text_block else ("Silver" if "silver relic" in text_block else "S")
-                return f"Level Up {color} Relics".replace("  ", " ")
+            if "level up" in text_block and "relic" in text_block:
+                if "gold relic" in text_block: return "Level Up Gold Relics"
+                if "silver relic" in text_block: return "Level Up Silver Relics"
+                return "Level Up Relics"
             if "craft" in text_block:
                 lv = re.search(r'(?:lvl|l|level)\s*(\d+)', text_block)
                 if lv: return f"Craft Level {lv.group(1)} Runes"

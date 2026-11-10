@@ -11,6 +11,15 @@ export const DEFAULT_ATTACKS_REQUIRED = 6
 export const MAX_ATTACKS_REQUIRED = 6
 export const NODES_PER_LAP = 5
 
+/**
+ * Activity rating (war attendance 60 %, race contributions 40 %). Tunable from one place:
+ * `RACE_ACTIVITY_TARGET` is the number of distinct race tasks that make a full race half.
+ * If a team only has a war or only a race channel, the two weights are renormalized.
+ */
+export const WAR_RATING_WEIGHT = 0.6
+export const RACE_RATING_WEIGHT = 0.4
+export const RACE_ACTIVITY_TARGET = 10
+
 export const PERMISSION_ADMINISTRATOR = BigInt(0x8)
 export const PERMISSION_MANAGE_GUILD = BigInt(0x20)
 

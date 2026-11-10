@@ -1,6 +1,8 @@
+import shlex
+
 import discord
 from discord.ext import commands
-from database import supabase, is_staff_member
+from database import supabase, is_staff_member, ensure_user, rename_alias
 import asyncio
 
 class Admin(commands.Cog):
@@ -10,14 +12,42 @@ class Admin(commands.Cog):
     @commands.command(name="alias")
     @commands.guild_only()
     async def alias_group(self, ctx, action: str = None, *, args: str = None):
-        """Manage player aliases. Usage: !alias add @user Sam or !alias remove Sam"""
-        if not is_staff_member(ctx.author):
+        """Manage player aliases. Usage: !alias add @user Sam | !alias remove Sam | !alias rename <old> <new> | !alias list"""
+        if not await is_staff_member(ctx.author):
             return await ctx.send("❌ Only Admins can manage aliases.")
 
-        if not action or not args:
-            return await ctx.send("Usage: `!alias add @user <alias>` or `!alias remove <alias>`")
+        action = (action or "").lower()
 
-        if action.lower() == "add":
+        if action in ("list", "show"):
+            try:
+                res = await asyncio.to_thread(
+                    lambda: supabase.table("aliases")
+                    .select("alias_name, discord_id")
+                    .eq("guild_id", ctx.guild.id)
+                    .order("alias_name")
+                    .execute()
+                )
+            except Exception as e:
+                return await ctx.send(f"❌ Database error: {e}")
+
+            if not res.data:
+                return await ctx.send("ℹ️ No aliases configured for this server yet.")
+
+            lines = [f"• `{row['alias_name']}` → <@{row['discord_id']}>" for row in res.data]
+            text = "\n".join(lines)
+            embed = discord.Embed(
+                title=f"🏷️ Aliases ({len(lines)})",
+                description=text if len(text) <= 4000 else text[:3990] + "\n…",
+                color=discord.Color.blurple(),
+            )
+            return await ctx.send(embed=embed)
+
+        if not action or not args:
+            return await ctx.send(
+                "Usage: `!alias add @user <alias>`, `!alias remove <alias>`, `!alias rename <old> <new>` or `!alias list`"
+            )
+
+        if action == "add":
             if not ctx.message.mentions:
                 return await ctx.send("❌ You must mention the user. Usage: `!alias add @user <alias>`")
             
@@ -28,40 +58,72 @@ class Admin(commands.Cog):
                 return await ctx.send("❌ Please provide an alias name.")
 
             try:
+                # aliases.discord_id is a foreign key into users, so the parent
+                # row has to exist before the alias can be inserted.
+                await asyncio.to_thread(ensure_user, member.id)
                 await asyncio.to_thread(
-                    supabase.table("aliases").upsert(
+                    lambda: supabase.table("aliases").upsert(
                         {
                             "guild_id": ctx.guild.id,
                             "discord_id": member.id,
                             "alias_name": alias_name
                         },
                         on_conflict="guild_id,alias_name"
-                    ).execute
+                    ).execute()
                 )
                 await ctx.send(f"✅ Mapped alias `{alias_name}` to **{member.display_name}**.")
             except Exception as e:
                 await ctx.send(f"❌ Database error: {e}")
 
-        elif action.lower() == "remove":
+        elif action == "remove":
             alias_name = args.strip().lower()
             try:
-                await asyncio.to_thread(
-                    supabase.table("aliases").delete()
+                res = await asyncio.to_thread(
+                    lambda: supabase.table("aliases").delete()
                     .eq("guild_id", ctx.guild.id)
                     .eq("alias_name", alias_name)
-                    .execute
+                    .execute()
                 )
+                if not res.data:
+                    return await ctx.send(f"❌ No alias named `{alias_name}` in this server.")
                 await ctx.send(f"✅ Removed alias `{alias_name}`.")
             except Exception as e:
                 await ctx.send(f"❌ Database error: {e}")
+
+        elif action == "rename":
+            # shlex keeps quoted aliases with spaces working; the plain
+            # two-token form `!alias rename old new` is unchanged.
+            try:
+                parts = shlex.split(args)
+            except ValueError as e:
+                return await ctx.send(
+                    f"❌ Could not read the alias names ({e}). "
+                    "Usage: `!alias rename <old> <new>`"
+                )
+            if len(parts) != 2:
+                return await ctx.send("Usage: `!alias rename <old> <new>`")
+            try:
+                error = await asyncio.to_thread(
+                    rename_alias, ctx.guild.id, parts[0], parts[1]
+                )
+            except Exception as e:
+                return await ctx.send(f"❌ Database error: {e}")
+            if error:
+                return await ctx.send(error)
+            old_name, new_name = parts[0].strip().lower(), parts[1].strip().lower()
+            await ctx.send(
+                f"✅ Renamed `{old_name}` to `{new_name}` — current war counts and lists moved too."
+            )
         else:
-            await ctx.send("Usage: `!alias add @user <alias>` or `!alias remove <alias>`")
+            await ctx.send(
+                "Usage: `!alias add @user <alias>`, `!alias remove <alias>`, `!alias rename <old> <new>` or `!alias list`"
+            )
 
     @commands.command(name="ids")
     @commands.guild_only()
     async def ids_command(self, ctx, *, query: str = None):
         """Staff: show IDs. Usage: !ids | !ids roles | !ids members [search] | !ids @user"""
-        if not is_staff_member(ctx.author):
+        if not await is_staff_member(ctx.author):
             return await ctx.send("❌ Staff only.")
 
         q = (query or "").strip()

@@ -4,10 +4,70 @@
 
 /* ---------------------------------------------------------------------------
    The war board tokens
+
+   Every colour class in the app resolves through these variables (see
+   tailwind.config.ts). The dark values below are the original board palette; the
+   `[data-theme="light"]` block turns the same classes into warm paper. Adding a new
+   colour? Add it here for both themes, not in a component.
    --------------------------------------------------------------------------- */
 @layer base {
   :root {
     color-scheme: dark;
+
+    /* Tailwind palette tokens (space-separated RGB so /alpha works). */
+    --c-ink-950: 12 13 10;
+    --c-ink-900: 16 17 12;
+    --c-ink-800: 18 19 14;
+    --c-ink-700: 24 26 19;
+    --c-ink-600: 35 37 28;
+
+    --c-slate-50: 247 243 234;
+    --c-slate-100: 243 238 226;
+    --c-slate-200: 228 222 208;
+    --c-slate-300: 206 199 183;
+    --c-slate-400: 179 172 157;
+    --c-slate-500: 162 156 142;
+    --c-slate-600: 143 137 123;
+    --c-slate-700: 95 90 80;
+    --c-slate-800: 58 55 47;
+    --c-slate-900: 35 33 27;
+    --c-slate-950: 18 19 15;
+
+    --c-accent-100: 255 228 213;
+    --c-accent-200: 255 198 172;
+    --c-accent-300: 255 160 122;
+    --c-accent-400: 255 129 72;
+    --c-accent-500: 255 107 44;
+    --c-accent-600: 226 80 15;
+    --c-accent-700: 178 61 11;
+    --c-accent-800: 125 42 7;
+
+    --c-steel-200: 211 222 232;
+    --c-steel-300: 193 208 221;
+    --c-steel-400: 169 188 207;
+    --c-steel-500: 139 161 182;
+    --c-steel-600: 109 132 153;
+
+    --c-sage-300: 183 206 176;
+    --c-sage-400: 163 193 154;
+    --c-sage-500: 147 180 138;
+
+    --c-danger-300: 240 162 148;
+    --c-danger-400: 232 138 120;
+    --c-danger-500: 226 96 74;
+    --c-danger-600: 193 68 50;
+
+    --c-warn-300: 239 211 154;
+    --c-warn-400: 232 191 110;
+    --c-warn-500: 217 169 78;
+
+    --c-white: 255 255 255;
+    /* Text on a solid signal fill; dark in both themes. */
+    --c-accent-ink: 23 10 3;
+    /* Small solid elements that should stay light in both themes. */
+    --c-paper: 241 236 224;
+
+    /* Semantic roles used by the component classes below. */
     --ground: #0c0d0a;
     --panel: #12130e;
     --raised: #181a13;
@@ -21,9 +81,107 @@
     --sage: #93b48a;
     --amber: #d9a94e;
     --red: #e2604a;
+
+    /* Surface texture and effect tokens. */
+    --grid-line: rgba(241, 236, 224, 0.055);
+    --inset-highlight: rgba(241, 236, 224, 0.05);
+    --surface-inset: rgba(241, 236, 224, 0.04);
+    --wash: rgba(255, 255, 255, 0.02);
+    --wash-strong: rgba(255, 255, 255, 0.06);
+    --rule-soft: rgba(241, 236, 224, 0.08);
+    --tape-line: rgba(241, 236, 224, 0.14);
+    --tape-fill: rgba(241, 236, 224, 0.08);
+    --marker-halo: rgba(12, 13, 10, 0.55);
+    --rail-defence: rgba(169, 188, 207, 0.38);
+    --rail-attack: rgba(255, 107, 44, 0.5);
+    --scroll-thumb: #2b2c23;
+
     --ease: cubic-bezier(0.16, 1, 0.3, 1);
     --gutter: clamp(14px, 1.6vw, 24px);
     --margin: clamp(20px, 4vw, 64px);
+  }
+
+  /* Light theme: warm paper, matte panels, the same signal orange. */
+  [data-theme='light'] {
+    color-scheme: light;
+
+    --c-ink-950: 245 239 226;
+    --c-ink-900: 250 246 236;
+    --c-ink-800: 255 253 247;
+    --c-ink-700: 240 233 217;
+    --c-ink-600: 231 221 201;
+
+    --c-slate-50: 23 21 15;
+    --c-slate-100: 33 30 23;
+    --c-slate-200: 47 42 33;
+    --c-slate-300: 68 62 50;
+    --c-slate-400: 87 80 64;
+    --c-slate-500: 107 99 80;
+    --c-slate-600: 117 108 88;
+    --c-slate-700: 141 132 111;
+    --c-slate-800: 201 192 173;
+    --c-slate-900: 230 221 202;
+    --c-slate-950: 245 239 226;
+
+    --c-accent-100: 255 228 213;
+    --c-accent-200: 125 42 7;
+    --c-accent-300: 178 61 11;
+    --c-accent-400: 156 53 5;
+    --c-accent-500: 226 80 15;
+    --c-accent-600: 226 80 15;
+    --c-accent-700: 125 42 7;
+    --c-accent-800: 90 30 5;
+
+    --c-steel-200: 200 212 222;
+    --c-steel-300: 56 86 106;
+    --c-steel-400: 70 100 122;
+    --c-steel-500: 90 122 145;
+    --c-steel-600: 109 142 165;
+
+    --c-sage-300: 56 98 51;
+    --c-sage-400: 71 120 63;
+    --c-sage-500: 94 143 85;
+
+    --c-danger-300: 158 50 33;
+    --c-danger-400: 178 67 46;
+    --c-danger-500: 214 87 63;
+    --c-danger-600: 166 56 36;
+
+    --c-warn-300: 122 90 20;
+    --c-warn-400: 143 105 22;
+    --c-warn-500: 184 134 43;
+
+    /* In light mode the hairline "white" becomes warm ink so borders stay visible. */
+    --c-white: 27 26 21;
+    --c-accent-ink: 23 10 3;
+    --c-paper: 255 253 248;
+
+    --ground: #f5efe2;
+    --panel: #fffdf7;
+    --raised: #f0e9d9;
+    --line: rgba(27, 26, 21, 0.14);
+    --line-strong: rgba(27, 26, 21, 0.24);
+    --ink: #1c1a14;
+    --muted: #6b6350;
+    --accent: #e2500f;
+    --accent-ink: #170a03;
+    --steel: #46647a;
+    --sage: #47783f;
+    --amber: #8f6916;
+    --red: #b2432e;
+
+    --grid-line: rgba(27, 26, 21, 0.055);
+    --inset-highlight: rgba(27, 26, 21, 0.04);
+    --surface-inset: rgba(27, 26, 21, 0.03);
+    --wash: rgba(27, 26, 21, 0.018);
+    --wash-strong: rgba(27, 26, 21, 0.05);
+    --rule-soft: rgba(27, 26, 21, 0.08);
+    --tape-line: rgba(27, 26, 21, 0.16);
+    --tape-fill: rgba(27, 26, 21, 0.08);
+    --marker-halo: rgba(245, 239, 226, 0.8);
+    --rail-defence: rgba(70, 100, 122, 0.45);
+    --rail-attack: rgba(226, 80, 15, 0.55);
+    --scroll-thumb: #d5cbb6;
   }
 
   * {
@@ -47,9 +205,15 @@
     color: var(--accent-ink);
   }
 
+  /* Native dropdowns ignore the dark palette on Windows unless told explicitly. */
+  select option {
+    background-color: var(--panel);
+    color: var(--ink);
+  }
+
   * {
     scrollbar-width: thin;
-    scrollbar-color: #2b2c23 transparent;
+    scrollbar-color: var(--scroll-thumb) transparent;
   }
 
   *::-webkit-scrollbar {
@@ -58,7 +222,7 @@
   }
 
   *::-webkit-scrollbar-thumb {
-    background-color: #2b2c23;
+    background-color: var(--scroll-thumb);
     border: 3px solid transparent;
     border-radius: 9999px;
     background-clip: content-box;
@@ -68,6 +232,11 @@
   input[type='datetime-local']::-webkit-calendar-picker-indicator {
     filter: invert(0.7);
     cursor: pointer;
+  }
+
+  [data-theme='light'] input[type='date']::-webkit-calendar-picker-indicator,
+  [data-theme='light'] input[type='datetime-local']::-webkit-calendar-picker-indicator {
+    filter: none;
   }
 
   @media (prefers-reduced-motion: no-preference) {
@@ -82,7 +251,7 @@
   .surface {
     border: 1px solid var(--line);
     background: var(--panel);
-    box-shadow: inset 0 1px 0 rgba(241, 236, 224, 0.04);
+    box-shadow: inset 0 1px 0 var(--inset-highlight);
   }
 
   .frame {
@@ -121,8 +290,8 @@
 
   .bg-blueprint {
     background-image:
-      linear-gradient(to right, rgba(241, 236, 224, 0.055) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(241, 236, 224, 0.055) 1px, transparent 1px);
+      linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
     background-size: 56px 56px;
     mask-image: radial-gradient(75% 70% at 50% 0%, black 30%, transparent 100%);
   }
@@ -164,6 +333,22 @@
     }
   }
 
+  /* Success toast entrance. Static when reduced motion is on (global rule below). */
+  .toast-in {
+    animation: toast-in 0.22s var(--ease) both;
+  }
+
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   /* -------------------------------------------------------------------------
      Hero sample board
      ------------------------------------------------------------------------- */
@@ -171,9 +356,9 @@
     position: relative;
     border: 1px solid var(--line-strong);
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 32%),
+      linear-gradient(180deg, var(--wash), transparent 32%),
       var(--panel);
-    box-shadow: inset 0 1px 0 rgba(241, 236, 224, 0.05);
+    box-shadow: inset 0 1px 0 var(--inset-highlight);
   }
 
   .war-board::before,
@@ -183,8 +368,8 @@
     top: -18px;
     width: 46px;
     height: 14px;
-    border: 1px solid rgba(241, 236, 224, 0.14);
-    background: rgba(241, 236, 224, 0.08);
+    border: 1px solid var(--tape-line);
+    background: var(--tape-fill);
     pointer-events: none;
   }
 
@@ -213,7 +398,7 @@
     gap: 6px;
     border: 1px solid rgba(255, 107, 44, 0.35);
     background: rgba(255, 107, 44, 0.08);
-    color: var(--accent-300, #ffa07a);
+    color: rgb(var(--c-accent-300));
     padding: 2px 7px;
     font-family: var(--font-mono);
     font-size: 10px;
@@ -299,11 +484,11 @@
   }
 
   .rail__seg--defence {
-    background: rgba(169, 188, 207, 0.38);
+    background: var(--rail-defence);
   }
 
   .rail__seg--attack {
-    background: rgba(255, 107, 44, 0.5);
+    background: var(--rail-attack);
   }
 
   .rail__marker {
@@ -313,14 +498,14 @@
     width: 2px;
     height: 16px;
     background: var(--ink);
-    box-shadow: 0 0 0 3px rgba(12, 13, 10, 0.55);
+    box-shadow: 0 0 0 3px var(--marker-halo);
     transform: translateX(calc(var(--p, 0) * 1cqw));
     transition: transform 1s linear;
   }
 
   .board-count {
     border: 1px solid var(--line);
-    background: rgba(241, 236, 224, 0.02);
+    background: var(--wash);
     padding: 8px 10px;
   }
 
@@ -338,7 +523,7 @@
     align-items: center;
     gap: 10px;
     padding: 6px 0;
-    border-top: 1px solid rgba(241, 236, 224, 0.07);
+    border-top: 1px solid var(--rule-soft);
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--muted);
@@ -353,6 +538,10 @@
     width: 9px;
     height: 9px;
     border: 1px solid rgba(241, 236, 224, 0.22);
+  }
+
+  [data-theme='light'] .attack-pip {
+    border-color: rgba(27, 26, 21, 0.22);
   }
 
   .attack-pip[data-on='true'] {

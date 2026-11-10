@@ -23,6 +23,10 @@ export const hero = {
   lede:
     'One dashboard for war phase timers, missing attacks, race nodes (OFA, DYP and JE), maze island discounts and player aliases. The board keeps the clock so your staff does not have to.',
   primaryCta: 'Start my free trial',
+  // Returning staff already have a dashboard; the sign-in path must be as visible as the trial.
+  loginCta: 'Sign in',
+  loginNote:
+    'Already tracking a server? Sign in with Discord to open your dashboard — same account, same server, trial unchanged.',
   secondaryCta: 'See what it tracks',
   // Quantified effort: remove the "how long will this take?" objection before it forms.
   effortNote: 'Live in about a minute: sign in with Discord, pick your server, the board fills.',
@@ -170,6 +174,7 @@ export const finale = {
   body:
     'Sign in with Discord, start the trial and run the next war, race and maze from one place.',
   cta: 'Start my free trial',
+  secondaryCta: 'Sign in to my dashboard',
 } as const
 
 export const footer = {

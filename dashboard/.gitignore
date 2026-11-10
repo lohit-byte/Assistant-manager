@@ -6,3 +6,6 @@ node_modules/
 .env*.local
 
 .shots/
+
+# Compiled output of `npm run check:rating`
+.tmp-rating-check/
