@@ -3,8 +3,9 @@ from discord.ext import commands
 import asyncio
 import csv
 import io
-import re
 import json
+import math
+import re
 from database import supabase, check_premium_status, is_staff_member, is_team_staff
 from node_sheet import bundled_sheet, parse_nodesheet
 from ocr_engine import process_race_image
@@ -15,7 +16,10 @@ UNITS = {'K': 1e3, 'M': 1e6, 'B': 1e9}
 def parse_amount(s):
     m = re.fullmatch(r'\s*([\d.,]+)\s*([KMB])?\s*', str(s), re.IGNORECASE)
     if not m: raise ValueError(f"bad amount: {s}")
-    return _to_number(m.group(1)) * UNITS.get((m.group(2) or '').upper(), 1)
+    value = _to_number(m.group(1)) * UNITS.get((m.group(2) or '').upper(), 1)
+    if not math.isfinite(value) or abs(value) > 1e15:
+        raise ValueError(f"bad amount: {s}")
+    return value
 
 def _clip(text, limit=1020):
     """Keep user/sheet text inside Discord's 1024-char field limit."""
@@ -45,9 +49,22 @@ def clean_val(v_str):
     try:
         m = re.match(r'\s*([\d.,]+)\s*([KMB])?', str(v_str).upper())
         if not m: return 0
-        return int(_to_number(m.group(1)) * {'K': 1e3, 'M': 1e6, 'B': 1e9}.get(m.group(2), 1))
-    except (ValueError, AttributeError, TypeError):
+        value = _to_number(m.group(1)) * {'K': 1e3, 'M': 1e6, 'B': 1e9}.get(m.group(2), 1)
+        if not math.isfinite(value) or abs(value) > 1e15:
+            return 0
+        return int(value)
+    except (ValueError, AttributeError, TypeError, OverflowError):
         return 0
+
+
+def parse_dyp_target(text):
+    """DYP task text -> target count ('10 members', '1.5K members', '20,000')."""
+    raw = str(text or "")
+    match = re.search(r'([\d.,]+)\s*([KMB])?\s*(?:members?|players?)', raw, re.IGNORECASE)
+    if match:
+        return int(clean_val(match.group(1) + (match.group(2) or "")))
+    match = re.search(r'[\d.,]+\s*[KMB]?', raw, re.IGNORECASE)
+    return int(clean_val(match.group(0))) if match else 0
 
 def parse_node_args(args):
     if '|' in args:
@@ -279,7 +296,7 @@ class RaceTracker(commands.Cog):
         if not name:
             return await ctx.send("Usage: `!race use <name>` (`default` uses the bundled sheet)")
         if _is_default_sheet(name):
-            if bundled_sheet() is None:
+            if await asyncio.to_thread(bundled_sheet) is None:
                 return await ctx.send(
                     "❌ No bundled sheet found on the bot host. "
                     "Upload one with `!race uploadsheet <name>`."
@@ -306,7 +323,7 @@ class RaceTracker(commands.Cog):
             return await ctx.send(f"❌ Database error: {e}")
         names = sorted({row.get("name") for row in res.data or [] if row.get("name")})
         lines = [f"• **{name}**" + (" ← active" if name == active else "") for name in names]
-        bundled = bundled_sheet()
+        bundled = await asyncio.to_thread(bundled_sheet)
         marker = ""
         if _is_default_sheet(active):
             marker = " ← active" if active else " ← active (fallback)"
@@ -321,7 +338,7 @@ class RaceTracker(commands.Cog):
         sheet_name = state.get('active_race_sheet')
         if _is_default_sheet(sheet_name):
             label = "default (bundled)"
-            sheet_data = bundled_sheet()
+            sheet_data = await asyncio.to_thread(bundled_sheet)
             if sheet_data is None:
                 return await ctx.send(
                     "❌ No active sheet set and no bundled sheet found. "
@@ -346,14 +363,7 @@ class RaceTracker(commands.Cog):
             return await ctx.send(f"❌ Node `{node_key}` in sheet **{label}** is missing `ofa`, `dyp` or `je`.")
         ofa_t, dyp_t, je_t = node_info['ofa'], node_info['dyp'], node_info['je']
         
-        # SMARTER DYP PARSING (Looks for "10 members" first)
-        dyp_target = 0
-        match_members = re.search(r'(\d+)\s*(?:members?|players?)', dyp_t, re.IGNORECASE)
-        if match_members:
-            dyp_target = int(match_members.group(1))
-        else:
-            match_fallback = re.search(r'(\d+)', dyp_t)
-            if match_fallback: dyp_target = int(match_fallback.group(1))
+        dyp_target = parse_dyp_target(dyp_t)
 
         desc = f"OFA: {ofa_t} | DYP: {dyp_t} | JE: {je_t}"
         await self._save_new_node(ctx, new_lap, new_node, ofa_t, dyp_target, je_t, desc, 0, "0")
@@ -367,8 +377,15 @@ class RaceTracker(commands.Cog):
         if new_node > NODES_PER_LAP: new_node, new_lap = 1, new_lap + 1
 
         if ctx.message.attachments:
+            attachment = ctx.message.attachments[0]
+            if getattr(attachment, "size", 0) > 10_000_000:
+                return await ctx.send("❌ That image is too large (max 10 MB).")
             await ctx.send("🔍 Scanning image...")
-            ocr_result = await process_race_image(await ctx.message.attachments[0].read())
+            try:
+                image_bytes = await attachment.read()
+            except Exception as e:
+                return await ctx.send(f"❌ Could not read that image: {e}")
+            ocr_result = await process_race_image(image_bytes)
             if isinstance(ocr_result, dict):
                 desc = f"OFA: {ocr_result['ofa']['task']} | DYP: {ocr_result['dyp']['task']} | JE: {ocr_result['je']['task']}"
                 await self._save_new_node(ctx, new_lap, new_node, ocr_result['ofa']['target'], ocr_result['dyp']['target'], ocr_result['je']['target'], desc, ocr_result['dyp']['progress'], ocr_result['je']['progress'])
@@ -479,6 +496,8 @@ class RaceTracker(commands.Cog):
 
             elif action == "je":
                 if not args: return await ctx.send("Usage: `!race je +500k` or `!race je done`")
+                if state.get('je_done'):
+                    return await ctx.send("✅ JE is already completed for this node.")
                 if args.lower() == "done":
                     await asyncio.to_thread(supabase.table("race_state").update({"je_done": True, "je_progress": state.get('je_target')}).eq("channel_id", ctx.channel.id).execute)
                     await log_race_action(ctx.guild.id, ctx.author.id, display_name, "je_done",
@@ -541,7 +560,7 @@ class RaceTracker(commands.Cog):
         elif state.get('pending_ofa_message_id'): 
             ofa_status = f"⏳ Pending approval for <@{state['pending_ofa_user_id']}>"
         else: 
-            ofa_status = f"Available ✅ (Target: {state.get('ofa_target') or 'Not set'})"
+            ofa_status = _clip(f"Available ✅ (Target: {state.get('ofa_target') or 'Not set'})")
             
         embed.add_field(name="One For All (OFA)", value=ofa_status, inline=False)
         
@@ -597,6 +616,13 @@ class RaceTracker(commands.Cog):
         
         guild = self.bot.get_guild(payload.guild_id)
         reactor = guild.get_member(payload.user_id) if guild else None
+        if reactor is None and guild is not None:
+            fetch_member = getattr(guild, "fetch_member", None)
+            if fetch_member is not None:
+                try:
+                    reactor = await fetch_member(payload.user_id)
+                except Exception:
+                    reactor = None
         if not reactor or not await is_team_staff(reactor, payload.channel_id): return
 
         is_premium = await asyncio.to_thread(check_premium_status, guild.id)
@@ -608,6 +634,13 @@ class RaceTracker(commands.Cog):
             if not state or state.get('pending_ofa_message_id') != payload.message_id: return
             
             channel = self.bot.get_channel(payload.channel_id)
+            if channel is None:
+                fetch_channel = getattr(self.bot, "fetch_channel", None)
+                if fetch_channel is not None:
+                    try:
+                        channel = await fetch_channel(payload.channel_id)
+                    except Exception:
+                        channel = None
             if channel is None:
                 return
             user_id = state.get('pending_ofa_user_id')

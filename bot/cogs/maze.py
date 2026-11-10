@@ -3,7 +3,7 @@ from discord.ext import commands
 import re
 import asyncio
 from datetime import datetime, timedelta, timezone
-from database import supabase, is_staff_member, ensure_user
+from database import supabase, check_premium_status, is_staff_member, ensure_user
 
 SCHEDULE_7D = [
     (6 * 24 + 22, 0, "20%"), (5 * 24 + 19, 0, "10%"), (5 * 24 + 0, 0, "30%"),
@@ -19,6 +19,11 @@ def to_utc(s: str) -> datetime:
     if not s: return None
     dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _discount_key(pct, discount_time) -> str:
+    """Stable identity of one discount so a restart cannot ping it twice."""
+    return f"{pct}@{int(discount_time.timestamp())}"
 
 class MazeTracker(commands.Cog):
     def __init__(self, bot):
@@ -134,16 +139,20 @@ class MazeTracker(commands.Cog):
             discount_time = end_time - timedelta(hours=hours, minutes=minutes)
             delay = (discount_time - now).total_seconds()
             
+            key = _discount_key(pct, discount_time)
             if delay > 0:
                 self.timers[guild_id].append(
-                    asyncio.create_task(self.ping_discount_at_time(guild_id, channel, pct, delay, end_time))
+                    asyncio.create_task(self.ping_discount_at_time(
+                        guild_id, channel, pct, delay, end_time, key))
                 )
             elif -300 < delay <= 0:
                 self.timers[guild_id].append(
-                    asyncio.create_task(self.ping_discount_at_time(guild_id, channel, pct, 0, end_time))
+                    asyncio.create_task(self.ping_discount_at_time(
+                        guild_id, channel, pct, 0, end_time, key))
                 )
 
-    async def ping_discount_at_time(self, guild_id, channel, pct, delay, expected_end=None):
+    async def ping_discount_at_time(self, guild_id, channel, pct, delay,
+                                    expected_end=None, dedupe_key=None):
         if delay > 0:
             await asyncio.sleep(delay)
 
@@ -151,7 +160,7 @@ class MazeTracker(commands.Cog):
         try:
             res = await asyncio.to_thread(
                 supabase.table("maze_schedules")
-                .select("ping_enabled_global, event_end, ping_mention, ping_role_id")
+                .select("ping_enabled_global, event_end, ping_mention, ping_role_id, sent_pings")
                 .eq("guild_id", guild_id)
                 .limit(1)
                 .execute
@@ -159,6 +168,12 @@ class MazeTracker(commands.Cog):
             row = res.data[0] if res.data else None
             if not row or row.get("ping_enabled_global") is False:
                 return
+            # Scheduled pings are not commands, so the command-level premium
+            # gate in main.py never sees them; an expired server must stay paused.
+            if not await asyncio.to_thread(check_premium_status, guild_id):
+                return
+            if dedupe_key and dedupe_key in (row.get("sent_pings") or []):
+                return  # already announced before a restart/reschedule
             if expected_end is not None and to_utc(row.get("event_end")) != expected_end:
                 return  # schedule changed; the sync loop owns the new timers
         except Exception as e:
@@ -188,13 +203,25 @@ class MazeTracker(commands.Cog):
             (row.get("ping_mention") or "here").lower(),
             row.get("ping_role_id"),
         )
+        delivered = False
         try:
             if content:
                 await channel.send(content=content, embed=embed, allowed_mentions=allowed)
             else:
                 await channel.send(embed=embed)
+            delivered = True
         except (discord.HTTPException, AttributeError, TypeError) as e:
             print(f"Maze ping failed in {guild_id}: {e}")
+        if delivered and dedupe_key:
+            try:
+                seen = list(row.get("sent_pings") or []) + [dedupe_key]
+                await asyncio.to_thread(
+                    supabase.table("maze_schedules")
+                    .update({"sent_pings": seen[-50:]})
+                    .eq("guild_id", guild_id).execute
+                )
+            except Exception as e:
+                print(f"Maze ping bookkeeping failed in {guild_id}: {e}")
 
         # Players who chose DM alerts get a personal copy.
         await self._dm_alert_players(guild_id, pct)
@@ -238,7 +265,7 @@ class MazeTracker(commands.Cog):
         try:
             res = await asyncio.to_thread(
                 supabase.table("player_ping_settings").select("discord_id")
-                .eq("guild_id", guild_id).eq("maze_alert_mode", "dm").limit(100).execute
+                .eq("guild_id", guild_id).eq("maze_alert_mode", "dm").limit(1000).execute
             )
         except Exception as e:
             print(f"Maze DM alert lookup failed: {e}")
@@ -462,15 +489,18 @@ class MazeTracker(commands.Cog):
                         "event_end": end_time.isoformat(),
                         "maze_type": duration,
                         "channel_id": ctx.channel.id,
-                        "ping_enabled_global": True
                     }, on_conflict="guild_id").execute
                 )
             except Exception as e:
                 return await ctx.send(f"❌ Database error: {e}")
 
             # Reload from the database so both this command and the periodic sync
-            # agree on the timers.
-            await self.restore_schedules()
+            # agree on the timers. The event is already saved at this point, so a
+            # transient read failure must not turn a successful start into an error.
+            try:
+                await self.restore_schedules()
+            except Exception as e:
+                print(f"Maze schedule reload failed after start: {e}")
 
             embed = discord.Embed(title="🗺️ Maze Event Scheduled", color=discord.Color.purple())
             embed.add_field(name="Duration", value=f"{duration.upper()}", inline=True)

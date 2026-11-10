@@ -1,5 +1,6 @@
 import aiohttp
 import asyncio
+import math
 import re
 import io
 import os
@@ -19,9 +20,17 @@ def clean_val(v_str):
             value = float(num)
         except ValueError:
             return 0.0
-        return value * {'K': 1e3, 'M': 1e6, 'B': 1e9}.get(m.group(2), 1)
-    except (ValueError, AttributeError):
+        value *= {'K': 1e3, 'M': 1e6, 'B': 1e9}.get(m.group(2), 1)
+        if not math.isfinite(value) or abs(value) > 1e15:
+            return 0.0
+        return value
+    except (ValueError, AttributeError, OverflowError):
         return 0.0
+
+
+def _fraction_number(text):
+    """OCR digits -> the form clean_val understands (keep ',', fix O/o for 0)."""
+    return str(text or "").replace('O', '0').replace('o', '0').upper()
 
 
 def _prepare_jpeg(image_bytes):
@@ -90,8 +99,10 @@ async def process_race_image(image_bytes):
                 top = ln.get("MinTop", 0)
                 if h_y <= top < bounds[i + 1]:
                     for m in FRAC.finditer(ln.get("LineText", "")):
-                        prog = m.group(1).replace('O', '0').replace('o', '0').replace(',', '.').upper()
-                        targ = m.group(2).replace(',', '.').upper()
+                        # Do not turn thousands separators into decimal points:
+                        # "1,200" must stay 1200, not 1.2.
+                        prog = _fraction_number(m.group(1))
+                        targ = _fraction_number(m.group(2))
                         cands.append((top, prog, targ))
             if cands:
                 best = min(cands)

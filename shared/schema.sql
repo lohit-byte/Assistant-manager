@@ -116,6 +116,9 @@ CREATE TABLE race_logs (
     discord_id BIGINT,
     player_name TEXT,
     action_type TEXT,
+    channel_id BIGINT, -- team race channel the action belongs to
+    lap INTEGER,
+    node INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -130,7 +133,8 @@ CREATE TABLE maze_schedules (
     discount_schedule JSONB, -- optional [[hours, minutes, "pct"], ...]; SCHEDULE_7D/3D are the defaults
     ping_enabled_global BOOLEAN DEFAULT TRUE,
     ping_mention TEXT DEFAULT 'here', -- 'here', 'everyone', 'role', 'none'
-    ping_role_id BIGINT -- role pinged when ping_mention = 'role'
+    ping_role_id BIGINT, -- role pinged when ping_mention = 'role'
+    sent_pings JSONB DEFAULT '[]'::jsonb -- discount keys already announced (restart dedupe)
 );
 
 -- 10. PLAYER PING PREFERENCES (players choose channel @here, DM alerts, or off)
@@ -149,6 +153,7 @@ ALTER TABLE wars ADD COLUMN IF NOT EXISTS sent_pings JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE wars ADD COLUMN IF NOT EXISTS team_role_id BIGINT;
 ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS ping_mention TEXT DEFAULT 'here';
 ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS ping_role_id BIGINT;
+ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS sent_pings JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE player_ping_settings ADD COLUMN IF NOT EXISTS maze_alert_mode TEXT DEFAULT 'here';
 ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS channel_id BIGINT;
 ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS lap INTEGER;
@@ -223,6 +228,70 @@ ALTER TABLE war_logs ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS war_logs_read ON war_logs;
 CREATE POLICY war_logs_read ON war_logs
     FOR SELECT TO authenticated USING (true);
+
+-- ----------------------------------------------------------------------------
+-- MIGRATION 2026-11 (security): RLS for the core dashboard tables.
+-- The bot uses the service-role key (bypasses RLS); the dashboard uses the anon
+-- key with a signed-in Supabase user, so these policies keep authenticated access
+-- exactly as before while denying anonymous PostgREST writes. A signed-in user
+-- can still reach any guild row (the UI scopes them), which is the documented
+-- trust model; move dashboard writes behind a server route to tighten it.
+-- Idempotent, safe to re-run.
+-- ----------------------------------------------------------------------------
+ALTER TABLE guilds ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS guilds_authenticated ON guilds;
+CREATE POLICY guilds_authenticated ON guilds
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS users_authenticated ON users;
+CREATE POLICY users_authenticated ON users
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE aliases ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS aliases_authenticated ON aliases;
+CREATE POLICY aliases_authenticated ON aliases
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE warnings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS warnings_authenticated ON warnings;
+CREATE POLICY warnings_authenticated ON warnings
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE war_settings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS war_settings_authenticated ON war_settings;
+CREATE POLICY war_settings_authenticated ON war_settings
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE wars ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS wars_authenticated ON wars;
+CREATE POLICY wars_authenticated ON wars
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE race_state ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS race_state_authenticated ON race_state;
+CREATE POLICY race_state_authenticated ON race_state
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE race_sheets ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS race_sheets_authenticated ON race_sheets;
+CREATE POLICY race_sheets_authenticated ON race_sheets
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE race_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS race_logs_authenticated ON race_logs;
+CREATE POLICY race_logs_authenticated ON race_logs
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE maze_schedules ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS maze_schedules_authenticated ON maze_schedules;
+CREATE POLICY maze_schedules_authenticated ON maze_schedules
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE player_ping_settings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS player_ping_settings_authenticated ON player_ping_settings;
+CREATE POLICY player_ping_settings_authenticated ON player_ping_settings
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- Legacy single-team channel columns (guilds.war_channel_id / race_channel_id) are no
 -- longer used by the bot; teams own those channels now. maze_channel_id and staff_role_id

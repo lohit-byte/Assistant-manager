@@ -27,14 +27,17 @@ from fakes import (
 )
 
 from cogs.admin import Admin
+from cogs.billing import BillingManager
 from cogs.help import Help
 from cogs.maze import MazeTracker
-from cogs.race import RaceTracker, format_amount, parse_amount, parse_node_args, parse_sheet_csv
+from cogs.race import (RaceTracker, clean_val, format_amount, parse_amount,
+                       parse_dyp_target, parse_node_args, parse_sheet_csv)
 from cogs.war import (
     AttackView,
     WarTracker,
     _due_pings,
     _initial_sent,
+    _ping_phase_label,
     apply_attack,
     fmt_td,
     join_names,
@@ -619,7 +622,6 @@ def test_maze_old_date_rolls_into_the_future(clean_db):
 
 
 def test_billing_renewal_resets_expired_marker(clean_db):
-    from cogs.billing import BillingManager
 
     db = clean_db
     bot, _guild, _channel = _maze_bot()
@@ -843,7 +845,6 @@ def test_finish_war_pings_staff_roles(clean_db):
 
 
 def test_billing_expiry_dms_the_owner(clean_db):
-    from cogs.billing import BillingManager
 
     db = clean_db
     bot, guild, _channel = _maze_bot()
@@ -2409,3 +2410,317 @@ def test_maze_ping_accepts_a_space_before_the_percent(clean_db):
 
     embed = ctx.sent[-1][1]
     assert embed is not None and "20% Discount" in (embed.description or "")
+
+
+# ----------------------------------------- audit fixes: security and sending
+
+def test_bot_defaults_never_allow_everyone_or_role_mentions():
+    import main as botmain
+
+    allowed = botmain.bot.allowed_mentions
+    assert allowed is not None
+    assert allowed.everyone is False
+    assert allowed.roles is False
+
+
+def test_send_ping_reports_whether_the_announcement_was_delivered(clean_db):
+    cog = war_cog()
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    assert run(cog._send_ping(ctx.channel, "hello")) is True
+
+    async def boom(**kwargs):
+        raise TypeError("channel is gone")
+
+    ctx.channel.send = boom
+    assert run(cog._send_ping(ctx.channel, "hello")) is False
+
+
+# ------------------------------------------- audit fixes: war correctness
+
+def test_finish_war_keeps_the_updater_when_the_database_update_fails(clean_db, monkeypatch):
+    import asyncio
+    import contextlib
+
+    db = clean_db
+    seed_war(db)
+    cog = war_cog()
+    ctx = make_ctx(channel_id=CHANNEL)
+    monkeypatch.setattr("cogs.war.supabase", _BrokenTableDB(db, "wars"))
+
+    async def go():
+        task = asyncio.create_task(asyncio.sleep(5))
+        cog.status_tasks[CHANNEL] = task
+        try:
+            await cog.finish_war(CHANNEL, ctx.channel)
+            assert cog.status_tasks.get(CHANNEL) is task, "the updater must not be stranded"
+            assert not task.cancelled()
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    asyncio.run(go())
+
+
+def test_rebasing_an_active_war_recomputes_the_reminder_marks(clean_db):
+    db = clean_db
+    seed_war(db, sent_pings=["hours_12"])
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "defence", "ends", args="24h"))
+
+    assert "hours_12" not in (db.one("wars", channel_id=CHANNEL)["sent_pings"] or [])
+
+
+def test_attacks_done_lower_count_readds_the_player_to_missing(clean_db):
+    db = clean_db
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[], attack_counts={"sam": 6})
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, display_name="Sam")
+    message = FakeMessage(content="2 attacks done", author=ctx.author,
+                          guild=ctx.guild, channel=ctx.channel)
+
+    run(war_cog().on_message(message))
+
+    war = db.one("wars", channel_id=CHANNEL)
+    assert war["attack_counts"]["sam"] == 2
+    assert [m["name"] for m in war["missing_list"]] == ["sam"]
+
+
+def test_attack_button_prefers_the_alias_already_tracked(clean_db):
+    db = clean_db
+    seed_alias(db, 900, "aaa")
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[], attack_counts={"sam": 2})
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, display_name="Sam")
+    interaction = FakeInteraction(user=ctx.author, guild=ctx.guild, channel=ctx.channel)
+
+    run(war_cog()._handle_attack_press(interaction))
+
+    counts = db.one("wars", channel_id=CHANNEL)["attack_counts"]
+    assert counts == {"sam": 3}
+
+
+def test_war_check_includes_absent_players_when_absence_is_not_exempt(clean_db):
+    db = clean_db
+    db.seed("war_settings", {"guild_id": GUILD, "attacks_required": 6, "exempt_absent": False})
+    seed_war(db, missing_list=[], absent_list=[{"name": "cara"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(WarTracker.war_check(war_cog(), ctx))
+
+    assert "cara" in (ctx.sent[-1][1].description or "")
+
+
+def test_war_attacks_caps_at_the_requirement(clean_db):
+    db = clean_db
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[{"name": "sam"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "attacks", "sam", args="10"))
+
+    assert db.one("wars", channel_id=CHANNEL)["attack_counts"]["sam"] == 6
+
+
+def test_war_attacks_refuses_an_inactive_war(clean_db):
+    db = clean_db
+    seed_alias(db, 900, "sam")
+    seed_war(db, is_active=False, attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(WarTracker.war_group, war_cog(), ctx, "attacks", "sam", args="3"))
+
+    assert db.one("wars", channel_id=CHANNEL)["attack_counts"] == {}
+    assert any("No active war" in text for text in ctx.texts)
+
+
+def test_ping_phase_label_treats_the_attack_start_as_attack():
+    assert _ping_phase_label(24 * 3600) == "attack"
+    assert _ping_phase_label(25 * 3600) == "defence"
+
+
+def test_resolve_member_prefers_the_named_alias_over_an_unrelated_mention(clean_db):
+    ctx = make_ctx()
+    sam = FakeMember(42, "sam", guild=ctx.guild)
+    bob = FakeMember(43, "bob", guild=ctx.guild)
+    ctx.guild.members.extend([sam, bob])
+    ctx.message.mentions = [bob]
+
+    found = run(WarTracker._resolve_member(war_cog(), ctx, "sam"))
+
+    assert found is sam
+
+
+# --------------------------------------------- audit fixes: race and OCR
+
+def test_ocr_fraction_numbers_keep_thousands_separators():
+    assert ocr_engine._fraction_number("1,200") == "1,200"
+    assert int(ocr_engine.clean_val(ocr_engine._fraction_number("1,200"))) == 1200
+    assert int(ocr_engine.clean_val(ocr_engine._fraction_number("1O,5"))) == 10
+
+
+def test_ocr_clean_val_survives_huge_numbers():
+    assert ocr_engine.clean_val("9" * 400) == 0
+
+
+def test_parse_dyp_target_reads_members_and_grouped_numbers():
+    assert parse_dyp_target("Collect 10 members") == 10
+    assert parse_dyp_target("Collect 1,000 members") == 1000
+    assert parse_dyp_target("Collect 1.5K members") == 1500
+    assert parse_dyp_target("Collect 20,000 gold") == 20000
+    assert parse_dyp_target("no numbers here") == 0
+
+
+def test_race_clean_val_and_parse_amount_survive_huge_numbers():
+    assert clean_val("9" * 400) == 0
+    with pytest.raises(ValueError):
+        parse_amount("9" * 400)
+
+
+def test_je_stays_completed_after_more_progress(clean_db):
+    db = clean_db
+    seed_race(db, je_done=True, je_progress="1000", je_target="1000", task_description="JE done")
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(RaceTracker.race_group, race_cog(), ctx, "je", args="+500k"))
+
+    assert any("already" in text.lower() for text in ctx.texts)
+    assert db.one("race_state", channel_id=CHANNEL)["je_progress"] == "1000"
+
+
+def test_race_status_clips_a_long_ofa_target(clean_db):
+    db = clean_db
+    seed_race(db, ofa_target="y" * 1500)
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(RaceTracker.show_status(race_cog(), ctx))
+
+    embed = ctx.sent[-1][1]
+    assert all(len(field.value) <= 1024 for field in embed.fields)
+
+
+def test_node_sheet_rejects_keys_outside_the_lap_node_grid():
+    node = {"ofa": "a", "dyp": "b", "je": "c"}
+    data, warnings = parse_nodesheet({"1.6": node, "2.1": node})
+
+    assert set(data) == {"2.1"}
+    assert warnings
+
+
+# ---------------------------------------- audit fixes: maze and billing
+
+def test_maze_pings_stop_for_an_expired_server(clean_db):
+    db = clean_db
+    db.reset()
+    db.seed("guilds", {"guild_id": GUILD, "premium_status": "expired",
+                       "trial_ends_at": "2020-01-01T00:00:00+00:00"})
+    seed = {"guild_id": GUILD, "event_end": "2099-01-01T00:00:00+00:00",
+            "ping_enabled_global": True, "ping_mention": "here"}
+    db.seed("maze_schedules", seed)
+    bot, _guild, channel = _maze_bot()
+
+    run(MazeTracker(bot).ping_discount_at_time(GUILD, channel, "20%", 0))
+
+    assert channel.messages == []
+
+
+def test_billing_resets_a_stale_renewal_marker_after_renewal(clean_db):
+    from datetime import datetime, timezone
+
+    db = clean_db
+    row = db.one("guilds", guild_id=GUILD)
+    row["premium_ends_at"] = "2099-01-01T00:00:00+00:00"
+    row["last_renewal_ping"] = 3
+    bot = FakeBot()
+    guild = FakeGuild(GUILD, me=FakeMember(999, "Bot", administrator=False))
+    guild.add_channel(FakeChannel(CHANNEL, guild=guild))
+    bot.guilds.append(guild)
+
+    manager = object.__new__(BillingManager)  # skip the 12h task loop
+    manager.bot = bot
+    run(manager._process_guild(dict(row), datetime.now(timezone.utc)))
+
+    assert db.one("guilds", guild_id=GUILD)["last_renewal_ping"] == 0
+
+
+def test_billing_keeps_the_marker_when_no_notice_was_delivered(clean_db):
+    from datetime import datetime, timedelta, timezone
+
+    db = clean_db
+    row = db.one("guilds", guild_id=GUILD)
+    row["premium_ends_at"] = (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()
+    row["last_renewal_ping"] = 0
+    bot = FakeBot()
+    guild = FakeGuild(GUILD, me=FakeMember(999, "Bot", administrator=False))
+    guild.owner = None  # nobody to DM
+    bot.guilds.append(guild)
+
+    manager = object.__new__(BillingManager)  # skip the 12h task loop
+    manager.bot = bot
+    run(manager._process_guild(dict(row), datetime.now(timezone.utc)))
+
+    assert db.one("guilds", guild_id=GUILD)["last_renewal_ping"] == 0
+
+
+def test_help_subcommand_bypasses_the_expired_trial_gate(clean_db):
+    db = clean_db
+    db.reset()
+    db.seed("guilds", {"guild_id": GUILD, "premium_status": "expired",
+                       "trial_ends_at": "2020-01-01T00:00:00+00:00"})
+    import main as botmain
+
+    ctx = make_ctx()
+    ctx.command = types.SimpleNamespace(name="race")
+    ctx.message.content = "!race help"
+    assert run(botmain.premium_gate(ctx)) is True
+
+    ctx.message.content = "!race status"
+    assert run(botmain.premium_gate(ctx)) is False
+
+
+def test_maze_restart_does_not_repeat_a_recent_discount(clean_db):
+    from cogs.maze import _discount_key
+
+    db = clean_db
+    end = datetime(2099, 1, 1, tzinfo=timezone.utc)
+    key = _discount_key("20%", end)
+    db.seed("maze_schedules", {"guild_id": GUILD, "event_end": end.isoformat(),
+                               "ping_enabled_global": True, "ping_mention": "here",
+                               "sent_pings": [key]})
+    bot, _guild, channel = _maze_bot()
+
+    run(MazeTracker(bot).ping_discount_at_time(GUILD, channel, "20%", 0, end, key))
+
+    assert channel.messages == []
+
+
+def test_maze_ping_records_the_discount_for_restart_dedupe(clean_db):
+    from cogs.maze import _discount_key
+
+    db = clean_db
+    end = datetime(2099, 1, 1, tzinfo=timezone.utc)
+    key = _discount_key("20%", end)
+    db.seed("maze_schedules", {"guild_id": GUILD, "event_end": end.isoformat(),
+                               "ping_enabled_global": True, "ping_mention": "none"})
+    bot, _guild, channel = _maze_bot()
+
+    run(MazeTracker(bot).ping_discount_at_time(GUILD, channel, "20%", 0, end, key))
+
+    assert channel.messages
+    assert key in db.one("maze_schedules", guild_id=GUILD)["sent_pings"]
+
+
+def test_alias_add_and_remove_accept_quoted_names(clean_db):
+    db = clean_db
+    ctx = make_ctx()
+    member = FakeMember(900, "Sam", guild=ctx.guild)
+    ctx.guild.members.append(member)
+    ctx.message.mentions = [member]
+
+    run(call(Admin.alias_group, admin_cog(), ctx, "add", args=f'{member.mention} "sam smith"'))
+    assert db.one("aliases", guild_id=GUILD)["alias_name"] == "sam smith"
+
+    run(call(Admin.alias_group, admin_cog(), ctx, "remove", args='"sam smith"'))
+    assert db.one("aliases", guild_id=GUILD) is None

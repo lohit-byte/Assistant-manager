@@ -86,10 +86,13 @@ def get_staff_role_ids(guild_id: int) -> set:
     ids = set()
     try:
         res = supabase.table("guilds").select("staff_role_id,leader_role_id,colead_role_id").eq("guild_id", guild_id).limit(1).execute()
-        if res.data:
-            for v in res.data[0].values():
-                if v:
-                    ids.add(int(v))
+        if not res.data:
+            # A brand-new guild may not have its row yet; do not cache "no staff
+            # roles" for a minute or the first configured staff member is denied.
+            return set()
+        for v in res.data[0].values():
+            if v:
+                ids.add(int(v))
     except Exception as e:
         # Do not cache a failed lookup as "no staff roles" for the next minute.
         print(f"Role lookup failed: {e}")

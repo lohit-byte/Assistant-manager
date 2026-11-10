@@ -22,7 +22,15 @@ intents.members = True
 
 class MonsterBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
+        # Discord parses mentions in plain sends by default, and member display
+        # names are interpolated into several replies: never let those ping
+        # @everyone/@here or a role. Announcement paths that must ping pass their
+        # own AllowedMentions explicitly.
+        super().__init__(
+            command_prefix="!",
+            intents=intents,
+            allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True),
+        )
 
     async def setup_hook(self):
         cogs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cogs")
@@ -66,7 +74,10 @@ async def on_ready():
 
 @bot.event
 async def on_guild_join(guild):
-    await asyncio.to_thread(get_or_create_guild, guild.id)
+    try:
+        await asyncio.to_thread(get_or_create_guild, guild.id)
+    except Exception as e:
+        print(f"❌ Could not initialise guild {guild.id}: {e}")
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -94,15 +105,32 @@ async def premium_gate(ctx):
         return True
 
     # Help must stay reachable when a trial expires so people can find support.
-    if ctx.command is not None and ctx.command.name == "help":
-        return True
+    # That includes the per-cog help pages (`!war help`, `!race help`, `!maze help`).
+    if ctx.command is not None:
+        name = ctx.command.name
+        if name == "help":
+            return True
+        if name in ("war", "race", "maze"):
+            parts = (getattr(ctx.message, "content", "") or "").split()
+            if len(parts) > 1 and parts[1].lower() == "help":
+                return True
 
     if ctx.guild is None:
         # Let the command's own guild-only check raise NoPrivateMessage, which
         # is answered in on_command_error (global checks run before those).
         return True
 
-    ok = await asyncio.to_thread(check_premium_status, ctx.guild.id)
+    try:
+        ok = await asyncio.to_thread(check_premium_status, ctx.guild.id)
+    except Exception as e:
+        # A database outage must not kill the command silently: discord.py only
+        # routes CommandError to on_command_error.
+        print(f"❌ Premium check failed for {ctx.guild.id}: {e}")
+        try:
+            await ctx.send("❌ I couldn't check this server's subscription right now. Please try again in a minute.")
+        except discord.HTTPException:
+            pass
+        return False
     if not ok:
         await ctx.send("❌ This server's 7-day trial has expired or the server is blocked. Please upgrade via the dashboard.")
     return ok
@@ -115,7 +143,10 @@ async def force_command(ctx, action: str = None):
         
     if action and action.lower() == "premium":
         try:
-            await asyncio.to_thread(
+            # The developer bypass never ran get_or_create_guild; make sure the
+            # row exists or the update silently matches nothing.
+            await asyncio.to_thread(get_or_create_guild, ctx.guild.id)
+            res = await asyncio.to_thread(
                 supabase.table("guilds").update({
                     "premium_status": "premium",
                     # An expired subscription keeps its past end date; clear it or
@@ -124,6 +155,8 @@ async def force_command(ctx, action: str = None):
                     "last_renewal_ping": 0,
                 }).eq("guild_id", ctx.guild.id).execute
             )
+            if not res.data:
+                return await ctx.send("❌ Could not upgrade this server (no guild row).")
             await ctx.send("✅ **Server force-upgraded to Premium!** You can now use all commands.")
         except Exception as e:
             await ctx.send(f"❌ Error: {e}")

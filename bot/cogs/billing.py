@@ -65,12 +65,18 @@ class BillingManager(commands.Cog):
         days_left = max(1, math.ceil(total_hours / 24))
 
         # A renewal can happen without the payment webhook resetting the marker;
-        # -1 ("expired notice sent") must not mute all future renewal warnings.
-        if last_ping == -1 and not expired:
-            await asyncio.to_thread(
-                supabase.table("guilds").update({"last_renewal_ping": 0}).eq("guild_id", guild_id).execute
+        # a stale 1/3/-1 marker must not mute the new term's warnings.
+        if not expired:
+            stale_marker = (
+                last_ping == -1
+                or (last_ping == 1 and total_hours > 24)
+                or (last_ping == 3 and total_hours > 72)
             )
-            last_ping = 0
+            if stale_marker:
+                await asyncio.to_thread(
+                    supabase.table("guilds").update({"last_renewal_ping": 0}).eq("guild_id", guild_id).execute
+                )
+                last_ping = 0
 
         guild = self.bot.get_guild(guild_id)
         if not guild:
@@ -89,24 +95,23 @@ class BillingManager(commands.Cog):
         async def send_notice(embed):
             # Channel notice when there is a channel, plus a DM to the people who
             # can actually renew (owner + Manage Server admins) since admins log
-            # in with Discord.
+            # in with Discord. Returns True when at least one copy was delivered
+            # so the marker is not consumed by an outage.
+            delivered = False
             if channel is not None:
                 try:
                     await channel.send(content=owner_ping, embed=embed)
+                    delivered = True
                 except discord.HTTPException as e:
                     print(f"Billing notice failed in {guild_id}: {e}")
-            await self._dm_admins(guild, embed)
+            dm_count = await self._dm_admins(guild, embed)
+            return delivered or dm_count > 0
 
         # --- LOGIC FOR EXPIRY ---
         if expired:
             if last_ping == -1:
                 return
-            if not await self._update_if_unchanged(guild_id, ends_at_str, {
-                "premium_status": "expired",
-                "last_renewal_ping": -1,
-            }):
-                return  # renewed between the SELECT and this UPDATE
-            await send_notice(discord.Embed(
+            delivered = await send_notice(discord.Embed(
                 title="🚨 Premium Expired",
                 description=(
                     "Your premium subscription has ended. The bot is now paused.\n"
@@ -114,12 +119,16 @@ class BillingManager(commands.Cog):
                 ),
                 color=discord.Color.red()
             ))
+            # The gate must close even when the notice could not be delivered;
+            # only the marker waits for a successful delivery (and a retry).
+            payload = {"premium_status": "expired"}
+            if delivered:
+                payload["last_renewal_ping"] = -1
+            await self._update_if_unchanged(guild_id, ends_at_str, payload)
 
         elif total_hours <= 24 and last_ping not in (1, -1):
             # 2. 1 Day Warning
-            if not await self._update_if_unchanged(guild_id, ends_at_str, {"last_renewal_ping": 1}):
-                return
-            await send_notice(discord.Embed(
+            delivered = await send_notice(discord.Embed(
                 title="⚠️ Premium Expires Tomorrow",
                 description=(
                     f"Your premium subscription ends in about {int(total_hours)} hours.\n"
@@ -127,12 +136,12 @@ class BillingManager(commands.Cog):
                 ),
                 color=discord.Color.orange()
             ))
+            if delivered:
+                await self._update_if_unchanged(guild_id, ends_at_str, {"last_renewal_ping": 1})
 
         elif total_hours <= 72 and last_ping not in (1, 3, -1):
             # 3. 3 Day Warning
-            if not await self._update_if_unchanged(guild_id, ends_at_str, {"last_renewal_ping": 3}):
-                return
-            await send_notice(discord.Embed(
+            delivered = await send_notice(discord.Embed(
                 title="⏳ Premium Expiring Soon",
                 description=(
                     f"Your premium subscription ends in {days_left} days.\n"
@@ -140,9 +149,12 @@ class BillingManager(commands.Cog):
                 ),
                 color=discord.Color.yellow()
             ))
+            if delivered:
+                await self._update_if_unchanged(guild_id, ends_at_str, {"last_renewal_ping": 3})
 
     async def _dm_admins(self, guild, embed):
-        """DM the guild owner and up to four Manage-Server admins."""
+        """DM the guild owner and up to four Manage-Server admins; return #sent."""
+        sent = 0
         targets, seen = [], set()
         if guild.owner is not None:
             targets.append(guild.owner)
@@ -161,6 +173,9 @@ class BillingManager(commands.Cog):
                 await member.send(embed=embed)
             except (discord.HTTPException, AttributeError, TypeError) as e:
                 print(f"Billing DM failed for {getattr(member, 'id', '?')}: {e}")
+            else:
+                sent += 1
+        return sent
 
     async def _update_if_unchanged(self, guild_id, ends_at_str, payload):
         """Only write if premium_ends_at still matches what the sweep read."""

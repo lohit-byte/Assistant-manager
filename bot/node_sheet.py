@@ -14,6 +14,7 @@ An optional top-level ``{"nodes": {...}}`` wrapper is accepted.
 
 import json
 import os
+import re
 import threading
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -61,8 +62,10 @@ def parse_nodesheet(payload):
     data, warnings = {}, []
     for raw_key, raw_node in nodes.items():
         key = str(raw_key).strip()
-        if not key or "." not in key:
-            warnings.append(f"node `{raw_key}` skipped: expected a `lap.node` key")
+        # Race commands only generate lap.<1-5>; anything else is unreachable and
+        # would look like a valid sheet while silently doing nothing.
+        if not re.fullmatch(r"\d+\.[1-5]", key):
+            warnings.append(f"node `{raw_key}` skipped: expected a `lap.<1-5>` key")
             continue
         if not isinstance(raw_node, dict):
             warnings.append(f"node `{key}` skipped: task must be an object")

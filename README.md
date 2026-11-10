@@ -114,12 +114,13 @@ file is ignored; a single bad node is skipped — the rest of the sheet keeps wo
 3. **Dashboard:** redeploy (Vercel). Then open **Overview → Setup**, add each team (or import
    the channels the bot already tracks), assign captains, and save.
 
-**Security model (unchanged):** the dashboard talks to Supabase with the anon key, so the
-RLS policies for `teams`, `team_captains` and `war_logs` are permissive for signed-in users,
-exactly like the existing dashboard tables. Staff/captain scoping is enforced by the UI and by
-the bot's service-role code, not by Postgres — a signed-in user who crafts API calls can write
-these tables directly. If that trust model ever needs tightening, move dashboard writes behind
-a server route that verifies Discord permissions before using the service role.
+**Security model:** the bot talks to Supabase with the service-role key (it bypasses RLS);
+the dashboard uses the anon key with a signed-in Supabase user. Every dashboard table now has
+RLS enabled with an `authenticated` policy, so anonymous PostgREST calls cannot read or write
+it (including `guilds.premium_status`). Staff/captain *scoping* is still enforced by the UI and
+by the bot's service-role code, not by Postgres — a signed-in user who crafts API calls can
+write guild data directly. If that trust model needs tightening, move dashboard writes behind a
+server route that verifies Discord permissions before using the service role.
 
 
 ## 🧪 Tests

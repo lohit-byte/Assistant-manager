@@ -5,6 +5,14 @@ from discord.ext import commands
 from database import supabase, is_staff_member, ensure_user, rename_alias
 import asyncio
 
+
+def _alias_words(text):
+    """Normalise a (possibly quoted) alias argument the way rename already does."""
+    try:
+        return " ".join(shlex.split(text or "")).strip().lower()
+    except ValueError:
+        return (text or "").strip().lower()
+
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -52,7 +60,9 @@ class Admin(commands.Cog):
                 return await ctx.send("❌ You must mention the user. Usage: `!alias add @user <alias>`")
             
             member = ctx.message.mentions[0]
-            alias_name = args.replace(member.mention, "").replace(f"<@!{member.id}>", "").strip().lower()
+            alias_name = _alias_words(
+                args.replace(member.mention, "").replace(f"<@!{member.id}>", "")
+            )
             
             if not alias_name:
                 return await ctx.send("❌ Please provide an alias name.")
@@ -76,7 +86,7 @@ class Admin(commands.Cog):
                 await ctx.send(f"❌ Database error: {e}")
 
         elif action == "remove":
-            alias_name = args.strip().lower()
+            alias_name = _alias_words(args)
             try:
                 res = await asyncio.to_thread(
                     lambda: supabase.table("aliases").delete()
