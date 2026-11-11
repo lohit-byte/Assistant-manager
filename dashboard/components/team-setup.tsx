@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Save, Settings, Trash2, UserRound, Users, X } from 'lucide-react'
+import { Plus, Save, ServerCog, Trash2, UserRound, Users, X } from 'lucide-react'
 import {
   Alert,
   Badge,
@@ -25,6 +25,13 @@ import {
 } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
 import { isSnowflake } from '@/lib/format'
+import {
+  GUILD_SETUP_LABELS,
+  validateGuildSetup,
+  type GuildSetupErrors,
+  type GuildSetupField,
+  type GuildSetupValues,
+} from '@/lib/setup'
 import { useToast } from '@/lib/toast'
 import type { Alias, Guild, Team, TeamCaptain } from '@/lib/types'
 
@@ -55,6 +62,18 @@ interface EditorState {
 
 /** Only validation and write errors stay inline; successes are confirmed with a toast. */
 type Feedback = { tone: 'red'; text: string } | null
+
+/** Guild-row ids rendered in the text inputs; empty string means "not set". */
+function guildSetupValues(row: Guild): GuildSetupValues {
+  const id = (value: Guild['leader_role_id']) =>
+    value !== null && value !== undefined ? String(value) : ''
+  return {
+    leader_role_id: id(row.leader_role_id),
+    colead_role_id: id(row.colead_role_id),
+    staff_role_id: id(row.staff_role_id),
+    maze_channel_id: id(row.maze_channel_id),
+  }
+}
 
 function valuesFromTeam(team?: Team | null): TeamDraft {
   const channel = (id: Team['war_channel_id']) =>
@@ -94,10 +113,8 @@ export function TeamSetup({
   detectedRaceChannels,
   onChanged,
 }: TeamSetupProps) {
-  const [staffRole, setStaffRole] = useState(guild.staff_role_id ? String(guild.staff_role_id) : '')
-  const [mazeChannel, setMazeChannel] = useState(
-    guild.maze_channel_id ? String(guild.maze_channel_id) : '',
-  )
+  const [server, setServer] = useState<GuildSetupValues>(() => guildSetupValues(guild))
+  const [serverErrors, setServerErrors] = useState<GuildSetupErrors>({})
   const [editor, setEditor] = useState<EditorState | null>(null)
   const [captainAlias, setCaptainAlias] = useState('')
   const [captainId, setCaptainId] = useState('')
@@ -107,9 +124,20 @@ export function TeamSetup({
 
   // The parent refreshes the guild row after a save; keep the server fields in sync with it.
   useEffect(() => {
-    setStaffRole(guild.staff_role_id ? String(guild.staff_role_id) : '')
-    setMazeChannel(guild.maze_channel_id ? String(guild.maze_channel_id) : '')
-  }, [guild.maze_channel_id, guild.staff_role_id])
+    setServer(guildSetupValues(guild))
+  }, [
+    guild.guild_id,
+    guild.leader_role_id,
+    guild.colead_role_id,
+    guild.staff_role_id,
+    guild.maze_channel_id,
+  ])
+
+  /** Editing a field clears its inline error; the next save re-validates everything. */
+  const updateServer = (field: GuildSetupField, value: string) => {
+    setServer((current) => ({ ...current, [field]: value }))
+    setServerErrors((current) => ({ ...current, [field]: undefined }))
+  }
 
   const maxTeams = guild.max_teams ?? 1
   const atTeamLimit = teams.length >= maxTeams
@@ -157,25 +185,27 @@ export function TeamSetup({
 
   const saveServer = async () => {
     setFeedback(null)
-    const roleError = validateChannelId(staffRole, 'Staff role ID')
-    const mazeError = validateChannelId(mazeChannel, 'Maze channel ID')
-    if (roleError || mazeError) {
-      setFeedback({ tone: 'red', text: roleError ?? mazeError ?? 'Check the IDs.' })
+    const result = validateGuildSetup(server)
+    if (!result.ok) {
+      setServerErrors(result.errors)
+      setFeedback({ tone: 'red', text: 'Check the highlighted IDs, then save again.' })
       return
     }
+    setServerErrors({})
 
     setBusy('server')
     try {
+      // One write for all four fields: the role ids and the maze channel travel together.
       const { error } = await createClient()
         .from('guilds')
-        .update({
-          staff_role_id: staffRole.trim() || null,
-          maze_channel_id: mazeChannel.trim() || null,
-        })
+        .update(result.update)
         .eq('guild_id', guild.guild_id)
       if (error) throw new Error(error.message)
       await reload()
-      toast.success('Server settings saved.', 'The bot now uses this staff role and maze channel.')
+      toast.success(
+        'Server setup saved.',
+        'The bot now uses these staff roles and the maze channel.',
+      )
     } catch (caught) {
       setFeedback({
         tone: 'red',
@@ -488,9 +518,9 @@ export function TeamSetup({
   return (
     <Card className="mb-6">
       <CardHeader
-        title="Server & team setup"
-        description="Staff only. Link each team’s war and race channels, add its captains, then check the Overview."
-        icon={<Settings className="h-5 w-5" />}
+        title="Server setup"
+        description="Staff only. Each subteam pairs one war channel with one race channel — link them, add captains, and set the roles the bot treats as staff."
+        icon={<ServerCog className="h-5 w-5" />}
         action={<Badge tone="purple">{teams.length}/{maxTeams} teams</Badge>}
       />
       <CardBody className="space-y-5">
@@ -513,8 +543,9 @@ export function TeamSetup({
             </li>
           </ol>
           <p className="mt-2 text-xs leading-relaxed text-slate-500">
-            The staff role and maze channel below are Discord IDs the bot uses for staff commands
-            and maze pings — paste the ID, not the name.
+            The role IDs and maze channel below are Discord IDs the bot reads — paste the ID, not
+            the name. Leader, Helper and Staff all unlock the same staff commands; the tiers only
+            decide who you give them to.
           </p>
         </div>
 
@@ -524,29 +555,63 @@ export function TeamSetup({
           </Alert>
         ) : null}
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field
-            label="Staff role ID"
-            hint="Discord role ID (17–20 digits) whose members get staff commands in Discord. Leave it empty to rely on Manage Server."
-          >
-            <TextInput
-              value={staffRole}
-              onChange={(event) => setStaffRole(event.target.value)}
-              placeholder="e.g. 123456789012345678"
-              inputMode="numeric"
-            />
-          </Field>
-          <Field
-            label="Maze channel ID"
-            hint="Discord channel ID (17–20 digits) where the bot sends maze discount pings. Leave it empty if you do not use maze alerts."
-          >
-            <TextInput
-              value={mazeChannel}
-              onChange={(event) => setMazeChannel(event.target.value)}
-              placeholder="e.g. 123456789012345678"
-              inputMode="numeric"
-            />
-          </Field>
+        <div>
+          <p className="text-sm font-semibold text-slate-200">Staff roles</p>
+          <p className="mt-0.5 max-w-2xl text-xs leading-relaxed text-slate-500">
+            The bot gives its staff commands to anyone holding <span className="font-semibold text-slate-300">any</span> of these
+            three roles. Helper staff is the co-lead tier: same commands as Leader and Staff, kept
+            separate so you can hand out the middle rank. Empty fields are simply not set.
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <Field
+              label={GUILD_SETUP_LABELS.leader_role_id}
+              hint="Discord role ID (17–20 digits) for the server leader. The bot treats it as staff."
+              error={serverErrors.leader_role_id}
+            >
+              <TextInput
+                value={server.leader_role_id}
+                onChange={(event) => updateServer('leader_role_id', event.target.value)}
+                placeholder="e.g. 123456789012345678"
+                inputMode="numeric"
+              />
+            </Field>
+            <Field
+              label={`${GUILD_SETUP_LABELS.colead_role_id} (co-lead)`}
+              hint="Discord role ID for helpers. The bot treats it as staff — the co-lead tier, below Leader and above Staff."
+              error={serverErrors.colead_role_id}
+            >
+              <TextInput
+                value={server.colead_role_id}
+                onChange={(event) => updateServer('colead_role_id', event.target.value)}
+                placeholder="e.g. 123456789012345678"
+                inputMode="numeric"
+              />
+            </Field>
+            <Field
+              label={GUILD_SETUP_LABELS.staff_role_id}
+              hint="Discord role ID whose members get the bot’s staff commands. Leave it empty to rely on Manage Server."
+              error={serverErrors.staff_role_id}
+            >
+              <TextInput
+                value={server.staff_role_id}
+                onChange={(event) => updateServer('staff_role_id', event.target.value)}
+                placeholder="e.g. 123456789012345678"
+                inputMode="numeric"
+              />
+            </Field>
+            <Field
+              label={GUILD_SETUP_LABELS.maze_channel_id}
+              hint="Discord channel ID (17–20 digits) where the bot sends maze discount pings. Leave it empty if you do not use maze alerts."
+              error={serverErrors.maze_channel_id}
+            >
+              <TextInput
+                value={server.maze_channel_id}
+                onChange={(event) => updateServer('maze_channel_id', event.target.value)}
+                placeholder="e.g. 123456789012345678"
+                inputMode="numeric"
+              />
+            </Field>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -557,7 +622,7 @@ export function TeamSetup({
             war channel with one race channel.
           </p>
           <Button onClick={saveServer} loading={busy === 'server'} size="sm">
-            <Save className="h-3.5 w-3.5" /> Save server settings
+            <Save className="h-3.5 w-3.5" /> Save server setup
           </Button>
         </div>
 
@@ -565,10 +630,10 @@ export function TeamSetup({
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <p className="text-sm font-semibold text-slate-200">Teams</p>
+            <p className="text-sm font-semibold text-slate-200">Subteams</p>
             <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
-              A team pairs one war channel with one race channel. Either half can be empty, and the
-              bot uses these channels for its war and race commands.
+              One team = one war channel + one race channel. Either half can be empty, and the bot
+              uses these channels for its war and race commands.
             </p>
           </div>
           <Button size="sm" onClick={() => openNew()} disabled={atTeamLimit || editor?.team === null}>

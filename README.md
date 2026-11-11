@@ -32,7 +32,9 @@ A unified Discord bot and web dashboard designed for Monster Legends alliances t
 
 ### 📊 Web Dashboard
 * **One-stop Overview:** Server settings, teams, captains and the live per-team snapshot on one page.
+* **Server setup page:** staff-only **Manage → Server setup** is the single place to link each subteam’s war and race channels, name the team, assign its captains, and set the **Leader**, **Helper staff (co-lead)** and **Staff** role IDs the bot treats as staff (the Overview and Settings pages link straight to it).
 * **Teams & Captains:** Pair a war channel with a race channel, name the team, and assign captains who act as staff for that team only (bot commands + dashboard, never settings, billing or other teams).
+* **3D war table:** a drag/arrow-key-turnable perspective table on the Overview and landing hero shows the same live war clock, attack counts and pinned race/maze evidence as the flat board — static under `prefers-reduced-motion`.
 * **Activity Rating:** One war + race score and grade (A+ … D) per player, visible to members; the raw attack log and undo trail stay staff/captain-only.
 * **Discord OAuth2:** Secure login and server selection. The landing page offers **Sign in** next to **Start free trial**, so returning staff reopen their dashboard without starting a new trial.
 * **Light & Dark appearance:** a per-browser Light / Dark / Match device switch under **Settings**, applied before first paint (no flash) and remembered on that device.

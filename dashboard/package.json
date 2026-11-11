@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "check:rating": "node scripts/check-rating.cjs"
+    "check:rating": "node scripts/check-rating.cjs",
+    "check:setup": "node scripts/check-setup.cjs"
   },
   "dependencies": {
     "@paddle/paddle-js": "^1.2.1",

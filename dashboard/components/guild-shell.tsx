@@ -27,6 +27,7 @@ import {
   Menu,
   RefreshCw,
   Server,
+  ServerCog,
   Settings,
   ShieldAlert,
   Sparkles,
@@ -81,7 +82,7 @@ const NAV_GROUPS = [
         name: 'Overview',
         segment: '',
         icon: LayoutDashboard,
-        hint: 'Teams, setup and the live war/race snapshot',
+        hint: 'The live war/race snapshot and a setup checklist',
       },
     ],
   },
@@ -96,6 +97,12 @@ const NAV_GROUPS = [
   {
     label: 'Manage',
     items: [
+      {
+        name: 'Server setup',
+        segment: '/setup',
+        icon: ServerCog,
+        hint: 'Each subteam’s war and race channels, captains, and the staff roles the bot reads',
+      },
       { name: 'Aliases', segment: '/aliases', icon: Users, hint: 'Map in-game names to Discord users' },
     ],
   },
@@ -115,7 +122,7 @@ const NAV_GROUPS = [
 
 // Pages that change server state. Read-only members never see these in the nav and
 // render a "Staff only" panel if they open the URL directly.
-const STAFF_ONLY_SEGMENTS = new Set(['/aliases', '/billing'])
+const STAFF_ONLY_SEGMENTS = new Set(['/aliases', '/billing', '/setup'])
 
 // Captains can only act on their own team's channels. Settings stays available because the
 // appearance preference is personal, not server configuration.

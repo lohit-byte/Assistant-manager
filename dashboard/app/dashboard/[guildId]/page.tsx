@@ -10,6 +10,7 @@ import {
   CreditCard,
   Map,
   RefreshCw,
+  ServerCog,
   ShieldCheck,
   Target,
   Trophy,
@@ -32,6 +33,7 @@ import {
   buttonClass,
 } from '@/components/ui'
 import { getGuildSummary, type GuildSummary } from '@/lib/data'
+import { buildSetupSummary } from '@/lib/setup'
 import { createClient } from '@/lib/supabase/client'
 import { MAZE_SCHEDULES, NODES_PER_LAP, PLAN_META, TRIAL_DAYS } from '@/lib/constants'
 import {
@@ -45,7 +47,7 @@ import {
 import { useNow } from '@/lib/hooks'
 
 export default function OverviewPage() {
-  const { guildId, guild } = useGuild()
+  const { guildId, guild, teams, isStaff } = useGuild()
   const now = useNow()
   const [summary, setSummary] = useState<GuildSummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -105,16 +107,17 @@ export default function OverviewPage() {
     [moments],
   )
 
-  // Goal-gradient head start: the bot is already in this server (otherwise the dashboard could
-  // not load it), so setup is never a 0% state. Only the channel picks are left.
-  const setupSteps = [
-    { label: 'War channel', done: Boolean(guild.war_channel_id), href: `/dashboard/${guildId}/war` },
-    { label: 'Race channel', done: Boolean(guild.race_channel_id), href: `/dashboard/${guildId}/race` },
-    { label: 'Maze channel', done: Boolean(guild.maze_channel_id), href: `/dashboard/${guildId}/maze` },
-  ]
-  const setupDone = setupSteps.filter((step) => step.done).length
-  const setupPct = Math.round(((setupDone + 1) / (setupSteps.length + 1)) * 100)
-  const nextSetupSteps = setupSteps.filter((step) => !step.done).slice(0, 2)
+  // Server setup checklist. Goal-gradient framing: the bot is already in this server (otherwise
+  // the dashboard could not load it), so setup is never a 0% state. Everything is edited on the
+  // Server setup page, which the nav, this card and Settings all point at.
+  const setup = buildSetupSummary({
+    teamCount: teams.length,
+    maxTeams: guild.max_teams,
+    leaderRoleId: guild.leader_role_id,
+    coleadRoleId: guild.colead_role_id,
+    staffRoleId: guild.staff_role_id,
+    mazeChannelId: guild.maze_channel_id,
+  })
 
   return (
     <div>
@@ -134,29 +137,40 @@ export default function OverviewPage() {
         guildId={guildId}
         war={warWindow}
         counts={{ missing: warMissing, excused: warExcused, logged: warLogged }}
+        race={race ? { lap: raceLap, node: raceNode, target: raceTarget } : null}
+        maze={upcoming ? { label: upcoming.percent, detail: formatRelative(upcoming.at, now) } : null}
       />
 
-      {setupDone < setupSteps.length ? (
+      {isStaff ? (
         <Card className="mb-6">
-          <CardBody className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
+          <CardBody className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
               <p className="mono-label text-accent-400">
-                Setup / {setupDone} of {setupSteps.length} channels
+                Server setup / {setup.configured} of {setup.total} configured
               </p>
               <p className="mt-1.5 text-sm font-semibold text-slate-100">
-                {setupPct}% set up. The bot is already in the server.
+                {setup.complete
+                  ? 'All set. The bot has its staff roles, a subteam and a maze channel.'
+                  : `${setup.percent}% set up. The bot is already in the server — finish the rest in Server setup.`}
               </p>
-              <p className="mt-1 text-xs leading-relaxed text-slate-400">
-                Point each tool at a channel so it tracks and pings automatically.
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-400">
+                Each subteam pairs one war channel with one race channel. Captains and the Leader,
+                Helper (co-lead) and Staff roles the bot treats as staff are all configured there.
               </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {setup.tasks.map((task) => (
+                  <Badge key={task.key} tone={task.configured ? 'green' : 'slate'} dot>
+                    {task.label} {task.value}
+                  </Badge>
+                ))}
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {nextSetupSteps.map((step) => (
-                <Link key={step.href} href={step.href} className={buttonClass('secondary', 'sm')}>
-                  {step.label}
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </Link>
-              ))}
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <Link href={`/dashboard/${guildId}/setup`} className={buttonClass('primary', 'sm')}>
+                <ServerCog className="h-3.5 w-3.5" />
+                Open server setup
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
             </div>
           </CardBody>
         </Card>

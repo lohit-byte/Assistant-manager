@@ -18,6 +18,7 @@ import { BOT_INVITE_URL, SUPPORT_EMAIL, TRIAL_DAYS } from '@/lib/constants'
 import { Alert, Button, buttonClass } from '@/components/ui'
 import { Wordmark } from '@/components/brand'
 import { WarBoard } from '@/components/war-board'
+import { TiltSurface, WarTable3D } from '@/components/board-3d'
 import {
   clock,
   faq,
@@ -25,6 +26,7 @@ import {
   finale,
   footer,
   hero,
+  sampleBoard,
   start,
 } from '@/lib/marketing'
 
@@ -297,8 +299,37 @@ export default function Landing() {
               </p>
             </div>
             <div className="lg:pt-1">
-              <WarBoard />
+              {/* One motion-safe 3D tilt for the hero board, nothing more. */}
+              <TiltSurface>
+                <WarBoard />
+              </TiltSurface>
             </div>
+          </div>
+
+          {/* The board as an object. Same sample data as the panel above, clearly labelled and
+              turned with a drag or the arrow keys; fully static under reduced motion. */}
+          <div className="mt-12 lg:mt-16">
+            <WarTable3D
+              className="war-table3d--wide"
+              sample
+              label="Sample war table"
+              phase="attack"
+              phaseLabel="Attack"
+              active
+              timeLeft="21:48:21"
+              warLeft="21h 48m"
+              progress={54.6}
+              counts={sampleBoard.counts}
+              race={{ lap: 4, node: 7, target: 20 }}
+              maze={{ label: '30% off', detail: 'next ping 18:20' }}
+              onSelect={() => {
+                void signIn()
+              }}
+            />
+            <p className="mono-label mt-3 flex flex-wrap items-baseline justify-between gap-2 text-slate-600">
+              <span>Fig. 02 / sample war table. Turn it.</span>
+              <span>Sample data. Illustrative only.</span>
+            </p>
           </div>
         </section>
 

@@ -149,6 +149,16 @@ CREATE TABLE player_ping_settings (
 -- ============================================================================
 -- MIGRATIONS for existing databases (safe to run repeatedly)
 -- ============================================================================
+-- Guild-level staff roles and channels. These exist in the fresh-install CREATE
+-- above but older projects can miss the role columns; the bot now reads all
+-- three staff roles from the Server setup page, so make the columns explicit.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS leader_role_id BIGINT;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS colead_role_id BIGINT;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS staff_role_id BIGINT;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS member_role_id BIGINT;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS maze_channel_id BIGINT;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS absence_channel_id BIGINT;
+
 ALTER TABLE wars ADD COLUMN IF NOT EXISTS sent_pings JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE wars ADD COLUMN IF NOT EXISTS team_role_id BIGINT;
 ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS ping_mention TEXT DEFAULT 'here';
@@ -316,5 +326,6 @@ CREATE POLICY player_ping_settings_authenticated ON player_ping_settings
     FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- Legacy single-team channel columns (guilds.war_channel_id / race_channel_id) are no
--- longer used by the bot; teams own those channels now. maze_channel_id and staff_role_id
--- stay guild-level and are edited from the Overview setup card.
+-- longer used by the bot; teams own those channels now. maze_channel_id and the
+-- leader / helper (co-lead) / staff role ids stay guild-level and are edited from the
+-- dashboard's Server setup page.

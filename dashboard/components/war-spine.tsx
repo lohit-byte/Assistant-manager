@@ -4,6 +4,7 @@ import { useEffect, useState, type CSSProperties } from 'react'
 import Link from 'next/link'
 import { ArrowUpRight } from 'lucide-react'
 import { formatDateTime, formatDuration, warPhaseLabel, type WarWindow } from '@/lib/format'
+import { WarTable3D } from '@/components/board-3d'
 
 const HOUR = 3_600_000
 
@@ -28,10 +29,15 @@ export function WarSpine({
   guildId,
   war,
   counts,
+  race = null,
+  maze = null,
 }: {
   guildId: string
   war: WarWindow
   counts: { missing: number; excused: number; logged: number }
+  /** Optional: the 3D war table shows lap.node and the next discount when supplied. */
+  race?: { lap: number | null; node: number | null; target?: number | null } | null
+  maze?: { label: string; detail?: string | null } | null
 }) {
   const [now, setNow] = useState<number | null>(null)
 
@@ -123,6 +129,34 @@ export function WarSpine({
             <p className="board-count__value mt-1">{counts.logged}</p>
           </div>
         </div>
+      </div>
+
+      {/* The board as an object: the same war data pinned to a 3D table. Links are derived from
+          guildId, so this mount needs no change at the page call site. */}
+      <div className="border-t border-white/[0.08] px-4 pb-4 pt-3 sm:px-5 sm:pb-5">
+        <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+          <span className="mono-label text-slate-500">War table / pinned evidence</span>
+          <span className="mono-label hidden text-slate-600 sm:inline">
+            Drag or use arrow keys to turn
+          </span>
+        </div>
+        <WarTable3D
+          className="war-table3d--wide"
+          label="War table"
+          guildId={guildId}
+          phase={war.phase}
+          phaseLabel={warPhaseLabel(war.phase)}
+          active={active}
+          timeLeft={phaseLeft !== null ? clockFromMs(phaseLeft) : null}
+          warLeft={warLeft !== null && warLeft > 0 ? formatDuration(warLeft) : null}
+          progress={progress}
+          counts={counts}
+          race={race}
+          maze={maze}
+        />
+        <p className="mono-label mt-2 text-slate-600 sm:hidden">
+          Drag or use arrow keys to turn the table
+        </p>
       </div>
     </section>
   )

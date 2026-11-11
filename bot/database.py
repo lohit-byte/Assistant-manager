@@ -85,12 +85,17 @@ def get_staff_role_ids(guild_id: int) -> set:
         return cached[1]
     ids = set()
     try:
-        res = supabase.table("guilds").select("staff_role_id,leader_role_id,colead_role_id").eq("guild_id", guild_id).limit(1).execute()
+        # select("*") rather than the three role columns: an existing database that
+        # predates the leader/co-lead roles must still resolve its staff role instead
+        # of failing the whole select and silently denying every role-based staff member.
+        res = supabase.table("guilds").select("*").eq("guild_id", guild_id).limit(1).execute()
         if not res.data:
             # A brand-new guild may not have its row yet; do not cache "no staff
             # roles" for a minute or the first configured staff member is denied.
             return set()
-        for v in res.data[0].values():
+        row = res.data[0]
+        for key in ("staff_role_id", "leader_role_id", "colead_role_id"):
+            v = row.get(key)
             if v:
                 ids.add(int(v))
     except Exception as e:

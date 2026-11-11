@@ -1197,6 +1197,37 @@ def test_plain_member_is_not_team_staff(clean_db):
     assert run(database.is_team_staff(member, 11)) is False
 
 
+def test_staff_role_columns_cover_leader_helper_and_staff(clean_db):
+    """Dashboard "Server setup" edits Leader / Helper staff (co-lead) / Staff role ids on
+    guilds. The bot must treat all three as staff, otherwise a role saved in the dashboard
+    would still be denied the bot's staff commands."""
+    db = clean_db
+    db.one("guilds", guild_id=GUILD).update(
+        {"leader_role_id": 111, "colead_role_id": 222, "staff_role_id": 333}
+    )
+    database._role_cache.clear()
+
+    assert database.get_staff_role_ids(GUILD) == {111, 222, 333}
+
+    guild = FakeGuild(GUILD, me=FakeMember(999, "Bot", administrator=False))
+    for member_id, role_id in ((901, 111), (902, 222), (903, 333)):
+        member = FakeMember(member_id, "Tier", administrator=False, guild=guild)
+        member.roles = [FakeRole(role_id)]
+        assert run(database.is_staff_member(member)) is True
+
+    outsider = FakeMember(904, "Outsider", administrator=False, guild=guild)
+    outsider.roles = [FakeRole(444)]
+    assert run(database.is_staff_member(outsider)) is False
+
+
+def test_staff_lookup_tolerates_guilds_without_role_columns(clean_db):
+    """An existing database that predates the role columns returns a row without
+    them; the lookup must yield an empty set instead of raising and denying staff."""
+    database._role_cache.clear()
+
+    assert database.get_staff_role_ids(GUILD) == set()
+
+
 def test_global_staff_is_team_staff_without_any_team(clean_db):
     database._team_cache.clear()
     guild = FakeGuild(GUILD, me=FakeMember(999, "Bot", administrator=False))
