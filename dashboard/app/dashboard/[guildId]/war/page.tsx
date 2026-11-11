@@ -353,9 +353,11 @@ export default function WarPage() {
       {feedback && <Alert tone={feedback.tone} className="mb-6" onDismiss={() => setFeedback(null)}>{feedback.text}</Alert>}
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+        {/* min-w-0: the rating table's min-content must not widen the single-column grid
+            track past the phone viewport; the table scrolls inside its own overflow-x box. */}
 
         {/* LEFT COLUMN: CHANNEL SPECIFIC DATA */}
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           {!channelId ? (
             <Card>
               <CardBody>
@@ -610,7 +612,7 @@ export default function WarPage() {
         </div>
 
         {/* RIGHT COLUMN: GLOBAL SETTINGS & WARNINGS */}
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           {!isStaff ? (
             <Card>
               <CardHeader
