@@ -137,8 +137,6 @@ export default function OverviewPage() {
         guildId={guildId}
         war={warWindow}
         counts={{ missing: warMissing, excused: warExcused, logged: warLogged }}
-        race={race ? { lap: raceLap, node: raceNode, target: raceTarget } : null}
-        maze={upcoming ? { label: upcoming.percent, detail: formatRelative(upcoming.at, now) } : null}
       />
 
       {isStaff ? (
