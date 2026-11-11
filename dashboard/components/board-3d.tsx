@@ -73,6 +73,15 @@ export interface WarTable3DProps {
   className?: string
 }
 
+/** Literal hotspot modifier classes (see the note in `card`): Tailwind's component-layer
+ * purge only keeps classes written literally in source. */
+const HOT_MODIFIER: Record<WarTableTarget, string> = {
+  war: 'war-table3d__hot--war',
+  race: 'war-table3d__hot--race',
+  maze: 'war-table3d__hot--maze',
+  setup: 'war-table3d__hot--setup',
+}
+
 /** Home pose: turned a few degrees so the table reads as an object, not a rectangle. */
 const HOME_YAW = -8
 const HOME_PITCH = 10
@@ -302,7 +311,11 @@ export function WarTable3D({
     links?.[target] ?? (guildId ? `/dashboard/${guildId}/${target}` : undefined)
 
   const card = (target: WarTableTarget, ariaLabel: string, body: ReactNode) => {
-    const classes = cn('war-table3d__hot', `war-table3d__hot--${target}`)
+    // Literal modifier class names on purpose: these rules live in Tailwind's
+    // `@layer components`, which drops any rule whose classes are only built at
+    // runtime by a template string. A template literal purged the base (mobile)
+    // pinned positions and stacked all four cards in one corner.
+    const classes = cn('war-table3d__hot', HOT_MODIFIER[target])
     if (onSelect) {
       return (
         <button

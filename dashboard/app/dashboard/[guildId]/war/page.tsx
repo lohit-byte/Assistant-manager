@@ -566,7 +566,10 @@ export default function WarPage() {
                                 </thead>
                                 <tbody className="divide-y divide-slate-800/70">
                                   {rankedRatings.map((row, index) => (
-                                    <tr key={row.alias} className="hover:bg-slate-800/30">
+                                    <tr
+                                      key={row.discordId ? String(row.discordId) : `${row.alias}-${index}`}
+                                      className="hover:bg-slate-800/30"
+                                    >
                                       <td className="px-2 py-2 font-mono text-xs text-slate-600">{index + 1}</td>
                                       <td className="px-2 py-2 text-slate-200">{row.alias}</td>
                                       <td className="px-2 py-2">
@@ -585,8 +588,11 @@ export default function WarPage() {
                               <div>
                                 <p className="mono-label text-steel-400">Excused ({excusedRatings.length})</p>
                                 <div className="mt-1.5 flex flex-wrap gap-1.5">
-                                  {excusedRatings.map((row) => (
-                                    <Badge key={row.alias} tone="blue">{row.alias} · {row.raceTasks} race</Badge>
+                                  {excusedRatings.map((row, index) => (
+                                    <Badge
+                                      key={row.discordId ? String(row.discordId) : `${row.alias}-${index}`}
+                                      tone="blue"
+                                    >{row.alias} · {row.raceTasks} race</Badge>
                                   ))}
                                 </div>
                                 <p className="mt-1.5 text-[11px] text-slate-600">Excused players are not ranked and do not receive a grade.</p>
