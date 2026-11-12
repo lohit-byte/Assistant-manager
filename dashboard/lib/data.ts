@@ -5,6 +5,7 @@ import type {
   Alias,
   Guild,
   Id,
+  MazeEvent,
   MazePingMention,
   MazeSchedule,
   RaceLog,
@@ -151,6 +152,100 @@ export async function saveRaceState(
 
 /* ------------------------------------------------------------------- maze */
 
+/** The live maze, or the next one on the shared calendar. */
+export async function getActiveMazeEvent(
+  supabase: SupabaseClient,
+): Promise<MazeEvent | null> {
+  const cutoff = new Date(Date.now() - 6 * 3600_000).toISOString()
+  const { data, error } = await supabase
+    .from('maze_events')
+    .select('*')
+    .gte('event_end', cutoff)
+    .neq('status', 'cancelled')
+    .order('event_start', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  throwIfError(error, 'Could not load the maze event')
+  return (data as MazeEvent | null) ?? null
+}
+
+/** Upcoming maze events, soonest first (the platform calendar). */
+export async function listMazeEvents(
+  supabase: SupabaseClient,
+  limit = 12,
+): Promise<MazeEvent[]> {
+  const cutoff = new Date(Date.now() - 6 * 3600_000).toISOString()
+  const { data, error } = await supabase
+    .from('maze_events')
+    .select('*')
+    .gte('event_end', cutoff)
+    .neq('status', 'cancelled')
+    .order('event_start', { ascending: true })
+    .limit(limit)
+
+  throwIfError(error, 'Could not load the maze calendar')
+  return (data as MazeEvent[] | null) ?? []
+}
+
+/** Add a predicted maze to the shared calendar (platform owner only in the UI). */
+export async function addMazeEvent(
+  supabase: SupabaseClient,
+  values: { event_start: string; event_end: string },
+): Promise<void> {
+  const { error } = await supabase.from('maze_events').upsert(
+    {
+      event_start: values.event_start,
+      event_end: values.event_end,
+      maze_type: '7d',
+      status: 'scheduled',
+      source: 'calendar',
+    },
+    { onConflict: 'event_start' },
+  )
+  throwIfError(error, 'Could not add the maze event')
+}
+
+export async function cancelMazeEvent(supabase: SupabaseClient, id: Id): Promise<void> {
+  const { error } = await supabase
+    .from('maze_events')
+    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+    .eq('id', id)
+  throwIfError(error, 'Could not remove the maze event')
+}
+
+/**
+ * Confirm (or correct) the shared maze from the in-game countdown. Any server's
+ * staff does this from the dashboard; the bot re-arms every server afterwards.
+ */
+export async function confirmMazeEvent(
+  supabase: SupabaseClient,
+  guildId: string,
+  discordId: string | null,
+  values: { event_start: string; event_end: string; existing: MazeEvent | null },
+): Promise<void> {
+  const payload = {
+    event_start: values.event_start,
+    event_end: values.event_end,
+    status: 'confirmed',
+    source: 'report',
+    confirmed_by_guild: guildId,
+    confirmed_by_user: discordId,
+    updated_at: new Date().toISOString(),
+  }
+  if (values.existing) {
+    const { error } = await supabase
+      .from('maze_events')
+      .update(payload)
+      .eq('id', values.existing.id)
+    throwIfError(error, 'Could not confirm the maze')
+    return
+  }
+  const { error } = await supabase.from('maze_events').insert({ ...payload, maze_type: '7d' })
+  throwIfError(error, 'Could not confirm the maze')
+}
+
+/** The per-server alert subscription (channel, mention mode, on/off). */
 export async function getMazeSchedule(
   supabase: SupabaseClient,
   guildId: string,
@@ -162,7 +257,7 @@ export async function getMazeSchedule(
     .limit(1)
     .maybeSingle()
 
-  throwIfError(error, 'Could not load the maze schedule')
+  throwIfError(error, 'Could not load the maze alerts')
   return (data as MazeSchedule | null) ?? null
 }
 
@@ -170,9 +265,6 @@ export async function saveMazeSchedule(
   supabase: SupabaseClient,
   guildId: string,
   values: {
-    event_start: string
-    event_end: string
-    maze_type: '7d' | '3d'
     channel_id: string | null
     ping_enabled_global: boolean
     ping_mention: MazePingMention
@@ -182,9 +274,6 @@ export async function saveMazeSchedule(
   const { error } = await supabase.from('maze_schedules').upsert(
     {
       guild_id: guildId,
-      event_start: values.event_start,
-      event_end: values.event_end,
-      maze_type: values.maze_type,
       channel_id: values.channel_id,
       ping_enabled_global: values.ping_enabled_global,
       ping_mention: values.ping_mention,
@@ -193,7 +282,7 @@ export async function saveMazeSchedule(
     },
     { onConflict: 'guild_id' },
   )
-  throwIfError(error, 'Could not save the maze schedule')
+  throwIfError(error, 'Could not save the maze alerts')
 }
 
 export async function deleteMazeSchedule(
@@ -201,7 +290,7 @@ export async function deleteMazeSchedule(
   guildId: string,
 ): Promise<void> {
   const { error } = await supabase.from('maze_schedules').delete().eq('guild_id', guildId)
-  throwIfError(error, 'Could not delete the maze schedule')
+  throwIfError(error, 'Could not turn maze alerts off')
 }
 
 /* ---------------------------------------------------------------- aliases */
@@ -862,6 +951,7 @@ export interface GuildSummary {
   war: War | null
   race: RaceState | null
   maze: MazeSchedule | null
+  mazeEvent: MazeEvent | null
   aliasCount: number
   warningCount: number
 }
@@ -880,10 +970,11 @@ export async function getGuildSummary(
     ? getRaceState(supabase, channelId)
     : supabase.from('race_state').select('*').eq('guild_id', guildId).limit(1).maybeSingle().then(res => res.data as RaceState);
 
-  const [war, race, maze, aliases, warnings] = await Promise.allSettled([
+  const [war, race, maze, mazeEvent, aliases, warnings] = await Promise.allSettled([
     warPromise,
     racePromise,
     getMazeSchedule(supabase, guildId),
+    getActiveMazeEvent(supabase),
     supabase.from('aliases').select('id', { count: 'exact', head: true }).eq('guild_id', guildId),
     supabase.from('warnings').select('id', { count: 'exact', head: true }).eq('guild_id', guildId),
   ])
@@ -892,6 +983,7 @@ export async function getGuildSummary(
     war: war.status === 'fulfilled' ? war.value : null,
     race: race.status === 'fulfilled' ? race.value : null,
     maze: maze.status === 'fulfilled' ? maze.value : null,
+    mazeEvent: mazeEvent.status === 'fulfilled' ? mazeEvent.value : null,
     aliasCount: aliases.status === 'fulfilled' ? aliases.value.count ?? 0 : 0,
     warningCount: warnings.status === 'fulfilled' ? warnings.value.count ?? 0 : 0,
   }

@@ -122,15 +122,38 @@ CREATE TABLE race_logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 9. MAZE SCHEDULES TABLE (one event per server)
+-- 9. MAZE EVENTS TABLE (the shared maze: one row per event, not per server)
+-- The in-game monthly calendar predicts it, the first staff member who sees the
+-- maze countdown confirms or corrects it, and every server's discount pings are
+-- derived from this one row.  event_start/event_end are the maze open/close
+-- times; the discount windows are fixed offsets from event_start.
+CREATE TABLE maze_events (
+    id BIGSERIAL PRIMARY KEY,
+    event_start TIMESTAMP WITH TIME ZONE NOT NULL,
+    event_end TIMESTAMP WITH TIME ZONE NOT NULL,
+    maze_type TEXT NOT NULL DEFAULT '7d',
+    status TEXT NOT NULL DEFAULT 'scheduled', -- 'scheduled' (predicted) | 'confirmed' | 'cancelled'
+    source TEXT NOT NULL DEFAULT 'calendar', -- 'calendar' | 'report'
+    confirmed_by_guild BIGINT, -- server whose staff reported the in-game countdown
+    confirmed_by_user BIGINT, -- staff member who reported it
+    note TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE UNIQUE INDEX maze_events_start_key ON maze_events (event_start);
+
+-- 9b. MAZE SCHEDULES TABLE (per-server subscription to the shared maze)
+-- One row per server that wants maze alerts.  event_start/event_end/maze_type
+-- and discount_schedule are legacy columns from the per-server schedule model;
+-- the bot and dashboard read the shared maze_events row instead.
 CREATE TABLE maze_schedules (
     id BIGSERIAL PRIMARY KEY,
     guild_id BIGINT UNIQUE REFERENCES guilds(guild_id) ON DELETE CASCADE,
-    event_start TIMESTAMP WITH TIME ZONE,
-    event_end TIMESTAMP WITH TIME ZONE,
-    maze_type TEXT DEFAULT '7d', -- '7d' or '3d'
+    event_start TIMESTAMP WITH TIME ZONE, -- legacy, unused
+    event_end TIMESTAMP WITH TIME ZONE, -- legacy, unused
+    maze_type TEXT DEFAULT '7d', -- legacy, unused
     channel_id BIGINT, -- channel the discount pings are sent to
-    discount_schedule JSONB, -- optional [[hours, minutes, "pct"], ...]; SCHEDULE_7D/3D are the defaults
+    discount_schedule JSONB, -- legacy, unused
     ping_enabled_global BOOLEAN DEFAULT TRUE,
     ping_mention TEXT DEFAULT 'here', -- 'here', 'everyone', 'role', 'none'
     ping_role_id BIGINT, -- role pinged when ping_mention = 'role'
@@ -164,6 +187,26 @@ ALTER TABLE wars ADD COLUMN IF NOT EXISTS team_role_id BIGINT;
 ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS ping_mention TEXT DEFAULT 'here';
 ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS ping_role_id BIGINT;
 ALTER TABLE maze_schedules ADD COLUMN IF NOT EXISTS sent_pings JSONB DEFAULT '[]'::jsonb;
+
+-- MIGRATION 2026-11 (maze): one shared maze event for every server.
+-- Before this, each server stored its own maze schedule and had to run
+-- `!maze start` itself.  Now the shared row is the truth and maze_schedules is
+-- only the per-server alert subscription, so the two legacy time columns above
+-- are no longer read (kept so an older bot build can still start).
+CREATE TABLE IF NOT EXISTS maze_events (
+    id BIGSERIAL PRIMARY KEY,
+    event_start TIMESTAMP WITH TIME ZONE NOT NULL,
+    event_end TIMESTAMP WITH TIME ZONE NOT NULL,
+    maze_type TEXT NOT NULL DEFAULT '7d',
+    status TEXT NOT NULL DEFAULT 'scheduled',
+    source TEXT NOT NULL DEFAULT 'calendar',
+    confirmed_by_guild BIGINT,
+    confirmed_by_user BIGINT,
+    note TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS maze_events_start_key ON maze_events (event_start);
 ALTER TABLE player_ping_settings ADD COLUMN IF NOT EXISTS maze_alert_mode TEXT DEFAULT 'here';
 ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS channel_id BIGINT;
 ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS lap INTEGER;
@@ -318,6 +361,11 @@ CREATE POLICY race_logs_authenticated ON race_logs
 ALTER TABLE maze_schedules ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS maze_schedules_authenticated ON maze_schedules;
 CREATE POLICY maze_schedules_authenticated ON maze_schedules
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE maze_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS maze_events_authenticated ON maze_events;
+CREATE POLICY maze_events_authenticated ON maze_events
     FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 ALTER TABLE player_ping_settings ENABLE ROW LEVEL SECURITY;

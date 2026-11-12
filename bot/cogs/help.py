@@ -104,8 +104,11 @@ def build_topic(topic, is_staff):
             "`!maze alerts here|dm|off` — channel @here (default), DM, or off"), inline=False)
         if is_staff:
             e.add_field(name="Staff", value=(
-                "`!maze start <3d|7d> <time>` — time left (`6d12h`) or start date (`05/11`)\n"
-                "`!maze stop`\n`!maze set ping here|everyone|role @role|none`\n"
+                "`!maze start 7d 6d21h47m` — paste the in-game countdown; corrects the shared "
+                "schedule for every server\n"
+                "`!maze start 7d 05/11` — set the start date instead\n"
+                "`!maze stop` — turn this server's alerts off\n"
+                "`!maze set ping here|everyone|role @role|none`\n"
                 "`!maze ping 20%` — manual discount ping"), inline=False)
         return e
     if topic in ("alias", "aliases"):

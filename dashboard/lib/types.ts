@@ -72,6 +72,25 @@ export interface RaceState {
 /** Who the automatic maze discount pings mention (`maze_schedules.ping_mention`). */
 export type MazePingMention = 'here' | 'everyone' | 'role' | 'none'
 
+/**
+ * One real maze event, shared by every server: the in-game calendar predicts it
+ * (`scheduled`) and the first staff member who sees the in-game countdown confirms
+ * or corrects it (`confirmed`). Discount times are offsets from `event_start`.
+ */
+export interface MazeEvent {
+  id: Id
+  event_start: string
+  event_end: string
+  maze_type: string
+  status: 'scheduled' | 'confirmed' | 'cancelled' | string
+  source: 'calendar' | 'report' | string
+  confirmed_by_guild: Id | null
+  confirmed_by_user: Id | null
+  note: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
 export interface MazeSchedule {
   id: Id
   guild_id: Id

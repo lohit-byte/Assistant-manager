@@ -1,4 +1,4 @@
-import type { MazeDiscount } from './constants'
+import { MAZE_WINDOWS } from './constants'
 import type { War } from './types'
 
 export function cn(...parts: Array<string | false | null | undefined>): string {
@@ -140,30 +140,40 @@ export function warPhaseLabel(phase: WarWindow['phase']): string {
   }
 }
 
-export interface DiscountMoment {
+export interface MazeMoment {
   percent: string
-  at: Date
+  start: Date
+  end: Date
+  /** True while the discount is live. */
+  active: boolean
+  /** True once the window has closed. */
   past: boolean
 }
 
-/** Mirrors the countdown offsets used in bot/cogs/maze.py. */
-export function discountMoments(
-  end: Date | null,
-  type: '7d' | '3d',
-  schedule: MazeDiscount[],
-  now = new Date(),
-): DiscountMoment[] {
-  if (!end) return []
-  return schedule
-    .map((item) => {
-      const at = new Date(end.getTime() - (item.hours * 60 + item.minutes) * 60_000)
-      return { percent: item.percent, at, past: at.getTime() <= now.getTime() }
-    })
-    .sort((a, b) => a.at.getTime() - b.at.getTime())
+/** The six discount windows of the maze that starts at `eventStart`, in local time. */
+export function mazeMoments(eventStart: Date | null, now = new Date()): MazeMoment[] {
+  if (!eventStart) return []
+  return MAZE_WINDOWS.map((window) => {
+    const start = new Date(eventStart.getTime() + window.start * 3600_000)
+    const end = new Date(eventStart.getTime() + window.end * 3600_000)
+    return {
+      percent: window.percent,
+      start,
+      end,
+      active: start.getTime() <= now.getTime() && now.getTime() < end.getTime(),
+      past: end.getTime() <= now.getTime(),
+    }
+  })
 }
 
-export function nextDiscount(moments: DiscountMoment[]): DiscountMoment | null {
-  return moments.find((moment) => !moment.past) ?? null
+/** The discount that is live right now, if any (there are gaps between windows). */
+export function currentMazeMoment(moments: MazeMoment[]): MazeMoment | null {
+  return moments.find((moment) => moment.active) ?? null
+}
+
+/** The next window that has not started yet. */
+export function nextMazeMoment(moments: MazeMoment[]): MazeMoment | null {
+  return moments.find((moment) => !moment.past && !moment.active) ?? null
 }
 
 export function pluralize(count: number, singular: string, plural = `${singular}s`): string {

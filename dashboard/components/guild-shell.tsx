@@ -91,7 +91,7 @@ const NAV_GROUPS = [
     items: [
       { name: 'War', segment: '/war', icon: Swords, hint: 'War clock, missing attacks, warnings and rating' },
       { name: 'Race', segment: '/race', icon: Trophy, hint: 'Race nodes, targets and node sheets' },
-      { name: 'Maze', segment: '/maze', icon: Map, hint: 'Maze schedule and automatic discount pings' },
+      { name: 'Maze', segment: '/maze', icon: Map, hint: 'Shared maze event, discount timeline and alerts' },
     ],
   },
   {

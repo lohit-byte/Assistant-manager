@@ -36,13 +36,14 @@ import {
 import { getGuildSummary, type GuildSummary } from '@/lib/data'
 import { buildSetupSummary } from '@/lib/setup'
 import { createClient } from '@/lib/supabase/client'
-import { MAZE_SCHEDULES, NODES_PER_LAP, PLAN_META, TRIAL_DAYS } from '@/lib/constants'
+import { NODES_PER_LAP, PLAN_META, TRIAL_DAYS } from '@/lib/constants'
 import {
-  discountMoments,
+  currentMazeMoment,
   formatDateTime,
   formatRelative,
   getWarWindow,
-  nextDiscount,
+  mazeMoments,
+  nextMazeMoment,
   toDate,
 } from '@/lib/format'
 import { useNow } from '@/lib/hooks'
@@ -96,17 +97,13 @@ export default function OverviewPage() {
   const dypTarget = race?.dyp_target ?? 0
 
   const maze = summary?.maze
-  const mazeType = (maze?.maze_type === '3d' ? '3d' : '7d') as '7d' | '3d'
-  const mazeEnd = toDate(maze?.event_end)
-  const moments = useMemo(
-    () => discountMoments(mazeEnd, mazeType, MAZE_SCHEDULES[mazeType], now),
-    [mazeEnd, mazeType, now],
-  )
-  const upcoming = nextDiscount(moments)
-  const upcomingChunks = useMemo(
-    () => moments.filter((moment) => !moment.past).slice(0, 3),
-    [moments],
-  )
+  const mazeEvent = summary?.mazeEvent
+  const mazeStart = toDate(mazeEvent?.event_start)
+  const mazeEnd = toDate(mazeEvent?.event_end)
+  const moments = useMemo(() => mazeMoments(mazeStart, now), [mazeStart, now])
+  const liveMoment = currentMazeMoment(moments)
+  const upcoming = nextMazeMoment(moments)
+  const upcomingChunks = useMemo(() => moments.filter((moment) => !moment.past), [moments])
 
   // Server setup checklist. Goal-gradient framing: the bot is already in this server (otherwise
   // the dashboard could not load it), so setup is never a 0% state. Everything is edited on the
@@ -212,16 +209,22 @@ export default function OverviewPage() {
         />
         <Stat
           label="Next maze discount"
-          value={upcoming ? upcoming.percent : '—'}
-          hint={upcoming ? formatRelative(upcoming.at, now) : 'No schedule'}
+          value={liveMoment ? `${liveMoment.percent} live` : upcoming ? upcoming.percent : '—'}
+          hint={
+            liveMoment
+              ? `Ends ${formatRelative(liveMoment.end, now)}`
+              : upcoming
+                ? formatRelative(upcoming.start, now)
+                : 'No schedule'
+          }
           icon={<Map className="h-4 w-4" />}
           tone="purple"
           footer={
             upcomingChunks.length > 1 ? (
               <div className="flex items-center gap-1.5">
-                {upcomingChunks.map((moment) => (
+                {upcomingChunks.slice(0, 3).map((moment) => (
                   <span
-                    key={moment.at.toISOString()}
+                    key={moment.start.toISOString()}
                     className="rounded-md border border-accent-400/20 bg-accent-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-accent-300"
                   >
                     {moment.percent}
@@ -340,21 +343,25 @@ export default function OverviewPage() {
               }
             />
             <CardBody>
-              {maze && mazeEnd ? (
+              {mazeEvent && mazeEnd ? (
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone="purple">{mazeType === '3d' ? '3-day' : '7-day'} maze</Badge>
-                    <Badge tone={maze.ping_enabled_global ? 'green' : 'slate'}>
-                      Pings {maze.ping_enabled_global ? 'on' : 'off'}
+                    <Badge tone={mazeEvent.status === 'confirmed' ? 'green' : 'amber'}>
+                      {mazeEvent.status === 'confirmed' ? 'Confirmed' : 'Predicted'}
+                    </Badge>
+                    <Badge tone={maze && maze.ping_enabled_global ? 'green' : 'slate'}>
+                      Pings {maze && maze.ping_enabled_global ? 'on' : 'off'}
                     </Badge>
                     <span className="text-xs text-slate-500">Ends {formatDateTime(mazeEnd)}</span>
                   </div>
                   <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                     {moments.map((moment) => {
-                      const isNext = upcoming?.at.getTime() === moment.at.getTime()
+                      const isNext =
+                        liveMoment?.start.getTime() === moment.start.getTime() ||
+                        upcoming?.start.getTime() === moment.start.getTime()
                       return (
                         <div
-                          key={`${moment.percent}-${moment.at.toISOString()}`}
+                          key={`${moment.percent}-${moment.start.toISOString()}`}
                           className={`rounded-xl border px-3 py-2.5 ${
                             isNext
                               ? 'border-accent-400/30 bg-accent-500/10'
@@ -375,7 +382,7 @@ export default function OverviewPage() {
                             {moment.percent}
                           </p>
                           <p className="mt-0.5 truncate text-[11px] text-slate-500">
-                            {moment.past ? 'Passed' : formatDateTime(moment.at)}
+                            {moment.past ? 'Passed' : formatDateTime(moment.start)}
                           </p>
                         </div>
                       )
@@ -385,8 +392,8 @@ export default function OverviewPage() {
               ) : (
                 <EmptyState
                   icon={<Map className="h-7 w-7" />}
-                  title="No maze event scheduled"
-                  description="Schedule the next maze in Discord with !maze start 7d <time>, or add it here."
+                  title="No maze on the shared calendar"
+                  description="Add the maze week from the in-game calendar, or paste the countdown once the maze appears."
                   action={
                     <Link
                       href={`/dashboard/${guildId}/maze`}

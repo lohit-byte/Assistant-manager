@@ -23,35 +23,34 @@ export const RACE_ACTIVITY_TARGET = 10
 export const PERMISSION_ADMINISTRATOR = BigInt(0x8)
 export const PERMISSION_MANAGE_GUILD = BigInt(0x20)
 
-export interface MazeDiscount {
-  hours: number
-  minutes: number
+/**
+ * Maze Island discount windows. Each entry is (start, end, percent) in hours after the maze
+ * start, so the times move with the maze instead of being fixed clock times.
+ *
+ * Derived from the 5-12 Nov 2026 maze (every in-game banner countdown agrees to ~30 s):
+ * 50 % for 5 h, 20 % for 8 h, then 10 % for the first 12 h of each of the three limited-time
+ * paths (+24 h, +72 h, +120 h), then 20 % again for the last 4 h. There is no discount at all
+ * in between, and 30 % never appears. Mirrors bot/maze_timing.py - change both together.
+ */
+export interface MazeWindow {
+  start: number
+  end: number
   percent: string
 }
 
-export const MAZE_SCHEDULES: Record<'7d' | '3d', MazeDiscount[]> = {
-  '7d': [
-    { hours: 6 * 24 + 22, minutes: 0, percent: '20%' },
-    { hours: 5 * 24 + 19, minutes: 0, percent: '10%' },
-    { hours: 5 * 24 + 0, minutes: 0, percent: '30%' },
-    { hours: 4 * 24 + 17, minutes: 0, percent: '10%' },
-    { hours: 4 * 24 + 1, minutes: 0, percent: '10%' },
-    { hours: 3 * 24 + 6, minutes: 0, percent: '10%' },
-    { hours: 1 * 24 + 9, minutes: 0, percent: '10%' },
-    { hours: 0 * 24 + 1, minutes: 0, percent: '20%' },
-  ],
-  '3d': [
-    { hours: 2 * 24 + 23, minutes: 0, percent: '30%' },
-    { hours: 1 * 24 + 23, minutes: 0, percent: '20%' },
-    { hours: 1 * 24 + 11, minutes: 0, percent: '10%' },
-    { hours: 0 * 24 + 11, minutes: 0, percent: '10%' },
-  ],
-}
+export const MAZE_DURATION_DAYS = 7
 
-export const MAZE_TYPE_META: Record<'7d' | '3d', { label: string; days: number }> = {
-  '7d': { label: '7-day maze', days: 7 },
-  '3d': { label: '3-day maze', days: 3 },
-}
+export const MAZE_WINDOWS: MazeWindow[] = [
+  { start: 0, end: 5, percent: '50%' },
+  { start: 5, end: 13, percent: '20%' },
+  { start: 24, end: 36, percent: '10%' },
+  { start: 72, end: 84, percent: '10%' },
+  { start: 120, end: 132, percent: '10%' },
+  { start: 164, end: 168, percent: '20%' },
+]
+
+/** Discord ids of the platform owner: only they may edit the shared maze calendar. */
+export const PLATFORM_ADMIN_IDS = ['704623764008075284']
 
 export const PLAN_META: Record<
   string,
