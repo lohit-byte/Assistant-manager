@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server'
 import { Cashfree } from 'cashfree-pg'
 import { PRICING_PLANS } from '@/lib/pricing'
-
-const PLAN_CODES: Record<string, string> = { starter_monthly: 's', pro_monthly: 'p', elite_yearly: 'e' }
+import { CASHFREE_PLAN_CODE } from '@/lib/plans'
 
 export async function POST(request: Request) {
   try {
@@ -26,7 +25,7 @@ export async function POST(request: Request) {
     }
     
     const cur = currency === 'USD' ? 'USD' : 'INR'
-    const orderId = `g${guildId}_${PLAN_CODES[plan.id]}_${Date.now().toString(36)}`
+    const orderId = `g${guildId}_${CASHFREE_PLAN_CODE[plan.id]}_${Date.now().toString(36)}`
     const origin = new URL(request.url).origin
 
     const response = await Cashfree.PGCreateOrder('2023-08-01', {

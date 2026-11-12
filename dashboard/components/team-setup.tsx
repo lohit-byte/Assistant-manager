@@ -24,7 +24,7 @@ import {
   type TeamValues,
 } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
-import { effectiveTeamLimit, planLabel, teamLimitLabel } from '@/lib/plans'
+import { effectiveTeamLimit, isPremiumActive, planLabel, teamLimitLabel } from '@/lib/plans'
 import { isSnowflake } from '@/lib/format'
 import {
   GUILD_SETUP_LABELS,
@@ -143,7 +143,7 @@ export function TeamSetup({
 
   const maxTeams = effectiveTeamLimit(guild)
   const maxTeamsLabel = teamLimitLabel(maxTeams)
-  const planText = guild.premium_status === 'trial' ? 'Free trial' : planLabel(guild)
+  const planText = guild.premium_status === 'trial' ? 'Free trial' : isPremiumActive(guild) ? planLabel(guild) : 'Expired'
   const atTeamLimit = teams.length >= maxTeams
   const detectedCount = detectedWarChannels.length + detectedRaceChannels.length
 

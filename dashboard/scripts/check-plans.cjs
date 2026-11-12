@@ -82,6 +82,8 @@ const {
   teamLimitLabel,
   planFromPaddleItems,
   buildSubscriptionUpsert,
+  planFromCashfreeCode,
+  CASHFREE_PLAN_CODE,
 } = compile()
 
 const { PRICING_PLANS } = require(path.join(TMP_DIR, 'pricing.js'))
@@ -203,6 +205,16 @@ check('Paddle plan comes from the paid price, customData only as fallback', () =
   if (planFromPaddleItems([{ price: { id: 'unknown' } }], null) !== null) {
     problems.push('unknown price should be null without customData')
   }
+  return problems
+})
+
+check('Cashfree short codes resolve to the same three plans', () => {
+  const problems = []
+  if (planFromCashfreeCode('s') !== 'starter_monthly') problems.push('s did not map to starter')
+  if (planFromCashfreeCode('p') !== 'pro_monthly') problems.push('p did not map to pro')
+  if (planFromCashfreeCode('e') !== 'elite_yearly') problems.push('e did not map to elite')
+  if (planFromCashfreeCode('x') !== null) problems.push('unknown code should be null')
+  if (CASHFREE_PLAN_CODE.elite_yearly !== 'e') problems.push('the create-order map is not shared')
   return problems
 })
 

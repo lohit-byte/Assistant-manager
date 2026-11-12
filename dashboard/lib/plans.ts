@@ -89,6 +89,18 @@ export function effectiveTeamLimit(guild: GuildAccessFields, now: Date = new Dat
   return cap !== null && cap !== undefined && cap > 0 ? cap : 1
 }
 
+/** Cashfree order ids carry a short plan code (s/p/e); keep the map in one place. */
+export const CASHFREE_PLAN_CODE: Record<PlanId, string> = {
+  starter_monthly: 's',
+  pro_monthly: 'p',
+  elite_yearly: 'e',
+}
+
+export function planFromCashfreeCode(code: string | null | undefined): PlanId | null {
+  const match = Object.entries(CASHFREE_PLAN_CODE).find(([, short]) => short === code)
+  return match ? (match[0] as PlanId) : null
+}
+
 export function planLabel(guild: GuildPlanFields): string {
   const plan = planForGuild(guild)
   if (!plan) return 'Premium'

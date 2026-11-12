@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import crypto from 'crypto'
-import { buildSubscriptionUpsert, planById } from '@/lib/plans'
+import { buildSubscriptionUpsert, planFromCashfreeCode } from '@/lib/plans'
 import { upsertGuildSubscription } from '@/lib/subscription'
 
 const supabaseAdmin = createClient(
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
     const orderId = String(order.order_id || '')
     const [guildPart, planCode] = orderId.split('_')
     const guildId = guildPart?.replace('g', '')
-    const planId = planById(planCode)
+    const planId = planFromCashfreeCode(planCode)
 
     if (!guildId || !/^\d+$/.test(guildId) || !planId) {
       console.warn('Cashfree webhook: unrecognised order id', orderId)
