@@ -563,16 +563,31 @@ export default function MazePage() {
               icon={<Check className="h-5 w-5" />}
             />
             <CardBody className="space-y-5">
-              <div className="flex flex-wrap items-start justify-center gap-3 sm:justify-start">
-                <Wheel values={DAYS_LEFT} value={leftDays} onChange={setLeftDays} label="days" />
-                <Wheel values={HOURS} value={leftHours} onChange={setLeftHours} label="hours" />
-                <Wheel
-                  values={MINUTES}
-                  value={leftMinutes}
-                  onChange={setLeftMinutes}
-                  label="minutes"
-                />
-                <div className="min-w-[180px] flex-1 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-sm">
+              <div className="space-y-4">
+                <div className="mx-auto flex w-full max-w-sm items-start justify-center gap-2 sm:max-w-none sm:gap-8">
+                  <Wheel
+                    values={DAYS_LEFT}
+                    value={leftDays}
+                    onChange={setLeftDays}
+                    label="Days"
+                    unit="d"
+                  />
+                  <Wheel
+                    values={HOURS}
+                    value={leftHours}
+                    onChange={setLeftHours}
+                    label="Hours"
+                    unit="h"
+                  />
+                  <Wheel
+                    values={MINUTES}
+                    value={leftMinutes}
+                    onChange={setLeftMinutes}
+                    label="Minutes"
+                    unit="m"
+                  />
+                </div>
+                <div className="mx-auto w-full max-w-sm rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-center text-sm">
                   <p className="font-semibold text-slate-200">
                     {leftDays}d {leftHours}h {leftMinutes}m left
                   </p>
@@ -654,22 +669,30 @@ export default function MazePage() {
                     {String(aheadHour).padStart(2, '0')}:{String(aheadMinute).padStart(2, '0')} —
                     your local time.
                   </p>
-                  <div className="mt-3 flex flex-wrap items-start gap-3">
+                  <div className="mx-auto mt-4 flex w-full max-w-sm items-start justify-center gap-2 sm:max-w-none sm:gap-8">
                     <Wheel
                       values={DAYS_AHEAD}
                       value={aheadDays}
                       onChange={setAheadDays}
-                      label="days from today"
+                      label="Days from today"
+                      unit="d"
                     />
-                    <Wheel values={HOURS} value={aheadHour} onChange={setAheadHour} label="hour" />
+                    <Wheel
+                      values={HOURS}
+                      value={aheadHour}
+                      onChange={setAheadHour}
+                      label="Hours"
+                      unit="h"
+                    />
                     <Wheel
                       values={MINUTES}
                       value={aheadMinute}
                       onChange={setAheadMinute}
-                      label="minute"
+                      label="Minutes"
+                      unit="m"
                     />
                   </div>
-                  <p className="mt-3 text-xs text-slate-500">
+                  <p className="mt-3 text-center text-xs text-slate-500">
                     {formatDateTime(calendarStart)} → {formatDateTime(calendarEnd)}
                   </p>
                   <Button
