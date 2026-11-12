@@ -255,6 +255,7 @@ class FakeMessage:
         self.embed = embed
         self.replies = []
         self.edited = []
+        self.reactions = []
 
     async def edit(self, content=None, embed=None, **kwargs):
         if content is not None:
@@ -271,6 +272,7 @@ class FakeMessage:
         return FakeMessage(content=content, guild=self.guild, channel=self.channel)
 
     async def add_reaction(self, emoji):
+        self.reactions.append(str(emoji))
         return None
 
 

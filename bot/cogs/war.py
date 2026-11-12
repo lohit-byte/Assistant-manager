@@ -15,12 +15,36 @@ from database import (
     get_team_by_channel,
     get_team_players,
     get_team_role_id,
+    get_team_roster,
 )
 
 DEFENCE = ("defence", "defense")
 PHASE = timedelta(hours=24)
 WAR = timedelta(hours=48)
-DONE_RE = re.compile(r"\b(?:(\d+)\s+)?attacks?\s+done(?:\s+(\d+))?\b", re.I)
+# A report counts only when it is the whole plain message. Anything longer is chat: the
+# bot asks for a clean message instead of logging an attack nobody can verify.
+DONE_PLAIN_RE = re.compile(
+    r"(?:(\d+)\s+)?attacks?\s+done(?:\s*(\d+)(?:\s*/\s*(\d+))?)?", re.I)
+DONE_ANY_RE = re.compile(r"\b(?:(\d+)\s+)?attacks?\s+done\b", re.I)
+# Trailing punctuation and a reaction emoji still feel like a plain message to a player.
+DONE_DECORATION = " \t\r\n.!?,;:~✅✔👍💪🔥🎯🚀❤\ufe0f"
+
+
+def parse_done_report(content):
+    """``(is_plain, count)`` for a message that might report attacks.
+
+    Plain means the report is the whole message: ``attacks done``, ``attacks done
+    5``, ``attacks done 4/6`` or ``4 attacks done`` (with trailing punctuation or a
+    reaction emoji allowed). ``count`` is None for a bare ``attacks done`` so the
+    caller can use the required number, and a hand-typed 0 is treated as the bare
+    form too.
+    """
+    text = (content or "").strip().strip(DONE_DECORATION).strip()
+    match = DONE_PLAIN_RE.fullmatch(text)
+    if not match:
+        return False, None
+    count = int(match.group(1) or match.group(2) or 0)
+    return True, (count if count > 0 else None)
 
 # Channel reminders for the fixed 48h war timeline, expressed as seconds before
 # the war ends (offset, key, human label). "attack_started" is sent by the phase
@@ -443,6 +467,53 @@ class WarTracker(commands.Cog):
 
         await ctx.send("❌ Unknown war action. Use `!war help`.")
 
+    async def _seed_missing(self, guild_id, channel_id):
+        """Start everyone on the team roster as missing: reporting is compulsory.
+
+        The bot cannot see in-game attacks, so each rostered player with an alias
+        starts on the missing list and clears themselves by sending
+        ``attacks done``. Returns ``(entries, skipped)`` where ``skipped`` counts
+        rostered players who have no alias yet (they cannot report, so staff add
+        them by hand).
+        """
+        team = await asyncio.to_thread(get_team_by_channel, guild_id, channel_id)
+        if not team:
+            return [], 0, None
+        roster = await asyncio.to_thread(get_team_roster, guild_id, team)
+        entries, seen, skipped = [], set(), 0
+        for row in roster or []:
+            discord_id = row.get("discord_id")
+            if discord_id is None or int(discord_id) in seen:
+                continue
+            seen.add(int(discord_id))
+            aliases = row.get("aliases") or []
+            if not aliases:
+                skipped += 1
+                continue
+            entries.append({"name": aliases[0].lower(), "id": discord_id})
+        entries.sort(key=lambda entry: entry["name"])
+        return entries, skipped, team
+
+    @staticmethod
+    def _seed_missing_note(seeded, skipped, team):
+        """What the war-start embed says about the auto-filled missing list."""
+        if seeded:
+            note = (f"{len(seeded)} roster player(s) start missing — each clears "
+                    "by sending `attacks done`.")
+            if skipped:
+                note += f" {skipped} rostered player(s) skipped (no alias yet)."
+            return note
+        if skipped:
+            return (f"{skipped} rostered player(s) have no alias yet, so nothing was "
+                    "auto-added. Add aliases with `!alias add @user <alias>`.")
+        if team:
+            return (f"**{team.get('name')}** has no players on its roster yet — add them "
+                    f"with `!team add @user {team.get('name')}`, then add names with "
+                    "`!war missing add`.")
+        return ("Not auto-filled: link this channel to a team in **Server setup** and "
+                "add players with `!team add @user <team>`, or add names by hand with "
+                "`!war missing add`.")
+
     async def start_timer(self, ctx, phase, time_str):
         td = parse_time(time_str)
         if not td: return await ctx.send("❌ Invalid time. Use `20h` or `1h30m`.")
@@ -473,8 +544,12 @@ class WarTracker(commands.Cog):
                 "phase": current_phase,
                 "is_active": True,
             }
-            if not existing_war or not existing_war.get("is_active"):
-                war_data["missing_list"] = []
+            fresh_war = not existing_war or not existing_war.get("is_active")
+            seeded, skipped, team = [], 0, None
+            if fresh_war:
+                seeded, skipped, team = await self._seed_missing(ctx.guild.id, ctx.channel.id)
+            if fresh_war:
+                war_data["missing_list"] = seeded
                 war_data["absent_list"] = []
                 war_data["attack_counts"] = {}
                 war_data["status_message_id"] = None
@@ -518,6 +593,10 @@ class WarTracker(commands.Cog):
             embed.add_field(name=current_phase.title(), value=f"{fmt_td(phase_end - now)} left", inline=True)
             embed.add_field(name="Phase ends", value=f"<t:{int(phase_end.timestamp())}:R>", inline=True)
             embed.add_field(name="War ends", value=f"<t:{int(war_end.timestamp())}:R>", inline=True)
+            if fresh_war:
+                embed.add_field(name="Missing list",
+                                value=self._seed_missing_note(seeded, skipped, team),
+                                inline=False)
             embed.set_footer(text="Defence = 48h → 24h left · Attack = 24h → 0h left. Live board updates every minute.")
             await ctx.send(embed=embed)
             war = await get_war(ctx.channel.id)
@@ -1255,13 +1334,22 @@ class WarTracker(commands.Cog):
             rows, errors = await self._resolve_targets(ctx, args)
             if not rows and not errors:
                 return await ctx.send("❌ Provide an alias name or @mention an aliased member.")
+            cfg = await get_settings(ctx.guild.id, ctx.channel.id)
+            required = cfg["attacks_required"]
+            counts = {str(key).lower(): int(total or 0)
+                      for key, total in (war.get("attack_counts") or {}).items()}
             added, notes = [], list(errors)
             for row in rows:
                 name = (row.get("alias_name") or "").lower()
                 entry = {"name": name}
                 if row.get("discord_id") is not None:
                     entry["id"] = row["discord_id"]
-                if any(_entry_name(item) == name for item in absent):
+                if required and counts.get(name, 0) >= required:
+                    # Self-report is the source of truth: a player who already
+                    # reported is never put back on the missing list.
+                    notes.append(f"ℹ️ `{name}` already reported {counts[name]}/{required} "
+                                 "— not added to missing.")
+                elif any(_entry_name(item) == name for item in absent):
                     notes.append(f"🏖️ `{name}` is excused.")
                 elif any(_entry_name(item) == name for item in missing):
                     notes.append(f"ℹ️ `{name}` is already on the missing list.")
@@ -1525,70 +1613,124 @@ class WarTracker(commands.Cog):
         parts = (args or "").split(maxsplit=1)
         await self.warning_dispatch(ctx, subaction, parts[0] if parts else None, parts[1] if len(parts) > 1 else None)
 
+    async def _owes_attacks(self, message, war):
+        """True when this member still has attacks to report.
+
+        Only then is a plain "attacks done" worth asking for, so finished players
+        and ordinary chat are never nagged.
+        """
+        my_alias = await self._pick_alias(
+            message.guild.id, message.author.id, war.get("missing_list") or [],
+            war.get("attack_counts") or {})
+        if not my_alias:
+            return False
+        cfg = await get_settings(message.guild.id, message.channel.id)
+        required = cfg["attacks_required"]
+        total = int((war.get("attack_counts") or {}).get(my_alias.lower()) or 0)
+        return not required or total < required
+
+    async def _ask_for_plain_report(self, message):
+        """Tag the author and mark the message: only a plain report is recorded."""
+        try:
+            await message.add_reaction("❓")
+        except discord.HTTPException as e:
+            print(f"Could not mark an attack message in {message.channel.id}: {e}")
+        try:
+            await message.reply(
+                f"{message.author.mention} — I only record a plain "
+                "`attacks done` or `attacks done 4/6` message. Send that as the whole "
+                "message and I'll log it; nothing was recorded from this one.",
+                mention_author=False,
+            )
+        except discord.HTTPException as e:
+            print(f"Could not ask for a plain attack report in {message.channel.id}: {e}")
+
+    async def _record_text_report(self, message, war, reported):
+        """Apply one plain "attacks done" report; return what the reply needs.
+
+        Returns ``(alias, total, required, completed, was_missing)`` or None when
+        the author has no alias (the player is told how to get one).
+        """
+        cfg = await get_settings(message.guild.id, message.channel.id)
+        required = cfg["attacks_required"]
+
+        # Aliases are the single player identity: without one, nothing is logged.
+        my_alias = await self._pick_alias(
+            message.guild.id, message.author.id, war.get("missing_list") or [],
+            war.get("attack_counts") or {})
+        if not my_alias:
+            try:
+                await message.reply(
+                    "❌ You don't have an alias yet — ask staff to add you with "
+                    "`!alias add @user <alias>` so your attacks can be tracked.",
+                    mention_author=False,
+                )
+            except discord.HTTPException:
+                pass
+            return None
+
+        key = my_alias.lower()
+        was_missing = any(
+            _entry_name(entry) == key for entry in war.get("missing_list") or [])
+        done = reported or required
+        old_total = int((war.get("attack_counts") or {}).get(key) or 0)
+
+        # Absolute text count, capped at the requirement: pressing the button
+        # as well can never push the total over the cap.
+        counts, missing = apply_attack(war, my_alias, done - old_total, required)
+        total = int(counts.get(key) or 0)
+        # A downward text correction is not a new attack, but it drops the
+        # player below the requirement: put them back on the missing list
+        # (same as the !war attacks correction path).
+        excused = {_entry_name(a) for a in war.get("absent_list") or []}
+        if required and total < required and key not in excused and not any(
+                _entry_name(entry) == key for entry in missing):
+            missing = list(missing) + [{"name": my_alias, "id": message.author.id}]
+
+        await asyncio.to_thread(
+            supabase.table("wars").update({"missing_list": missing, "attack_counts": counts})
+            .eq("channel_id", message.channel.id).execute
+        )
+        # A lower text count is a correction, not a new attack: never log a
+        # negative delta from the text path (only the staff undo is negative).
+        log_delta = max(0, total - old_total)
+        if log_delta:
+            await _log_attack_safely(
+                message.guild.id, message.channel.id,
+                war.get("war_start"), message.author.id, my_alias,
+                log_delta, "self",
+            )
+        completed = required > 0 and total >= required
+        return my_alias, total, required, completed, was_missing
+
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not message.guild: return
-        if not DONE_RE.search(message.content): return
+        text = (message.content or "").strip()
+        if not DONE_ANY_RE.search(text): return
         # This path bypasses the command-level premium gate in main.py.
         if not await asyncio.to_thread(check_premium_status, message.guild.id):
             return
 
+        plain, reported = parse_done_report(text)
         async with self.locks[message.channel.id]:
             war = await get_war(message.channel.id)
             if not war or not war.get("is_active"): return
+            if not plain:
+                # A chat line that mentions the phrase is not a report: prompt
+                # only a member who still owes attacks, and record nothing.
+                nudge = await self._owes_attacks(message, war)
+                result = None
+            else:
+                nudge = False
+                result = await self._record_text_report(message, war, reported)
 
-            cfg = await get_settings(message.guild.id, message.channel.id)
-            required = cfg["attacks_required"]
+        if nudge:
+            return await self._ask_for_plain_report(message)
+        if result is None:
+            return
+        my_alias, total, required, completed, was_missing = result
 
-            # Aliases are the single player identity: without one, nothing is logged.
-            my_alias = await self._pick_alias(
-                message.guild.id, message.author.id, war.get("missing_list") or [],
-                war.get("attack_counts") or {})
-            if not my_alias:
-                try:
-                    await message.reply(
-                        "❌ You don't have an alias yet — ask staff to add you with "
-                        "`!alias add @user <alias>` so your attacks can be tracked.",
-                        mention_author=False,
-                    )
-                except discord.HTTPException:
-                    pass
-                return
-
-            key = my_alias.lower()
-            was_missing = any(
-                _entry_name(entry) == key for entry in war.get("missing_list") or [])
-            m = DONE_RE.search(message.content)
-            done = int(m.group(1) or m.group(2) or required)
-            old_total = int((war.get("attack_counts") or {}).get(key) or 0)
-
-            # Absolute text count, capped at the requirement: pressing the button
-            # as well can never push the total over the cap.
-            counts, missing = apply_attack(war, my_alias, done - old_total, required)
-            total = int(counts.get(key) or 0)
-            # A downward text correction is not a new attack, but it drops the
-            # player below the requirement: put them back on the missing list
-            # (same as the !war attacks correction path).
-            excused = {_entry_name(a) for a in war.get("absent_list") or []}
-            if required and total < required and key not in excused and not any(
-                    _entry_name(entry) == key for entry in missing):
-                missing = list(missing) + [{"name": my_alias, "id": message.author.id}]
-
-            await asyncio.to_thread(
-                supabase.table("wars").update({"missing_list": missing, "attack_counts": counts})
-                .eq("channel_id", message.channel.id).execute
-            )
-            # A lower text count is a correction, not a new attack: never log a
-            # negative delta from the text path (only the staff undo is negative).
-            log_delta = max(0, total - old_total)
-            if log_delta:
-                await _log_attack_safely(
-                    message.guild.id, message.channel.id,
-                    war.get("war_start"), message.author.id, my_alias,
-                    log_delta, "self",
-                )
-
-        completed = required > 0 and total >= required
         try:
             reply = await message.reply(
                 f"✅ **{my_alias}**: {total}/{required} attacks recorded."

@@ -249,6 +249,103 @@ def test_attacks_done_message_is_recorded(clean_db):
         db.one("wars", channel_id=CHANNEL)["missing_list"] = [{"name": "sam"}]
 
 
+def test_attacks_done_handlers_are_registered_discord_listeners(clean_db):
+    """Regression: calling the coroutine directly in tests bypasses discord's registration."""
+    assert getattr(WarTracker.on_message, "__cog_listener__", False)
+    assert getattr(WarTracker.on_raw_reaction_add, "__cog_listener__", False)
+
+
+def test_attacks_done_accepts_a_fraction_of_the_requirement(clean_db):
+    db = clean_db
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[{"name": "sam"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, display_name="Sam")
+    message = FakeMessage(content="attacks done 4/6", author=ctx.author,
+                          guild=ctx.guild, channel=ctx.channel)
+
+    run(war_cog().on_message(message))
+
+    row = db.one("wars", channel_id=CHANNEL)
+    assert row["attack_counts"]["sam"] == 4
+    # 4 of 6 is a partial report: the player still owes attacks, so they stay missing.
+    assert any(entry.get("name") == "sam" for entry in row["missing_list"])
+
+
+def test_attacks_done_fraction_at_the_target_clears_the_missing_entry(clean_db):
+    db = clean_db
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[{"name": "sam"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, display_name="Sam")
+    message = FakeMessage(content="attacks done 6/6", author=ctx.author,
+                          guild=ctx.guild, channel=ctx.channel)
+
+    run(war_cog().on_message(message))
+
+    row = db.one("wars", channel_id=CHANNEL)
+    assert row["attack_counts"]["sam"] == 6
+    assert row["missing_list"] == []
+
+
+def test_attacks_done_with_a_trailing_reaction_is_still_plain(clean_db):
+    db = clean_db
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[{"name": "sam"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, display_name="Sam")
+    message = FakeMessage(content="attacks done ✅", author=ctx.author,
+                          guild=ctx.guild, channel=ctx.channel)
+
+    run(war_cog().on_message(message))
+
+    assert db.one("wars", channel_id=CHANNEL)["attack_counts"]["sam"] == 6
+
+
+def test_long_message_mentioning_attacks_done_is_not_recorded(clean_db):
+    """A chat line is not a report: tag the player and ask for the plain message."""
+    db = clean_db
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[{"name": "sam"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, display_name="Sam")
+    message = FakeMessage(content="attacks done lol", author=ctx.author,
+                          guild=ctx.guild, channel=ctx.channel)
+
+    run(war_cog().on_message(message))
+
+    assert db.one("wars", channel_id=CHANNEL)["attack_counts"] == {}
+    assert db.rows("war_logs") == []
+    assert message.replies and "<@900>" in message.replies[0]
+    assert "attacks done" in message.replies[0]
+    assert message.reactions == ["❓"]
+
+
+def test_long_message_from_a_player_who_already_reported_is_left_alone(clean_db):
+    """Nothing is left to record, so the bot does not nag finished players."""
+    db = clean_db
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[], attack_counts={"sam": 6})
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, display_name="Sam")
+    message = FakeMessage(content="attacks done lol", author=ctx.author,
+                          guild=ctx.guild, channel=ctx.channel)
+
+    run(war_cog().on_message(message))
+
+    assert message.replies == []
+    assert message.reactions == []
+    assert db.rows("war_logs") == []
+
+
+def test_attacks_done_outside_an_active_war_is_ignored(clean_db):
+    db = clean_db
+    seed_alias(db, 900, "sam")
+    seed_war(db, is_active=False, missing_list=[{"name": "sam"}], attack_counts={})
+    ctx = make_ctx(channel_id=CHANNEL, author_id=900, display_name="Sam")
+    message = FakeMessage(content="attacks done 6/6", author=ctx.author,
+                          guild=ctx.guild, channel=ctx.channel)
+
+    run(war_cog().on_message(message))
+
+    assert db.one("wars", channel_id=CHANNEL)["attack_counts"] == {}
+
+
 def test_warning_add_creates_missing_user_row(clean_db):
     db = clean_db
     seed_alias(db, 200, "sam")
@@ -1220,6 +1317,112 @@ def seed_team_player(db, team_id, discord_id, alias=None):
 def seed_captain(db, team_id, discord_id):
     db.seed("users", {"discord_id": discord_id})
     db.seed("team_captains", {"team_id": team_id, "discord_id": discord_id})
+
+
+def start_war(cog, ctx, phase="attack", time_left="20h"):
+    """Start a war without leaving the live status updater running in the test loop."""
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    cog.status_updater = _noop
+    run(cog.start_timer(ctx, phase, time_left))
+    return cog
+
+
+def _war_started_fields(ctx):
+    embed = next(
+        embed for _content, embed in ctx.sent
+        if embed is not None and "War tracking started" in str(embed.title)
+    )
+    return {field.name: field.value for field in embed.fields}
+
+
+def test_war_start_fills_missing_from_the_team_roster(clean_db):
+    """The bot cannot see in-game attacks, so every rostered alias starts missing."""
+    db = clean_db
+    team_id = seed_team(db, war_channel_id=CHANNEL)
+    seed_team_player(db, team_id, 200, alias="sam")
+    seed_team_player(db, team_id, 201, alias="bob")
+    seed_team_player(db, team_id, 202)  # rostered, but still has no alias
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    start_war(war_cog(), ctx)
+
+    missing = db.one("wars", channel_id=CHANNEL)["missing_list"]
+    assert {entry["name"] for entry in missing} == {"sam", "bob"}
+    assert {int(entry["id"]) for entry in missing} == {200, 201}
+    field = _war_started_fields(ctx)["Missing list"]
+    assert "2" in field
+    assert "no alias" in field.lower()
+
+
+def test_war_start_seeds_one_alias_for_a_player_who_has_two(clean_db):
+    db = clean_db
+    team_id = seed_team(db, war_channel_id=CHANNEL)
+    seed_team_player(db, team_id, 200, alias="sam")
+    db.seed("aliases", {"guild_id": GUILD, "discord_id": 200, "alias_name": "s4m"})
+    seed_team_player(db, team_id, 201, alias="bob")
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    start_war(war_cog(), ctx)
+
+    missing = db.one("wars", channel_id=CHANNEL)["missing_list"]
+    assert len(missing) == 2
+    assert {int(entry["id"]) for entry in missing} == {200, 201}
+
+
+def test_war_start_without_a_team_keeps_the_missing_list_manual(clean_db):
+    db = clean_db
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    start_war(war_cog(), ctx)
+
+    assert db.one("wars", channel_id=CHANNEL)["missing_list"] == []
+    assert "Not auto-filled" in _war_started_fields(ctx)["Missing list"]
+
+
+def test_war_start_with_an_empty_roster_points_staff_at_team_add(clean_db):
+    db = clean_db
+    seed_team(db, name="FBW", war_channel_id=CHANNEL)
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    start_war(war_cog(), ctx)
+
+    assert db.one("wars", channel_id=CHANNEL)["missing_list"] == []
+    note = _war_started_fields(ctx)["Missing list"]
+    assert "no players on its roster" in note.lower()
+    assert "!team add" in note
+
+
+def test_rebasing_an_active_war_keeps_reports_and_missing_entries(clean_db):
+    """Re-issuing the timer mid-war must not wipe what players already reported."""
+    db = clean_db
+    team_id = seed_team(db, war_channel_id=CHANNEL)
+    seed_team_player(db, team_id, 200, alias="sam")
+    seed_team_player(db, team_id, 201, alias="bob")
+    now = datetime.now(timezone.utc)
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(),
+             missing_list=[{"name": "bob", "id": 201}], attack_counts={"sam": 6})
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    start_war(war_cog(), ctx, time_left="10h")
+
+    row = db.one("wars", channel_id=CHANNEL)
+    assert row["missing_list"] == [{"name": "bob", "id": 201}]
+    assert row["attack_counts"] == {"sam": 6}
+
+
+def test_war_missing_add_refuses_a_player_who_already_reported(clean_db):
+    """Self-report is the source of truth: a done player is never put back on missing."""
+    db = clean_db
+    seed_alias(db, 200, "sam")
+    seed_war(db, missing_list=[], attack_counts={"sam": 6})
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(war_cog().war_missing(ctx, "add", "sam"))
+
+    assert db.one("wars", channel_id=CHANNEL)["missing_list"] == []
+    assert any("already reported" in text for text in ctx.texts)
 
 
 def test_fake_db_in_filter(clean_db):

@@ -51,7 +51,12 @@ def build_overview(is_staff):
 def build_topic(topic, is_staff):
     if topic == "war":
         e = _embed("🛡️ War Commands", discord.Color.blue())
-        e.add_field(name="Everyone", value="`!war status`\n`!war missing list`\n`attacks done` (or `4 attacks done`)", inline=False)
+        e.add_field(name="Everyone", value=(
+            "`!war status` · `!war missing list`\n"
+            "`attacks done` or `attacks done 4/6` — send that as the **whole** message. "
+            "It logs your attacks and clears you from the missing list (every rostered "
+            "player starts there when the war begins). A longer message that mentions it "
+            "is not counted: the bot tags you and asks for the plain form."), inline=False)
         e.add_field(name="Reminders", value=(
             "Channel reminders fire automatically: defence ends 30m, attack starts, 12h, 6h, 3h, 30m, war end. "
             "The 12h reminder mentions only players on the missing list."), inline=False)
