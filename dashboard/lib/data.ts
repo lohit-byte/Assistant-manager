@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { DEFAULT_ATTACKS_REQUIRED } from './constants'
+import { DEFAULT_ATTACKS_REQUIRED, MAZE_WINDOWS, type MazeWindow } from './constants'
 import { captainLimitError } from './setup'
 import type {
   Alias,
@@ -243,6 +243,79 @@ export async function confirmMazeEvent(
   }
   const { error } = await supabase.from('maze_events').insert({ ...payload, maze_type: '7d' })
   throwIfError(error, 'Could not confirm the maze')
+}
+
+/**
+ * The editable discount ladder. `windows` is null when the built-in table
+ * (`MAZE_WINDOWS`, mirrored in bot/maze_timing.py) is in use.
+ */
+export interface MazeSettings {
+  windows: MazeWindow[] | null
+  updated_by: Id | null
+  updated_at: string | null
+}
+
+function readWindows(raw: unknown): MazeWindow[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null
+  const windows: MazeWindow[] = []
+  for (const item of raw) {
+    if (!Array.isArray(item) || item.length !== 3) return null
+    const [start, end, percent] = item
+    if (typeof start !== 'number' || typeof end !== 'number' || typeof percent !== 'string') {
+      return null
+    }
+    windows.push({ start, end, percent })
+  }
+  return windows
+}
+
+export async function getMazeSettings(supabase: SupabaseClient): Promise<MazeSettings> {
+  const { data, error } = await supabase
+    .from('maze_settings')
+    .select('windows,updated_by,updated_at')
+    .eq('id', 1)
+    .limit(1)
+    .maybeSingle()
+
+  throwIfError(error, 'Could not load the maze settings')
+  return {
+    windows: readWindows(data?.windows),
+    updated_by: (data?.updated_by as Id | null) ?? null,
+    updated_at: (data?.updated_at as string | null) ?? null,
+  }
+}
+
+/** Save an edited ladder (`null` restores the built-in table). */
+export async function saveMazeWindows(
+  supabase: SupabaseClient,
+  windows: MazeWindow[] | null,
+  discordId: string | null,
+): Promise<void> {
+  const { error } = await supabase.from('maze_settings').upsert(
+    {
+      id: 1,
+      windows: windows ? windows.map((window) => [window.start, window.end, window.percent]) : null,
+      updated_by: discordId,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'id' },
+  )
+  throwIfError(error, 'Could not save the maze schedule')
+}
+
+/** Queue a "ping now" request; the bot drains it within ~20 seconds. */
+export async function requestMazePing(
+  supabase: SupabaseClient,
+  guildId: string,
+  percent: string,
+  discordId: string | null,
+): Promise<void> {
+  const { error } = await supabase.from('maze_pings').insert({
+    guild_id: guildId,
+    percent,
+    requested_by: discordId,
+  })
+  throwIfError(error, 'Could not queue the maze ping')
 }
 
 /** The per-server alert subscription (channel, mention mode, on/off). */
@@ -952,6 +1025,7 @@ export interface GuildSummary {
   race: RaceState | null
   maze: MazeSchedule | null
   mazeEvent: MazeEvent | null
+  mazeWindows: MazeWindow[] | null
   aliasCount: number
   warningCount: number
 }
@@ -970,11 +1044,12 @@ export async function getGuildSummary(
     ? getRaceState(supabase, channelId)
     : supabase.from('race_state').select('*').eq('guild_id', guildId).limit(1).maybeSingle().then(res => res.data as RaceState);
 
-  const [war, race, maze, mazeEvent, aliases, warnings] = await Promise.allSettled([
+  const [war, race, maze, mazeEvent, mazeSettings, aliases, warnings] = await Promise.allSettled([
     warPromise,
     racePromise,
     getMazeSchedule(supabase, guildId),
     getActiveMazeEvent(supabase),
+    getMazeSettings(supabase),
     supabase.from('aliases').select('id', { count: 'exact', head: true }).eq('guild_id', guildId),
     supabase.from('warnings').select('id', { count: 'exact', head: true }).eq('guild_id', guildId),
   ])
@@ -984,6 +1059,8 @@ export async function getGuildSummary(
     race: race.status === 'fulfilled' ? race.value : null,
     maze: maze.status === 'fulfilled' ? maze.value : null,
     mazeEvent: mazeEvent.status === 'fulfilled' ? mazeEvent.value : null,
+    mazeWindows:
+      mazeSettings.status === 'fulfilled' ? mazeSettings.value.windows ?? null : null,
     aliasCount: aliases.status === 'fulfilled' ? aliases.value.count ?? 0 : 0,
     warningCount: warnings.status === 'fulfilled' ? warnings.value.count ?? 0 : 0,
   }

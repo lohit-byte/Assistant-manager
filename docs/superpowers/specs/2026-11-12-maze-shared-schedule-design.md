@@ -47,6 +47,10 @@ wrong times and never at the two that matter (+5 h, +132 h/164 h).
 - `maze_schedules` becomes a per-server *subscription* (channel, mention mode, on/off, dedupe).
 - Dashboard: interactive controls — dropdowns for mention mode and the wheels for the countdown /
   calendar date — plus a live discount timeline and an owner-only platform calendar.
+- The discount ladder is **editable by staff from both places** (Discord `!maze windows set ...`,
+  dashboard row editor) and stored on a single `maze_settings` row, so a game-side change needs no
+  deploy. Manual pings stay available on both (`!maze ping 20%` instantly, a dashboard button that
+  the bot drains from `maze_pings` within ~20 s).
 - Bot and dashboard read the same ladder, with an offline check that fails on drift.
 
 ## Non-goals
@@ -71,6 +75,12 @@ windows that still matter and skips the ones already announced.
 **C. OCR one phone that runs the game.** Removes the human, but is a fragile Android-side project
 and not needed to ship: the calendar plus one staff report per event is accurate to minutes.
 
+**Editing the ladder.** (a) Hard-code it and redeploy — rejected: the owner asked for staff to be
+able to change timings when the game changes them. (b) Per-event override — more flexible but two
+places to look and easy to forget. (c) One platform `maze_settings.windows` JSONB row, NULL meaning
+the built-in table — chosen: one place, visible "Edited/Built-in" badge in both apps, one-click
+reset. The built-in table stays in code as the default so a fresh install needs no data.
+
 **Trust model for corrections.** First report wins, last report wins after that, with a 24 h
 matching window (a report within 24 h of an existing event corrects that row instead of creating a
 second one). Rationale: the same trust level as the old per-server `!maze start` (any staff), the
@@ -82,13 +92,15 @@ always override from the dashboard calendar.
 Bot:
 - `bot/maze_timing.py` — new pure module: the window table, `windows()`, `current_window()`,
   `upcoming_windows()`, `windows_to_fire()`, `derive_event_start()`, `parse_remaining()`,
-  `parse_start_date()`. Mirrors the ladder in the dashboard.
+  `parse_start_date()`, and the editable-table helpers `parse_windows()`,
+  `parse_windows_spec()`, `validate_windows()`. Mirrors the ladder in the dashboard.
 - `bot/tests/test_maze_timing.py` — standard-library unittest: the six windows, the gaps, the
   banner timestamp of every screenshot, countdown→start derivation, parser edge cases.
-- `bot/cogs/maze.py` — reworked: loads the shared event + subscriptions, arms one task per window
-  start per server, re-checks the event and premium status before sending, keeps DM alerts and
-  mention modes, adds `!maze cal list|add|rm` (owner), and turns `!maze stop` into "alerts off for
-  this server".
+- `bot/cogs/maze.py` — reworked: loads the shared event, the edited ladder and the subscriptions,
+  arms one task per window start per server, re-checks the event and premium status before sending,
+  keeps DM alerts and mention modes, adds `!maze windows [set|reset]` (staff), `!maze cal
+  list|add|rm` (owner), turns `!maze stop` into "alerts off for this server", drains the dashboard
+  ping queue every 20 s, and syncs schedules every 60 s.
 - `bot/cogs/help.py` — maze topic text.
 
 Dashboard:
@@ -97,8 +109,10 @@ Dashboard:
   `nextMazeMoment` replace `discountMoments`/`nextDiscount`.
 - `lib/data.ts`, `lib/types.ts` — `MazeEvent` and the event/subscription helpers.
 - `components/wheel-picker.tsx` — the scrollable number column (days/hours/minutes).
-- `app/dashboard/[guildId]/maze/page.tsx` — rebuilt: shared maze + timeline, "tell the bot the maze
-  started" (wheels) for staff, per-server alert settings (dropdown + channel), owner calendar.
+- `app/dashboard/[guildId]/maze/page.tsx` — rebuilt: shared maze + timeline (including the
+  discount-free stretches), "tell the bot the maze started" (wheels) for staff, per-server alert
+  settings (dropdown + channel), a **manual ping** button, the **discount schedule editor**, and the
+  owner calendar.
 - `app/dashboard/[guildId]/page.tsx` — overview reads the shared event.
 - `scripts/check-maze.cjs` + `npm run check:maze` — compiles the TS ladder and compares it to
   `bot/maze_timing.py`; also asserts the ladder shape and the observed start offsets.
@@ -107,12 +121,17 @@ Database (`shared/schema.sql`, idempotent migration block):
 - `maze_events` (start, end, type, status scheduled/confirmed/cancelled, source calendar/report,
   confirmed_by_*, note, timestamps, unique on `event_start`) + authenticated RLS policy matching
   the existing dashboard trust model.
+- `maze_settings` — one row (`id = 1`), `windows JSONB` (NULL = built-in), `updated_by`; the edited
+  ladder shared by bot and dashboard.
+- `maze_pings` — dashboard "ping now" queue (guild, percent, requester); the bot deletes rows after
+  handling them.
 - `maze_schedules` keeps its columns but is now documented as the per-server subscription.
 
 ## Deploy order
 
-1. Run the updated `shared/schema.sql` in Supabase (creates `maze_events`). The bot tolerates the
-   missing table (logs and stays quiet); the dashboard maze page shows an error until it exists.
+1. Run the migration block from `shared/schema.sql` in Supabase (creates `maze_events`,
+   `maze_settings`, `maze_pings`). The bot tolerates the missing tables (logs and stays quiet); the
+   dashboard maze page shows an error until they exist.
 2. Deploy the bot.
 3. Deploy the dashboard.
 4. Owner: add the next maze week on the Maze page (or `!maze cal add DD/MM`). When the maze opens,
@@ -129,12 +148,16 @@ Database (`shared/schema.sql`, idempotent migration block):
   screenshots pin the *ends*, so a correction is a one-line table edit.
 - A wrong countdown pasted by staff mis-times every server until someone corrects it; the +15 min
   dashboard warning and the audit columns are the mitigation.
-- `maze_events` writes are allowed to any signed-in dashboard user by RLS (the repo-wide trust model
-  documented in `shared/schema.sql`); the owner-only UI is not a security boundary yet.
+- `maze_events` / `maze_settings` / `maze_pings` writes are allowed to any signed-in dashboard user
+  by RLS (the repo-wide trust model documented in `shared/schema.sql`); the owner-only UI is not a
+  security boundary yet.
+- An edited ladder is **platform-wide** (every server), so a wrong edit mis-times everyone until it
+  is corrected or reset. The "Edited" badge and the built-in reset are the guard rails; both the
+  dashboard and `!maze windows` validate ordered, non-overlapping windows inside the maze.
 
 ## Verification
 
-- `cd bot && python3 -m unittest discover -s tests -v` — 8 tests pass.
+- `cd bot && python3 -m unittest discover -s tests -v` — 12 tests pass.
 - `cd dashboard && npm run check:maze` — PASS (and FAILs when either ladder is edited alone).
 - `cd dashboard && npx tsc --noEmit` — clean; `next build` compiles and type-checks (page-data
   collection stops at the pre-existing Paddle webhook route, which needs a real service key).

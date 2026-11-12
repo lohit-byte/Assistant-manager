@@ -49,6 +49,11 @@ export const MAZE_WINDOWS: MazeWindow[] = [
   { start: 164, end: 168, percent: '20%' },
 ]
 
+/** Percentages offered by the manual ping and the schedule editor. */
+export const MAZE_WINDOW_PERCENTS = ['10%', '20%', '30%', '40%', '50%']
+
+export const MAZE_DURATION_HOURS = MAZE_DURATION_DAYS * 24
+
 /** Discord ids of the platform owner: only they may edit the shared maze calendar. */
 export const PLATFORM_ADMIN_IDS = ['704623764008075284']
 

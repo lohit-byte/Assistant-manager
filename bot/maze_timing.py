@@ -129,3 +129,51 @@ def parse_start_date(text: str, now: datetime) -> datetime | None:
             return candidate
         year += 1
     return None
+
+
+def parse_windows(raw) -> tuple[tuple[int, int, str], ...] | None:
+    """Read the JSONB value stored on ``maze_settings.windows`` (None = built-in table)."""
+    if not isinstance(raw, list) or not raw:
+        return None
+    parsed: list[tuple[int, int, str]] = []
+    for item in raw:
+        try:
+            start_h, end_h, percent = item
+            parsed.append((int(start_h), int(end_h), str(percent)))
+        except (TypeError, ValueError):
+            return None
+    return tuple(parsed)
+
+
+def parse_windows_spec(text: str) -> tuple[tuple[int, int, str], ...] | None:
+    """`!maze windows set 0-5:50 5-13:20 24-36:10` -> window table."""
+    tokens = [token for token in re.split(r"[\s,]+", (text or "").strip()) if token]
+    if not tokens:
+        return None
+    parsed: list[tuple[int, int, str]] = []
+    for token in tokens:
+        match = re.fullmatch(r"(\d{1,3})-(\d{1,3}):(\d{1,3})%?", token)
+        if not match:
+            return None
+        parsed.append((int(match.group(1)), int(match.group(2)), f"{match.group(3)}%"))
+    return tuple(parsed)
+
+
+def validate_windows(spec, duration: timedelta = MAZE_DURATION) -> str | None:
+    """Return a human-readable problem with an edited table, or None when it is usable."""
+    hours = int(duration.total_seconds() // 3600)
+    if not spec:
+        return "the schedule is empty"
+    previous_end = 0
+    for start_h, end_h, percent in spec:
+        if start_h < previous_end:
+            return f"{percent} starts at {start_h}h, before the previous discount ends at {previous_end}h"
+        if end_h <= start_h:
+            return f"{percent} ends at {end_h}h, not after its start at {start_h}h"
+        if end_h > hours:
+            return f"{percent} ends at {end_h}h, after the {hours}h maze"
+        match = re.fullmatch(r"(\d{1,3})%", str(percent))
+        if not match or not 1 <= int(match.group(1)) <= 100:
+            return f"{percent!r} is not a 1-100% discount"
+        previous_end = end_h
+    return None

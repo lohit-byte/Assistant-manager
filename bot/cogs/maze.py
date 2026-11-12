@@ -23,11 +23,15 @@ from discord.ext import commands
 from database import check_premium_status, ensure_user, is_staff_member, supabase
 from maze_timing import (
     MAZE_DURATION,
+    WINDOWS_7D,
     current_window,
     derive_event_start,
     parse_remaining,
     parse_start_date,
+    parse_windows,
+    parse_windows_spec,
     upcoming_windows,
+    validate_windows,
     windows_to_fire,
 )
 
@@ -71,14 +75,25 @@ class MazeTracker(commands.Cog):
         self.timers: dict[int, list[asyncio.Task]] = {}
         self.signatures: dict[int, tuple] = {}
         self._sync_task: asyncio.Task | None = None
+        self._ping_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
+        self._warned: set[str] = set()
+
+    def _warn_once(self, key: str, message: str):
+        """Log a setup problem once instead of on every 20 s / 60 s tick."""
+        if key in self._warned:
+            return
+        self._warned.add(key)
+        print(message)
 
     async def cog_load(self):
         self._sync_task = asyncio.create_task(self._sync_loop())
+        self._ping_task = asyncio.create_task(self._ping_loop())
 
     def cog_unload(self):
-        if self._sync_task:
-            self._sync_task.cancel()
+        for task in (self._sync_task, self._ping_task):
+            if task:
+                task.cancel()
         for guild_id in list(self.timers):
             self._cancel(guild_id)
 
@@ -98,9 +113,8 @@ class MazeTracker(commands.Cog):
                 .execute()
             )
         except Exception as exc:
-            # A deploy can land before shared/schema.sql creates maze_events. Keep the
-            # bot quiet instead of crashing every scheduler tick.
-            print(f"Maze event lookup failed: {exc!r}")
+            # A deploy can land before shared/schema.sql creates maze_events.
+            self._warn_once("event", f"Maze event lookup failed: {exc!r}")
             return None
         return res.data[0] if res.data else None
 
@@ -117,9 +131,32 @@ class MazeTracker(commands.Cog):
                 .execute()
             )
         except Exception as exc:
-            print(f"Maze calendar lookup failed: {exc!r}")
+            self._warn_once("calendar", f"Maze calendar lookup failed: {exc!r}")
             return []
         return res.data
+
+    async def _fetch_windows(self):
+        """The edited discount ladder, or None to use the built-in one."""
+        try:
+            res = await asyncio.to_thread(
+                lambda: supabase.table("maze_settings")
+                .select("windows")
+                .eq("id", 1)
+                .limit(1)
+                .execute
+            )
+        except Exception as exc:
+            self._warn_once("settings", f"Maze settings lookup failed: {exc!r}")
+            return None
+        row = res.data[0] if res.data else None
+        spec = parse_windows(row.get("windows")) if row else None
+        if spec is None:
+            return None
+        problem = validate_windows(spec)
+        if problem:
+            print(f"Ignoring the edited maze schedule ({problem}); using the built-in one.")
+            return None
+        return spec
 
     async def _fetch_subscriptions(self):
         res = await asyncio.to_thread(
@@ -151,6 +188,71 @@ class MazeTracker(commands.Cog):
 
     # -------------------------------------------------------------- scheduler
 
+    async def _ping_loop(self):
+        """Drain dashboard "ping now" requests; Discord already pings instantly."""
+        await self.bot.wait_until_ready()
+        while True:
+            try:
+                await self._drain_manual_pings()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"Maze manual ping drain failed: {exc!r}")
+            await asyncio.sleep(20)
+
+    async def _drain_manual_pings(self):
+        try:
+            res = await asyncio.to_thread(
+                lambda: supabase.table("maze_pings")
+                .select("*")
+                .order("created_at")
+                .limit(5)
+                .execute
+            )
+        except Exception as exc:
+            self._warn_once("ping-queue", f"Maze ping queue lookup failed: {exc!r}")
+            return
+        for row in res.data:
+            try:
+                await self._send_manual_ping(row.get("guild_id"), row.get("percent") or "10%")
+            except Exception as exc:
+                print(f"Manual maze ping failed: {exc!r}")
+            ping_id = row.get("id")
+            try:
+                await asyncio.to_thread(
+                    lambda ping_id=ping_id: supabase.table("maze_pings")
+                    .delete()
+                    .eq("id", ping_id)
+                    .execute
+                )
+            except Exception as exc:
+                print(f"Maze ping cleanup failed: {exc!r}")
+
+    async def _send_manual_ping(self, guild_id, percent):
+        try:
+            res = await asyncio.to_thread(
+                supabase.table("maze_schedules")
+                .select("*")
+                .eq("guild_id", guild_id)
+                .limit(1)
+                .execute
+            )
+        except Exception as exc:
+            print(f"Manual maze ping lookup failed for {guild_id}: {exc!r}")
+            return
+        row = res.data[0] if res.data else None
+        if not row or row.get("ping_enabled_global") is False:
+            return
+        if not await asyncio.to_thread(check_premium_status, guild_id):
+            return
+        channel = await self._resolve_channel(row)
+        if not channel:
+            return
+        event = await self._fetch_event()
+        ends_at = to_utc(event.get("event_end")) if event else None
+        if await self._deliver(channel, row, self._discount_embed(percent, ends_at)):
+            await self._dm_alert_players(guild_id, percent, ends_at or datetime.now(timezone.utc))
+
     async def _sync_loop(self):
         await self.bot.wait_until_ready()
         while True:
@@ -160,12 +262,13 @@ class MazeTracker(commands.Cog):
                 raise
             except Exception as exc:
                 print(f"Maze sync failed: {exc!r}")
-            await asyncio.sleep(300)
+            await asyncio.sleep(60)
 
     async def sync(self):
         """Re-arm every server's timers from the shared event and its settings."""
         async with self._lock:
             event = await self._fetch_event()
+            spec = await self._fetch_windows() or WINDOWS_7D
             rows = await self._fetch_subscriptions()
             seen = set()
 
@@ -174,14 +277,14 @@ class MazeTracker(commands.Cog):
                 seen.add(guild_id)
                 try:
                     channel = await self._resolve_channel(row)
-                    signature = self._signature(event, row, channel)
+                    signature = self._signature(event, row, channel, spec)
                     if signature == self.signatures.get(guild_id):
                         continue  # nothing changed -> keep the existing timers
                     self._cancel(guild_id)
                     self.signatures[guild_id] = signature
                     if not event or not channel or row.get("ping_enabled_global") is False:
                         continue
-                    self._arm(guild_id, channel, event)
+                    self._arm(guild_id, channel, event, spec)
                 except Exception as exc:
                     print(f"Maze subscription {guild_id} failed: {exc!r}")
 
@@ -192,7 +295,7 @@ class MazeTracker(commands.Cog):
                     self.signatures.pop(guild_id, None)
 
     @staticmethod
-    def _signature(event, row, channel):
+    def _signature(event, row, channel, spec):
         return (
             (event or {}).get("id"),
             (event or {}).get("event_start"),
@@ -200,19 +303,20 @@ class MazeTracker(commands.Cog):
             row.get("ping_enabled_global"),
             row.get("ping_mention"),
             row.get("ping_role_id"),
+            repr(spec),
         )
 
     def _cancel(self, guild_id):
         for task in self.timers.pop(guild_id, []):
             task.cancel()
 
-    def _arm(self, guild_id, channel, event):
+    def _arm(self, guild_id, channel, event, spec):
         start = to_utc(event.get("event_start"))
         if not start:
             return
         self.timers[guild_id] = [
             asyncio.create_task(self._fire(guild_id, channel, window, delay, event))
-            for window, delay in windows_to_fire(start, datetime.now(timezone.utc))
+            for window, delay in windows_to_fire(start, datetime.now(timezone.utc), spec)
         ]
 
     async def _fire(self, guild_id, channel, window, delay, event):
@@ -260,31 +364,9 @@ class MazeTracker(commands.Cog):
 
         event_start = to_utc(event.get("event_start"))
         opening = event_start is not None and window.start <= event_start
-        headline = (
-            f"**{window.percent} off moves** until <t:{int(window.end.timestamp())}:t>."
-            if not opening
-            else f"**Maze Island is live** — the opening {window.percent} move discount runs "
-            f"until <t:{int(window.end.timestamp())}:t>."
+        delivered = await self._deliver(
+            channel, row, self._discount_embed(window.percent, window.end, opening)
         )
-        embed = discord.Embed(
-            title="🗺️ Maze Island discount!",
-            description=f"{headline}\n\nSpend your Maze Coins before it ends.",
-            color=discord.Color.purple(),
-        )
-        content, allowed = self._mention_payload(
-            channel,
-            (row.get("ping_mention") or "here").lower(),
-            row.get("ping_role_id"),
-        )
-        delivered = False
-        try:
-            if content:
-                await channel.send(content=content, embed=embed, allowed_mentions=allowed)
-            else:
-                await channel.send(embed=embed)
-            delivered = True
-        except (discord.HTTPException, AttributeError, TypeError) as exc:
-            print(f"Maze ping failed in {guild_id}: {exc!r}")
 
         if delivered:
             try:
@@ -299,6 +381,38 @@ class MazeTracker(commands.Cog):
                 print(f"Maze ping bookkeeping failed in {guild_id}: {exc!r}")
 
         await self._dm_alert_players(guild_id, window.percent, window.end)
+
+    def _discount_embed(self, percent, window_end, opening=False):
+        if window_end is None:
+            headline = f"🚨 **{percent} off moves is live right now.**"
+        elif opening:
+            headline = (
+                f"**Maze Island is live** — the opening {percent} move discount runs until "
+                f"<t:{int(window_end.timestamp())}:t>."
+            )
+        else:
+            headline = f"**{percent} off moves** until <t:{int(window_end.timestamp())}:t>."
+        return discord.Embed(
+            title="🗺️ Maze Island discount!",
+            description=f"{headline}\n\nSpend your Maze Coins before it ends.",
+            color=discord.Color.purple(),
+        )
+
+    async def _deliver(self, channel, row, embed):
+        content, allowed = self._mention_payload(
+            channel,
+            (row.get("ping_mention") or "here").lower(),
+            row.get("ping_role_id"),
+        )
+        try:
+            if content:
+                await channel.send(content=content, embed=embed, allowed_mentions=allowed)
+            else:
+                await channel.send(embed=embed)
+            return True
+        except (discord.HTTPException, AttributeError, TypeError) as exc:
+            print(f"Maze ping failed in {channel}: {exc!r}")
+            return False
 
     def _mention_payload(self, channel, mode, role_id=None):
         me = getattr(getattr(channel, "guild", None), "me", None)
@@ -523,6 +637,9 @@ class MazeTracker(commands.Cog):
                     "schedule for every server\n"
                     "`!maze start 7d 05/11` — set the start date instead\n"
                     "`!maze stop` — turn this server's alerts off\n"
+                    "`!maze windows` — the discount schedule (staff can edit it)\n"
+                    "`!maze windows set 0-5:50 5-13:20 24-36:10 ...` — change it for every server\n"
+                    "`!maze windows reset` — back to the built-in schedule\n"
                     "`!maze set ping here|everyone|role @role|none`\n"
                     "`!maze ping 20%` — manual discount ping"
                 ),
@@ -539,6 +656,86 @@ class MazeTracker(commands.Cog):
                 inline=False,
             )
         await ctx.send(embed=embed)
+
+    async def windows_command(self, ctx, action, spec_text):
+        action = (action or "").lower()
+        stored = await self._fetch_windows()
+        spec = stored or WINDOWS_7D
+
+        if action in ("", "show", "list"):
+            event = await self._fetch_event()
+            start = to_utc(event.get("event_start")) if event else None
+            lines = []
+            for start_h, end_h, percent in spec:
+                line = f"`{start_h:>3}h → {end_h:>3}h` **{percent}**"
+                if start:
+                    line += (
+                        f" · {stamp(start + timedelta(hours=start_h))} → "
+                        f"{stamp(start + timedelta(hours=end_h))}"
+                    )
+                lines.append(line)
+            embed = discord.Embed(
+                title="🗺️ Maze discount schedule",
+                description="\n".join(lines),
+                color=discord.Color.purple(),
+            )
+            embed.set_footer(
+                text=(
+                    "Edited schedule — staff can change it again with !maze windows set ..."
+                    if stored
+                    else "Built-in schedule (from the 5–12 Nov 2026 maze)"
+                )
+            )
+            return await ctx.send(embed=embed)
+
+        if not await is_staff_member(ctx.author):
+            return await ctx.send("❌ You must be an Admin or Staff to edit the maze schedule.")
+
+        if action in ("reset", "default", "clear"):
+            return await self._save_windows(ctx, None)
+
+        if action in ("set", "edit"):
+            edited = parse_windows_spec(spec_text)
+            if not edited:
+                return await ctx.send(
+                    "❌ Usage: `!maze windows set 0-5:50 5-13:20 24-36:10 72-84:10 120-132:10 164-168:20`\n"
+                    "*`(start hour)-(end hour):(discount)`, measured from the maze start.*"
+                )
+            problem = validate_windows(edited)
+            if problem:
+                return await ctx.send(f"❌ That schedule does not work: {problem}.")
+            return await self._save_windows(ctx, edited)
+
+        return await ctx.send(
+            "Usage: `!maze windows`, `!maze windows set 0-5:50 5-13:20 ...`, `!maze windows reset`"
+        )
+
+    async def _save_windows(self, ctx, spec):
+        payload = {
+            "id": 1,
+            "windows": [list(window) for window in spec] if spec else None,
+            "updated_by": ctx.author.id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            await asyncio.to_thread(
+                supabase.table("maze_settings").upsert(payload, on_conflict="id").execute
+            )
+        except Exception as exc:
+            return await ctx.send(f"❌ Database error: {exc}")
+        await self.sync()
+        if not spec:
+            return await ctx.send(
+                "↩️ Back to the built-in maze discount schedule. Every server re-armed."
+            )
+        lines = "\n".join(f"`{s:>3}h → {e:>3}h` **{p}**" for s, e, p in spec)
+        await ctx.send(
+            embed=discord.Embed(
+                title="✅ Maze discount schedule saved",
+                description=f"{lines}\n\nEvery server has been re-armed.",
+                color=discord.Color.purple(),
+            )
+        )
 
     async def status(self, ctx):
         embed = discord.Embed(title="🗺️ Maze Island", color=discord.Color.purple())
@@ -872,6 +1069,9 @@ class MazeTracker(commands.Cog):
 
         if action in ("cal", "calendar"):
             return await self.calendar_command(ctx, arg1, arg2)
+
+        if action in ("windows", "window", "schedule"):
+            return await self.windows_command(ctx, arg1, arg2)
 
         if action == "start":
             if not await is_staff_member(ctx.author):

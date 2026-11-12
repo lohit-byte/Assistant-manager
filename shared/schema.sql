@@ -160,6 +160,27 @@ CREATE TABLE maze_schedules (
     sent_pings JSONB DEFAULT '[]'::jsonb -- discount keys already announced (restart dedupe)
 );
 
+-- 9c. MAZE SETTINGS (one row). windows = the editable discount ladder, NULL = built-in table.
+-- The built-in ladder lives in bot/maze_timing.py and dashboard/lib/constants.ts; staff can
+-- replace it from Discord (`!maze windows set ...`) or the dashboard when the game changes it.
+CREATE TABLE maze_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    windows JSONB, -- [[start_hour, end_hour, "50%"], ...], NULL = built-in
+    updated_by BIGINT,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+INSERT INTO maze_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- 9d. MAZE PINGS (manual "ping now" requests from the dashboard; the bot drains the queue).
+CREATE TABLE maze_pings (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id BIGINT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    percent TEXT NOT NULL,
+    requested_by BIGINT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX maze_pings_pending_idx ON maze_pings (created_at);
+
 -- 10. PLAYER PING PREFERENCES (players choose channel @here, DM alerts, or off)
 CREATE TABLE player_ping_settings (
     guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
@@ -207,6 +228,23 @@ CREATE TABLE IF NOT EXISTS maze_events (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS maze_events_start_key ON maze_events (event_start);
+
+CREATE TABLE IF NOT EXISTS maze_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    windows JSONB,
+    updated_by BIGINT,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+INSERT INTO maze_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS maze_pings (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id BIGINT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    percent TEXT NOT NULL,
+    requested_by BIGINT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS maze_pings_pending_idx ON maze_pings (created_at);
 ALTER TABLE player_ping_settings ADD COLUMN IF NOT EXISTS maze_alert_mode TEXT DEFAULT 'here';
 ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS channel_id BIGINT;
 ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS lap INTEGER;
@@ -361,6 +399,16 @@ CREATE POLICY race_logs_authenticated ON race_logs
 ALTER TABLE maze_schedules ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS maze_schedules_authenticated ON maze_schedules;
 CREATE POLICY maze_schedules_authenticated ON maze_schedules
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE maze_settings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS maze_settings_authenticated ON maze_settings;
+CREATE POLICY maze_settings_authenticated ON maze_settings
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE maze_pings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS maze_pings_authenticated ON maze_pings;
+CREATE POLICY maze_pings_authenticated ON maze_pings
     FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 ALTER TABLE maze_events ENABLE ROW LEVEL SECURITY;

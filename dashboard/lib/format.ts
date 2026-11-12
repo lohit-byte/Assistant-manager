@@ -1,4 +1,4 @@
-import { MAZE_WINDOWS } from './constants'
+import { MAZE_WINDOWS, type MazeWindow } from './constants'
 import type { War } from './types'
 
 export function cn(...parts: Array<string | false | null | undefined>): string {
@@ -150,10 +150,14 @@ export interface MazeMoment {
   past: boolean
 }
 
-/** The six discount windows of the maze that starts at `eventStart`, in local time. */
-export function mazeMoments(eventStart: Date | null, now = new Date()): MazeMoment[] {
+/** The discount windows of the maze that starts at `eventStart`, in local time. */
+export function mazeMoments(
+  eventStart: Date | null,
+  now = new Date(),
+  windows: MazeWindow[] = MAZE_WINDOWS,
+): MazeMoment[] {
   if (!eventStart) return []
-  return MAZE_WINDOWS.map((window) => {
+  return windows.map((window) => {
     const start = new Date(eventStart.getTime() + window.start * 3600_000)
     const end = new Date(eventStart.getTime() + window.end * 3600_000)
     return {

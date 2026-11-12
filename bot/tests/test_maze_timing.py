@@ -16,7 +16,10 @@ from maze_timing import (  # noqa: E402
     derive_event_start,
     parse_remaining,
     parse_start_date,
+    parse_windows,
+    parse_windows_spec,
     upcoming_windows,
+    validate_windows,
     windows,
     windows_to_fire,
 )
@@ -117,6 +120,43 @@ class ParsingTest(unittest.TestCase):
         )
         self.assertIsNone(parse_start_date("31/02", now))
         self.assertIsNone(parse_start_date("next week", now))
+
+
+class EditableScheduleTest(unittest.TestCase):
+    """The staff/owner-editable ladder (`!maze windows set`, dashboard editor)."""
+
+    def test_spec_parses_shorthand(self):
+        self.assertEqual(
+            parse_windows_spec("0-5:50 5-13:20,24-36:10%"),
+            ((0, 5, "50%"), (5, 13, "20%"), (24, 36, "10%")),
+        )
+        self.assertIsNone(parse_windows_spec(""))
+        self.assertIsNone(parse_windows_spec("0-5"))
+        self.assertIsNone(parse_windows_spec("five hours"))
+
+    def test_jsonb_windows_round_trip(self):
+        self.assertEqual(
+            parse_windows([[0, 5, "50%"], [5, 13, "20%"]]),
+            ((0, 5, "50%"), (5, 13, "20%")),
+        )
+        self.assertIsNone(parse_windows(None))
+        self.assertIsNone(parse_windows([["oops"]]))
+
+    def test_validation_catches_breaks(self):
+        self.assertIsNone(validate_windows(((0, 5, "50%"), (5, 13, "20%"))))
+        self.assertIn("before the previous", validate_windows(((0, 20, "50%"), (5, 13, "20%"))))
+        self.assertIn("not after its start", validate_windows(((5, 5, "20%"),)))
+        self.assertIn("after the 168h maze", validate_windows(((160, 170, "20%"),)))
+        self.assertIn("1-100%", validate_windows(((0, 5, "500%"),)))
+        self.assertIn("empty", validate_windows(()))
+
+    def test_custom_table_drives_the_windows(self):
+        custom = ((0, 2, "50%"), (2, 6, "20%"), (6, 168, "10%"))
+        self.assertIsNone(validate_windows(custom))
+        table = windows(EVENT_START, custom)
+        self.assertEqual([window.percent for window in table], ["50%", "20%", "10%"])
+        self.assertEqual(table[-1].end, EVENT_END)
+        self.assertEqual(current_window(EVENT_START, at(7), custom).percent, "10%")
 
 
 if __name__ == "__main__":

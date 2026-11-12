@@ -6,9 +6,14 @@ import {
   CalendarPlus,
   Check,
   Map,
+  Plus,
   RefreshCw,
+  RotateCcw,
   Save,
+  Send,
+  SlidersHorizontal,
   Trash2,
+  X,
 } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
 import { StaffOnlyPanel } from '@/components/staff-only'
@@ -35,11 +40,21 @@ import {
   deleteMazeSchedule,
   getActiveMazeEvent,
   getMazeSchedule,
+  getMazeSettings,
   listMazeEvents,
+  requestMazePing,
   saveMazeSchedule,
+  saveMazeWindows,
 } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
-import { MAZE_DURATION_DAYS, PLATFORM_ADMIN_IDS } from '@/lib/constants'
+import {
+  MAZE_DURATION_DAYS,
+  MAZE_DURATION_HOURS,
+  MAZE_WINDOW_PERCENTS,
+  MAZE_WINDOWS,
+  PLATFORM_ADMIN_IDS,
+  type MazeWindow,
+} from '@/lib/constants'
 import { discordIdFromSession } from '@/lib/discord'
 import {
   currentMazeMoment,
@@ -67,6 +82,28 @@ const DAYS_LEFT = Array.from({ length: 8 }, (_, index) => index)
 const HOURS = Array.from({ length: 24 }, (_, index) => index)
 const MINUTES = Array.from({ length: 60 }, (_, index) => index)
 const DAYS_AHEAD = Array.from({ length: 61 }, (_, index) => index)
+
+/** Same rules the bot applies: ordered, inside the maze, real percentages. */
+function validateWindows(windows: MazeWindow[]): string | null {
+  if (!windows.length) return 'Add at least one discount window.'
+  let previousEnd = 0
+  for (const window of windows) {
+    if (!Number.isFinite(window.start) || !Number.isFinite(window.end)) {
+      return 'Every window needs a start and an end hour.'
+    }
+    if (window.start < previousEnd) {
+      return `${window.percent} starts at ${window.start}h, before the previous discount ends at ${previousEnd}h.`
+    }
+    if (window.end <= window.start) {
+      return `${window.percent} ends at ${window.end}h, not after its start.`
+    }
+    if (window.end > MAZE_DURATION_HOURS) {
+      return `${window.percent} ends after the ${MAZE_DURATION_DAYS}-day maze.`
+    }
+    previousEnd = window.end
+  }
+  return null
+}
 
 const STATUS_META: Record<string, { label: string; tone: 'green' | 'amber' }> = {
   confirmed: { label: 'Confirmed in game', tone: 'green' },
@@ -183,6 +220,9 @@ export default function MazePage() {
   const [event, setEvent] = useState<MazeEvent | null>(null)
   const [events, setEvents] = useState<MazeEvent[]>([])
   const [settings, setSettings] = useState<MazeSchedule | null>(null)
+  const [savedWindows, setSavedWindows] = useState<MazeWindow[] | null>(null)
+  const [windowDraft, setWindowDraft] = useState<MazeWindow[]>(MAZE_WINDOWS)
+  const [pingPercent, setPingPercent] = useState('20%')
   const [discordId, setDiscordId] = useState<string | null>(null)
 
   const [channelId, setChannelId] = useState('')
@@ -204,15 +244,18 @@ export default function MazePage() {
       setError(null)
       const supabase = createClient()
       try {
-        const [active, all, row, session] = await Promise.all([
+        const [active, all, row, ladder, session] = await Promise.all([
           getActiveMazeEvent(supabase),
           listMazeEvents(supabase),
           getMazeSchedule(supabase, guildId),
+          getMazeSettings(supabase),
           supabase.auth.getSession(),
         ])
         setEvent(active)
         setEvents(all)
         setSettings(row)
+        setSavedWindows(ladder.windows)
+        setWindowDraft(ladder.windows ?? MAZE_WINDOWS)
         setDiscordId(discordIdFromSession(session.data.session?.user))
         setChannelId(row?.channel_id ? String(row.channel_id) : '')
         setEnabled(row?.ping_enabled_global ?? true)
@@ -240,7 +283,8 @@ export default function MazePage() {
   const isPlatformAdmin = Boolean(discordId && PLATFORM_ADMIN_IDS.includes(discordId))
   const eventStart = toDate(event?.event_start)
   const eventEnd = toDate(event?.event_end)
-  const moments = useMemo(() => mazeMoments(eventStart, now), [eventStart, now])
+  const ladder = savedWindows ?? MAZE_WINDOWS
+  const moments = useMemo(() => mazeMoments(eventStart, now, ladder), [eventStart, now, ladder])
 
   // "The maze started" is entered as the in-game countdown, because that is what the
   // player can read; the start is the end minus the 7-day length.
@@ -371,6 +415,53 @@ export default function MazePage() {
       await load('refresh')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not remove the maze.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const saveLadder = async () => {
+    const problem = validateWindows(windowDraft)
+    if (problem) {
+      setError(problem)
+      return
+    }
+    setBusy('ladder')
+    setError(null)
+    try {
+      await saveMazeWindows(createClient(), windowDraft, discordId)
+      toast.success('Discount schedule saved.', 'Every server is re-armed within a minute.')
+      await load('refresh')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not save the schedule.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const resetLadder = async () => {
+    if (!window.confirm('Restore the built-in discount schedule?')) return
+    setBusy('reset-ladder')
+    setError(null)
+    try {
+      await saveMazeWindows(createClient(), null, discordId)
+      toast.success('Back to the built-in discount schedule.')
+      await load('refresh')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not reset the schedule.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const sendPing = async () => {
+    setBusy('ping')
+    setError(null)
+    try {
+      await requestMazePing(createClient(), guildId, pingPercent, discordId)
+      toast.success('Ping queued.', 'The bot posts it within about 20 seconds.')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not queue the ping.')
     } finally {
       setBusy(null)
     }
@@ -668,6 +759,174 @@ export default function MazePage() {
             </CardBody>
           </Card>
 
+          <Card>
+            <CardHeader
+              title="Manual ping"
+              description="Post a discount ping to this server right now"
+              icon={<Send className="h-5 w-5" />}
+            />
+            <CardBody className="space-y-4">
+              <Field label="Discount">
+                <Select
+                  value={pingPercent}
+                  onChange={(event) => setPingPercent(event.target.value)}
+                >
+                  {MAZE_WINDOW_PERCENTS.map((percent) => (
+                    <option key={percent} value={percent}>
+                      {percent}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Button onClick={sendPing} loading={busy === 'ping'} className="w-full">
+                <Send className="h-4 w-4" />
+                Send ping now
+              </Button>
+              <p className="text-xs leading-relaxed text-slate-500">
+                Posted within about 20 seconds. Staff can also use !maze ping 20% in Discord.
+              </p>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Discount schedule"
+              description="Hours after the maze start — edit it when the game changes the timings"
+              icon={<SlidersHorizontal className="h-5 w-5" />}
+              action={
+                <Badge tone={savedWindows ? 'purple' : 'slate'}>
+                  {savedWindows ? 'Edited' : 'Built-in'}
+                </Badge>
+              }
+            />
+            <CardBody className="space-y-4">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  <span className="w-16">From h</span>
+                  <span className="w-16">To h</span>
+                  <span className="flex-1">Discount</span>
+                  <span className="w-9" />
+                </div>
+                {windowDraft.map((window, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <div className="w-16">
+                      <TextInput
+                        type="number"
+                        min={0}
+                        max={MAZE_DURATION_HOURS}
+                        value={Number.isFinite(window.start) ? window.start : ''}
+                        onChange={(event) =>
+                          setWindowDraft((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, start: Number(event.target.value) }
+                                : item,
+                            ),
+                          )
+                        }
+                        aria-label={`Window ${index + 1} start hour`}
+                      />
+                    </div>
+                    <div className="w-16">
+                      <TextInput
+                        type="number"
+                        min={0}
+                        max={MAZE_DURATION_HOURS}
+                        value={Number.isFinite(window.end) ? window.end : ''}
+                        onChange={(event) =>
+                          setWindowDraft((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, end: Number(event.target.value) }
+                                : item,
+                            ),
+                          )
+                        }
+                        aria-label={`Window ${index + 1} end hour`}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <Select
+                        value={window.percent}
+                        onChange={(event) =>
+                          setWindowDraft((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, percent: event.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                        aria-label={`Window ${index + 1} discount`}
+                      >
+                        {Array.from(new Set([...MAZE_WINDOW_PERCENTS, window.percent])).map(
+                          (percent) => (
+                            <option key={percent} value={percent}>
+                              {percent}
+                            </option>
+                          ),
+                        )}
+                      </Select>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      onClick={() =>
+                        setWindowDraft((current) =>
+                          current.filter((_, itemIndex) => itemIndex !== index),
+                        )
+                      }
+                      disabled={windowDraft.length === 1}
+                      aria-label={`Remove window ${index + 1}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={() =>
+                  setWindowDraft((current) => {
+                    const lastEnd = current.length ? current[current.length - 1].end : 0
+                    return [
+                      ...current,
+                      {
+                        start: lastEnd,
+                        end: Math.min(lastEnd + 6, MAZE_DURATION_HOURS),
+                        percent: '10%',
+                      },
+                    ]
+                  })
+                }
+              >
+                <Plus className="h-4 w-4" />
+                Add discount window
+              </Button>
+
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={saveLadder} loading={busy === 'ladder'} className="flex-1">
+                  <Save className="h-4 w-4" />
+                  Save schedule
+                </Button>
+                {savedWindows ? (
+                  <Button
+                    variant="secondary"
+                    onClick={resetLadder}
+                    loading={busy === 'reset-ladder'}
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Built-in
+                  </Button>
+                ) : null}
+              </div>
+              <p className="text-xs leading-relaxed text-slate-500">
+                Every server gets the same schedule. Discord staff can change it there too with
+                !maze windows set 0-5:50 5-13:20 ...
+              </p>
+            </CardBody>
+          </Card>
         </div>
       </div>
     </div>

@@ -100,7 +100,11 @@ export default function OverviewPage() {
   const mazeEvent = summary?.mazeEvent
   const mazeStart = toDate(mazeEvent?.event_start)
   const mazeEnd = toDate(mazeEvent?.event_end)
-  const moments = useMemo(() => mazeMoments(mazeStart, now), [mazeStart, now])
+  const mazeWindows = summary?.mazeWindows ?? undefined
+  const moments = useMemo(
+    () => mazeMoments(mazeStart, now, mazeWindows),
+    [mazeStart, now, mazeWindows],
+  )
   const liveMoment = currentMazeMoment(moments)
   const upcoming = nextMazeMoment(moments)
   const upcomingChunks = useMemo(() => moments.filter((moment) => !moment.past), [moments])
