@@ -1,3 +1,4 @@
+import { UNLIMITED_TEAMS } from './plans'
 import { isSnowflake } from './format'
 
 /**
@@ -180,13 +181,14 @@ export function buildSetupSummary(input: SetupSummaryInput): SetupSummary {
   const hasTeamLimit =
     input.maxTeams !== null && input.maxTeams !== undefined && input.maxTeams > 0
   const maxTeams = hasTeamLimit ? Math.floor(input.maxTeams as number) : 1
+  const teamLimitText = maxTeams >= UNLIMITED_TEAMS ? 'Unlimited' : String(maxTeams)
 
   const tasks: SetupTask[] = [
     {
       key: 'teams',
       label: 'Teams',
       value: hasTeamLimit
-        ? `${teamCount} of ${maxTeams}`
+        ? `${teamCount} of ${teamLimitText}`
         : `${teamCount} ${teamCount === 1 ? 'team' : 'teams'}`,
       configured: teamCount > 0,
     },

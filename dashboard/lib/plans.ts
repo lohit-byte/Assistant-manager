@@ -1,10 +1,6 @@
-import { PRICING_PLANS, type PlanId, type PricingPlan } from './pricing'
+import { PRICING_PLANS, UNLIMITED_TEAMS, type PlanId, type PricingPlan } from './pricing'
 
-/**
- * Elite is sold as "unlimited teams". We keep a numeric cap so every existing
- * `used < max_teams` check keeps working; the UI prints "Unlimited" for this value.
- */
-export const UNLIMITED_TEAMS = 1_000_000
+export { UNLIMITED_TEAMS }
 
 export const PLAN_TEAMS: Record<PlanId, number> = {
   starter_monthly: 1,

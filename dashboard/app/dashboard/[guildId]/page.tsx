@@ -17,6 +17,7 @@ import {
   Users,
 } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
+import { effectiveTeamLimit } from '@/lib/plans'
 import { WarSpine } from '@/components/war-spine'
 import {
   Alert,
@@ -112,7 +113,7 @@ export default function OverviewPage() {
   // Server setup page, which the nav, this card and Settings all point at.
   const setup = buildSetupSummary({
     teamCount: teams.length,
-    maxTeams: guild.max_teams,
+    maxTeams: effectiveTeamLimit(guild),
     leaderRoleId: guild.leader_role_id,
     coleadRoleId: guild.colead_role_id,
     staffRoleId: guild.staff_role_id,

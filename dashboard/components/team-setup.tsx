@@ -24,6 +24,7 @@ import {
   type TeamValues,
 } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
+import { effectiveTeamLimit, planLabel, teamLimitLabel } from '@/lib/plans'
 import { isSnowflake } from '@/lib/format'
 import {
   GUILD_SETUP_LABELS,
@@ -140,7 +141,9 @@ export function TeamSetup({
     setServerErrors((current) => ({ ...current, [field]: undefined }))
   }
 
-  const maxTeams = guild.max_teams ?? 1
+  const maxTeams = effectiveTeamLimit(guild)
+  const maxTeamsLabel = teamLimitLabel(maxTeams)
+  const planText = guild.premium_status === 'trial' ? 'Free trial' : planLabel(guild)
   const atTeamLimit = teams.length >= maxTeams
   const detectedCount = detectedWarChannels.length + detectedRaceChannels.length
 
@@ -533,7 +536,7 @@ export function TeamSetup({
         title="Server setup"
         description="Staff only. Each subteam pairs one war channel with one race channel — link them, add captains, and set the roles the bot treats as staff."
         icon={<ServerCog className="h-5 w-5" />}
-        action={<Badge tone="purple">{teams.length}/{maxTeams} teams</Badge>}
+        action={<Badge tone="purple">{teams.length}/{maxTeamsLabel} teams</Badge>}
       />
       <CardBody className="space-y-5">
         <div className="border border-white/[0.08] bg-white/[0.02] px-4 py-3.5">
@@ -629,9 +632,10 @@ export function TeamSetup({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs leading-relaxed text-slate-500">
             Plan:{' '}
-            <span className="font-semibold text-slate-300">{guild.premium_status ?? 'trial'}</span> ·
-            up to {maxTeams} {maxTeams === 1 ? 'team' : 'teams'} on this plan, and each team pairs one
-            war channel with one race channel.
+            <span className="font-semibold text-slate-300">{planText}</span> · up to{' '}
+            {maxTeamsLabel === 'Unlimited' ? 'unlimited' : maxTeamsLabel}{' '}
+            {maxTeams === 1 ? 'team' : 'teams'} on this plan, and each team pairs one war channel
+            with one race channel.
           </p>
           <Button onClick={saveServer} loading={busy === 'server'} size="sm">
             <Save className="h-3.5 w-3.5" /> Save server setup
@@ -655,7 +659,7 @@ export function TeamSetup({
 
         {atTeamLimit ? (
           <p className="text-xs leading-relaxed text-slate-500">
-            You’ve reached the {maxTeams}-team limit on your plan. Delete a team or upgrade to add
+            You’ve reached the {maxTeamsLabel}-team limit on your plan. Delete a team or upgrade to add
             more.
           </p>
         ) : null}

@@ -10,6 +10,7 @@ import { StaffOnlyPanel } from '@/components/staff-only'
 import { formatDate, toDate } from '@/lib/format'
 import { PRICING_PLANS, PLAN_FEATURES, formatPrice, detectCurrency, perMonthPrice, yearlySavings, Currency } from '@/lib/pricing'
 import { TRIAL_DAYS } from '@/lib/constants'
+import { effectiveTeamLimit, isPremiumActive, planLabel, teamLimitLabel } from '@/lib/plans'
 import { load as loadCashfree } from '@cashfreepayments/cashfree-js'
 import { initializePaddle, Paddle } from '@paddle/paddle-js'
 
@@ -68,9 +69,11 @@ function BillingContent() {
 
   const status = guild?.premium_status ?? 'expired'
   const premiumEnd = toDate(guild?.premium_ends_at)
-  const isPremium = status === 'premium' && premiumEnd !== null && premiumEnd.getTime() > Date.now()
+  const isPremium = isPremiumActive(guild ?? {})
   const isTrial = status === 'trial'
   const trialEnd = toDate(guild?.trial_ends_at)
+  const teamLimit = effectiveTeamLimit(guild ?? {})
+  const activePlanLabel = planLabel(guild ?? {})
   
   // Auto-polling for Cashfree webhook delay (only if returning from checkout)
   useEffect(() => {
@@ -186,6 +189,11 @@ function BillingContent() {
                 Your subscription has ended. The bot is now paused for this server. 
                 <strong className="text-danger-300 ml-1">Your alliance is currently missing war timers, race tracking, and maze pings.</strong>
               </p>
+              <p className="text-xs text-slate-500 mt-2">
+                {premiumEnd ? `Tracking paused since ${formatDate(premiumEnd)}. ` : ''}
+                Nothing was deleted: teams, aliases, settings and war/race/maze history are kept.
+                Reactivating takes one click — no setup again.
+              </p>
             </div>
           </div>
           <div className="bg-slate-950 rounded-lg p-6 border border-slate-800 mb-6">
@@ -291,19 +299,33 @@ function BillingContent() {
               <ShieldCheck className="w-8 h-8" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-slate-50">{isPremium ? 'Premium Active' : 'Free Trial Active'}</h2>
+              <h2 className="text-xl font-bold text-slate-50">
+                {isPremium ? `${activePlanLabel} active` : 'Free Trial Active'}
+              </h2>
               <p className="text-sm text-slate-400 mt-1">
-                {isPremium 
-                  ? 'Thank you for supporting the bot! Your server has full access.' 
+                {isPremium
+                  ? `Thank you for supporting the bot — all features are unlocked and this server has ${teamLimitLabel(teamLimit).toLowerCase()} team${teamLimit === 1 ? '' : 's'}.`
                   : `You have ${daysLeft} days left in your trial, which ends ${formatDate(trialEnd)}. Nothing is deleted when it ends — the board just pauses.`}
               </p>
-              
-              {/* EXPIRY BAR */}
+
+              {/* EXPIRY / LIFETIME */}
               {isPremium && premiumEnd && (
                 <div className="mt-3 inline-flex items-center gap-2 bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold text-accent-300">
                   <Clock className="w-3.5 h-3.5" />
-                  Premium expires in {formatRemainingTime(premiumEnd)}
+                  Premium expires in {formatRemainingTime(premiumEnd)} · {formatDate(premiumEnd)}
                 </div>
+              )}
+              {isPremium && !premiumEnd && (
+                <div className="mt-3 inline-flex items-center gap-2 bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold text-accent-300">
+                  <Check className="w-3.5 h-3.5" />
+                  Lifetime access (manual grant)
+                </div>
+              )}
+              {isPremium && premiumEnd && (
+                <p className="mt-2 text-[11px] text-slate-500">
+                  Reminders 3 days and 1 day before; tracking pauses on {formatDate(premiumEnd)}.
+                  Renewing takes one click and nothing needs re-entering.
+                </p>
               )}
             </div>
           </div>
@@ -375,9 +397,15 @@ function BillingContent() {
                       {loadingPlan === plan.id ? (
                         <><Loader2 className="w-5 h-5 animate-spin" /> Processing…</>
                       ) : (
-                        <>{isPremium ? 'Extend Plan' : 'Select Plan'} <ArrowRight className="w-4 h-4" /></>
+                        <>{isPremium ? 'Extend' : 'Select'} · {formatPrice(plan.price[currency], currency)} <ArrowRight className="w-4 h-4" /></>
                       )}
                     </button>
+                    {isPremium && plan.max_teams < teamLimit ? (
+                      <p className="mt-2 text-[11px] leading-relaxed text-amber-300/80">
+                        Switching to {plan.name} lowers this server to {teamLimitLabel(plan.max_teams)}{' '}
+                        team{plan.max_teams === 1 ? '' : 's'} immediately; paid time still stacks.
+                      </p>
+                    ) : null}
                   </div>
                 </CardBody>
               </Card>
@@ -409,6 +437,12 @@ function BillingContent() {
                     <span className="mt-0.5 block">
                       {daysLeft} of {TRIAL_DAYS} trial days left. All six tools unlocked, no card
                       on file.
+                    </span>
+                  </li>
+                  <li>
+                    <span className="mono-label block text-steel-400">Day 5</span>
+                    <span className="mt-0.5 block">
+                      Reminder that the trial ends in 2 days. The bot keeps running until Day {TRIAL_DAYS}.
                     </span>
                   </li>
                   <li>

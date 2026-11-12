@@ -1,6 +1,9 @@
 export type Currency = 'USD' | 'INR'
 export type PlanId = 'starter_monthly' | 'pro_monthly' | 'elite_yearly'
 
+/** Elite is sold as unlimited teams; the numeric sentinel keeps capacity checks simple. */
+export const UNLIMITED_TEAMS = 1_000_000
+
 export interface PricingPlan {
   id: PlanId
   name: string
@@ -45,7 +48,7 @@ export const PRICING_PLANS: PricingPlan[] = [
     cadence: 'year',
     description: 'Full access for a full year at the best rate, with Unlimited teams and Priority support.',
     price: { USD: 84, INR: 7999 },
-    max_teams: 99,
+    max_teams: UNLIMITED_TEAMS,
     badge: 'Save 30%',
     paddlePriceId: 'pri_01m6wyn8zyn445fawgtzttagxe',
   },

@@ -46,7 +46,7 @@ function compile() {
       '--moduleResolution',
       'node',
       '--lib',
-      'es2019',
+      'es2019,dom',
       '--strict',
       '--esModuleInterop',
       '--skipLibCheck',
@@ -215,6 +215,14 @@ check('buildSetupSummary starts from a head start, never 0%', () => {
   if (summary.complete) problems.push('empty setup marked complete')
   if (!summary.next || summary.next.key !== 'teams') problems.push(`next = ${summary.next && summary.next.key}, want teams`)
   if (summary.next && summary.next.value !== '0 of 3') problems.push(`teams value = ${summary.next && summary.next.value}`)
+  return problems
+})
+
+check('buildSetupSummary prints Unlimited instead of the Elite sentinel', () => {
+  const summary = buildSetupSummary({ teamCount: 0, maxTeams: 1000000 })
+  const problems = []
+  const teams = summary.tasks.find((task) => task.key === 'teams')
+  if (!teams || teams.value !== '0 of Unlimited') problems.push(`teams value = ${teams && teams.value}`)
   return problems
 })
 
