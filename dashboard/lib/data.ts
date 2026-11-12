@@ -188,21 +188,38 @@ export async function listMazeEvents(
   return (data as MazeEvent[] | null) ?? []
 }
 
-/** Add a predicted maze to the shared calendar (platform owner only in the UI). */
+/**
+ * Add a predicted maze to the shared calendar (platform owner only in the UI).
+ * Select-then-write instead of an upsert on event_start: the live database does not
+ * guarantee a unique index there, and a confirmed event must not be demoted to
+ * "scheduled" by re-adding the same date.
+ */
 export async function addMazeEvent(
   supabase: SupabaseClient,
   values: { event_start: string; event_end: string },
 ): Promise<void> {
-  const { error } = await supabase.from('maze_events').upsert(
-    {
-      event_start: values.event_start,
-      event_end: values.event_end,
-      maze_type: '7d',
-      status: 'scheduled',
-      source: 'calendar',
-    },
-    { onConflict: 'event_start' },
-  )
+  const payload = {
+    event_start: values.event_start,
+    event_end: values.event_end,
+    maze_type: '7d',
+    status: 'scheduled',
+    source: 'calendar',
+  }
+  const { data: existing, error: readError } = await supabase
+    .from('maze_events')
+    .select('id,status')
+    .eq('event_start', values.event_start)
+    .limit(1)
+    .maybeSingle()
+  throwIfError(readError, 'Could not check the maze calendar')
+
+  if (existing?.status === 'confirmed') return // already the real event, nothing to add
+  if (existing) {
+    const { error } = await supabase.from('maze_events').update(payload).eq('id', existing.id)
+    throwIfError(error, 'Could not add the maze event')
+    return
+  }
+  const { error } = await supabase.from('maze_events').insert(payload)
   throwIfError(error, 'Could not add the maze event')
 }
 
@@ -338,7 +355,8 @@ export async function saveMazeSchedule(
   supabase: SupabaseClient,
   guildId: string,
   values: {
-    channel_id: string | null
+    /** Never null: maze_schedules.channel_id is NOT NULL in the live database. */
+    channel_id: string
     ping_enabled_global: boolean
     ping_mention: MazePingMention
     ping_role_id: string | null

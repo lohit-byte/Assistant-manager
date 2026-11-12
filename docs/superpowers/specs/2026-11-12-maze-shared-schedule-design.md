@@ -137,6 +137,19 @@ Database (`shared/schema.sql`, idempotent migration block):
 4. Owner: add the next maze week on the Maze page (or `!maze cal add DD/MM`). When the maze opens,
    paste the countdown once; if the calendar was right it only flips the status to confirmed.
 
+## Live-database notes (checked against the production schema)
+
+- `maze_schedules.channel_id` is `NOT NULL` in production (the repo's fresh-install schema has it
+  nullable). The dashboard now falls back to `guilds.maze_channel_id` and refuses to save without a
+  channel; the bot always writes the command channel.
+- `maze_events.event_start` has no guaranteed unique index in production (the migration creates one,
+  but the code no longer depends on it): calendar adds are select-then-write, and re-adding a
+  confirmed date is a no-op instead of demoting it to "scheduled".
+- RLS policies for the three new tables must exist for the dashboard (anon key) to read/write them;
+  the bot is unaffected because it uses the service role. `shared/schema.sql` carries the policies.
+  Verify with
+  `select tablename, policyname from pg_policies where schemaname = 'public' and tablename like 'maze%';`
+
 ## Risks and limits
 
 - The ladder is anchored to the **event start**, and the window start at +0 h is assumed to be the

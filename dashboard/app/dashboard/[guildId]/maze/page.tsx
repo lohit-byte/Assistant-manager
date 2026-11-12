@@ -210,7 +210,7 @@ function DiscountTimeline({ moments }: { moments: MazeMoment[] }) {
 }
 
 export default function MazePage() {
-  const { guildId, isStaff } = useGuild()
+  const { guildId, guild, isStaff } = useGuild()
   const toast = useToast()
   const now = useNow(30_000)
 
@@ -314,6 +314,15 @@ export default function MazePage() {
       setError('The alert channel must be a Discord channel ID (17–20 digits).')
       return
     }
+    // maze_schedules.channel_id is NOT NULL in the live database, so fall back to the
+    // server's configured maze channel instead of writing null.
+    const resolvedChannel = channelId.trim() || (guild.maze_channel_id ? String(guild.maze_channel_id) : '')
+    if (!resolvedChannel) {
+      setError(
+        'Pick an alert channel ID — or set this server\'s maze channel on the Server setup page first.',
+      )
+      return
+    }
     if (mention === 'role' && roleId.trim() && !isSnowflake(roleId)) {
       setError('The ping role must be a Discord role ID (17–20 digits).')
       return
@@ -322,7 +331,7 @@ export default function MazePage() {
     setError(null)
     try {
       await saveMazeSchedule(createClient(), guildId, {
-        channel_id: channelId.trim() || null,
+        channel_id: resolvedChannel,
         ping_enabled_global: enabled,
         ping_mention: mention,
         ping_role_id: roleId.trim() || null,
@@ -706,7 +715,11 @@ export default function MazePage() {
 
               <Field
                 label="Alert channel ID"
-                hint="Optional: leave blank to use this server's maze channel from Server setup."
+                hint={
+                  guild.maze_channel_id
+                    ? 'Leave blank to use this server\'s maze channel from Server setup.'
+                    : 'Required until this server has a maze channel on the Server setup page.'
+                }
               >
                 <TextInput
                   value={channelId}

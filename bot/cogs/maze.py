@@ -962,21 +962,39 @@ class MazeTracker(commands.Cog):
             if not start:
                 return await ctx.send("❌ Usage: `!maze cal add 05/11` (start date, 11:00 UTC).")
             end = start + MAZE_DURATION
+            payload = {
+                "event_start": start.isoformat(),
+                "event_end": end.isoformat(),
+                "maze_type": "7d",
+                "status": "scheduled",
+                "source": "calendar",
+            }
             try:
-                await asyncio.to_thread(
+                # Select-then-write: the live table has no unique index on event_start,
+                # and re-adding a confirmed date must not demote it to "scheduled".
+                existing = await asyncio.to_thread(
                     supabase.table("maze_events")
-                    .upsert(
-                        {
-                            "event_start": start.isoformat(),
-                            "event_end": end.isoformat(),
-                            "maze_type": "7d",
-                            "status": "scheduled",
-                            "source": "calendar",
-                        },
-                        on_conflict="event_start",
-                    )
+                    .select("id,status")
+                    .eq("event_start", start.isoformat())
+                    .limit(1)
                     .execute
                 )
+                row = existing.data[0] if existing.data else None
+                if row and row.get("status") == "confirmed":
+                    return await ctx.send(
+                        f"ℹ️ {stamp(start)} is already confirmed in game — nothing to add."
+                    )
+                if row:
+                    await asyncio.to_thread(
+                        supabase.table("maze_events")
+                        .update(payload)
+                        .eq("id", row["id"])
+                        .execute
+                    )
+                else:
+                    await asyncio.to_thread(
+                        supabase.table("maze_events").insert(payload).execute
+                    )
             except Exception as exc:
                 return await ctx.send(f"❌ Database error: {exc}")
             await self.sync()
