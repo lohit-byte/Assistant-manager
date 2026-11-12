@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { Paddle, Environment, EventName } from '@paddle/paddle-node-sdk'
-import { PRICING_PLANS } from '@/lib/pricing'
+import { buildSubscriptionUpsert, planFromPaddleItems } from '@/lib/plans'
+import { upsertGuildSubscription } from '@/lib/subscription'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -28,23 +29,24 @@ export async function POST(request: Request) {
       const transaction = event.data
       const customData = transaction.customData as { guildId?: string; planId?: string } | null
       const guildId = customData?.guildId
-      const planId = customData?.planId
 
       if (!guildId || !/^\d+$/.test(String(guildId))) {
         console.warn('Paddle webhook: transaction has no valid guildId, ignoring', transaction.id)
         return NextResponse.json({ received: true })
       }
 
-      const plan =
-        PRICING_PLANS.find((item) => item.id === planId) ??
-        PRICING_PLANS.find((item) => item.id === 'starter_monthly')
-
-      if (!plan) {
-        console.error('Paddle webhook: no plan metadata available')
-        return NextResponse.json({ received: true })
+      // The paid price is authoritative; customData is browser-supplied, so it is only a
+      // fallback when Paddle sends a price id this build does not know yet.
+      const paidPlan = planFromPaddleItems(transaction.items, null)
+      const planId = paidPlan ?? planFromPaddleItems([], customData?.planId) ?? 'starter_monthly'
+      if (!paidPlan) {
+        console.error(
+          'Paddle webhook: no known price on transaction',
+          transaction.id,
+          'falling back to',
+          planId,
+        )
       }
-
-      const planDays = plan.cadence === 'year' ? 365 : 30
 
       // Paddle retries webhooks, so make delivery idempotent.
       const { data: existing } = await supabaseAdmin
@@ -57,29 +59,11 @@ export async function POST(request: Request) {
         return NextResponse.json({ received: true })
       }
 
-      const now = new Date()
-      const currentEnd = existing?.premium_ends_at ? new Date(existing.premium_ends_at) : null
-      const baseDate = currentEnd && currentEnd > now ? currentEnd : now
-      const premiumEndsAt = new Date(baseDate.getTime() + planDays * 24 * 60 * 60 * 1000)
-
-      // Upsert so a payment still activates a guild whose row was never created.
-      const { error } = await supabaseAdmin.from('guilds').upsert(
-        {
-          guild_id: guildId,
-          premium_status: 'premium',
-          max_teams: plan.max_teams,
-          premium_ends_at: premiumEndsAt.toISOString(),
-          last_order_id: transaction.id,
-          // Let the bot send fresh renewal reminders for the new period.
-          last_renewal_ping: 0,
-        },
-        { onConflict: 'guild_id' },
-      )
-
-      if (error) throw error
+      const update = buildSubscriptionUpsert(existing ?? null, planId, transaction.id)
+      await upsertGuildSubscription(supabaseAdmin, guildId, update)
 
       console.log(
-        `✅ Paddle Payment Success: upgraded guild ${guildId} (${plan.id}) until ${premiumEndsAt.toISOString()}`,
+        `✅ Paddle Payment Success: upgraded guild ${guildId} (${planId}) until ${update.premium_ends_at}`,
       )
     }
 
