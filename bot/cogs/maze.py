@@ -143,7 +143,7 @@ class MazeTracker(commands.Cog):
                 .select("windows")
                 .eq("id", 1)
                 .limit(1)
-                .execute
+                .execute()
             )
         except Exception as exc:
             self._warn_once("settings", f"Maze settings lookup failed: {exc!r}")
@@ -179,7 +179,7 @@ class MazeTracker(commands.Cog):
                 .select("maze_channel_id")
                 .eq("guild_id", row["guild_id"])
                 .limit(1)
-                .execute
+                .execute()
             )
             configured = res.data[0].get("maze_channel_id") if res.data else None
         except Exception:
@@ -207,7 +207,7 @@ class MazeTracker(commands.Cog):
                 .select("*")
                 .order("created_at")
                 .limit(5)
-                .execute
+                .execute()
             )
         except Exception as exc:
             self._warn_once("ping-queue", f"Maze ping queue lookup failed: {exc!r}")
@@ -223,7 +223,7 @@ class MazeTracker(commands.Cog):
                     lambda ping_id=ping_id: supabase.table("maze_pings")
                     .delete()
                     .eq("id", ping_id)
-                    .execute
+                    .execute()
                 )
             except Exception as exc:
                 print(f"Maze ping cleanup failed: {exc!r}")
@@ -332,14 +332,14 @@ class MazeTracker(commands.Cog):
                     .select("id,event_start")
                     .eq("id", event["id"])
                     .limit(1)
-                    .execute
+                    .execute()
                 ),
                 asyncio.to_thread(
                     lambda: supabase.table("maze_schedules")
                     .select("ping_enabled_global,ping_mention,ping_role_id,sent_pings")
                     .eq("guild_id", guild_id)
                     .limit(1)
-                    .execute
+                    .execute()
                 ),
             )
         except Exception as exc:
