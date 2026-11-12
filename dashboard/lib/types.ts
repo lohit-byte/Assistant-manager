@@ -19,6 +19,7 @@ export interface Guild {
   staff_role_id: Id | null
   member_role_id: Id | null
   max_teams: number | null
+  plan: string | null
   created_at: string | null
 }
 

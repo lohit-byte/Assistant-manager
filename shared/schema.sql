@@ -329,3 +329,31 @@ CREATE POLICY player_ping_settings_authenticated ON player_ping_settings
 -- longer used by the bot; teams own those channels now. maze_channel_id and the
 -- leader / helper (co-lead) / staff role ids stay guild-level and are edited from the
 -- dashboard's Server setup page.
+
+-- ----------------------------------------------------------------------------
+-- MIGRATION 2026-12: plan tiers, unlimited Elite, locked subscription columns.
+-- Run the whole block in the Supabase SQL editor. Idempotent; safe to re-run.
+-- ----------------------------------------------------------------------------
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS plan TEXT; -- 'starter_monthly' | 'pro_monthly' | 'elite_yearly'
+
+-- Backfill legacy paid guilds from the old team cap (99 was Elite).
+UPDATE guilds
+   SET plan = CASE
+         WHEN max_teams IS NULL OR max_teams <= 1 THEN 'starter_monthly'
+         WHEN max_teams <= 3 THEN 'pro_monthly'
+         ELSE 'elite_yearly'
+       END
+ WHERE plan IS NULL AND premium_status = 'premium';
+
+-- Elite is sold as unlimited teams. 1e6 is the numeric sentinel the bot and dashboard read.
+UPDATE guilds
+   SET max_teams = 1000000
+ WHERE plan = 'elite_yearly' AND (max_teams IS NULL OR max_teams < 1000000);
+
+-- Subscription columns are written only by the service role (webhooks, bot, SQL editor).
+-- The dashboard keeps saving its server-config columns from the browser.
+REVOKE UPDATE ON public.guilds FROM authenticated, anon;
+REVOKE INSERT, DELETE ON public.guilds FROM authenticated, anon;
+GRANT UPDATE (war_channel_id, race_channel_id, maze_channel_id, absence_channel_id,
+              leader_role_id, colead_role_id, staff_role_id, member_role_id)
+  ON public.guilds TO authenticated;

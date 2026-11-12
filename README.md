@@ -121,7 +121,9 @@ file is ignored; a single bad node is skipped — the rest of the sheet keeps wo
 1. **Supabase:** open `shared/schema.sql` and run everything from the
    `MIGRATIONS for existing databases` heading to the end of the file in the SQL editor
    (paste the whole block in one go). It adds the missing columns, creates `teams`,
-   `team_captains` and `war_logs`, and installs the idempotent RLS policies. Safe to re-run.
+   `team_captains` and `war_logs`, installs the idempotent RLS policies, and (2026-12 block)
+   adds `guilds.plan`, makes Elite unlimited and locks the subscription columns to the
+   service role. Safe to re-run.
    The `CREATE TABLE` statements earlier in the file are the fresh-install schema and are
    not part of this migration.
 2. **Bot:** upload `nodesheet.json` (optional) and redeploy. The bot keeps working without the
@@ -132,10 +134,14 @@ file is ignored; a single bad node is skipped — the rest of the sheet keeps wo
 **Security model:** the bot talks to Supabase with the service-role key (it bypasses RLS);
 the dashboard uses the anon key with a signed-in Supabase user. Every dashboard table now has
 RLS enabled with an `authenticated` policy, so anonymous PostgREST calls cannot read or write
-it (including `guilds.premium_status`). Staff/captain *scoping* is still enforced by the UI and
-by the bot's service-role code, not by Postgres — a signed-in user who crafts API calls can
-write guild data directly. If that trust model needs tightening, move dashboard writes behind a
-server route that verifies Discord permissions before using the service role.
+it (including `guilds.premium_status`). Subscription columns (`premium_status`, `plan`,
+`max_teams`, `premium_ends_at`, `trial_ends_at`, `last_order_id`, `last_renewal_ping`,
+`is_blacklisted`) are writable only by the service role; signed-in users keep UPDATE on the
+server-config columns and cannot INSERT/DELETE guild rows. Staff/captain *scoping* is still
+enforced by the UI and by the bot's service-role code, not by Postgres — a signed-in user who
+crafts API calls can still edit another guild's channels/roles. If that trust model needs
+tightening, move dashboard writes behind a server route that verifies Discord permissions
+before using the service role.
 
 
 ## 🧪 Tests
