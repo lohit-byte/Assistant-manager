@@ -166,6 +166,72 @@ def test_war_missing_unknown_subcommand_does_not_remove(clean_db):
     assert any("Usage" in text for text in ctx.texts)
 
 
+def _seed_two_missing_players(db, now):
+    seed_alias(db, 200, "sam")
+    seed_alias(db, 201, "bob")
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(), missing_list=[])
+
+
+def test_war_missing_add_accepts_several_mentions_in_one_command(clean_db):
+    """Staff paste every name at once: treat each @mention as its own player."""
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    _seed_two_missing_players(db, now)
+    ctx = make_ctx(channel_id=CHANNEL)
+    for member_id, name in ((200, "Sam"), (201, "Bob")):
+        ctx.guild.members.append(FakeMember(member_id, name, administrator=False, guild=ctx.guild))
+
+    run(war_cog().war_missing(ctx, "add", "<@200> <@201>"))
+
+    missing = db.one("wars", channel_id=CHANNEL)["missing_list"]
+    assert {entry["name"] for entry in missing} == {"sam", "bob"}
+    text = "\n".join(ctx.texts)
+    assert "No alias" not in text
+    assert "2 player" in text
+
+
+def test_war_missing_add_reports_an_unknown_alias_next_to_the_valid_ones(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    _seed_two_missing_players(db, now)
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(war_cog().war_missing(ctx, "add", "<@200>, ghost"))
+
+    missing = db.one("wars", channel_id=CHANNEL)["missing_list"]
+    assert [entry["name"] for entry in missing] == ["sam"]
+    text = "\n".join(ctx.texts)
+    assert "sam" in text
+    assert "No alias" in text and "ghost" in text
+
+
+def test_war_missing_add_keeps_an_alias_name_with_spaces_whole(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_alias(db, 200, "fbw lloyd frontiera")
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(), missing_list=[])
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(war_cog().war_missing(ctx, "add", "fbw lloyd frontiera"))
+
+    missing = db.one("wars", channel_id=CHANNEL)["missing_list"]
+    assert [entry["name"] for entry in missing] == ["fbw lloyd frontiera"]
+
+
+def test_war_missing_remove_accepts_several_mentions(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_alias(db, 200, "sam")
+    seed_alias(db, 201, "bob")
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(),
+             missing_list=[{"name": "sam", "id": 200}, {"name": "bob", "id": 201}])
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(war_cog().war_missing(ctx, "remove", "<@200> <@201>"))
+
+    assert db.one("wars", channel_id=CHANNEL)["missing_list"] == []
+
+
 def test_attacks_done_message_is_recorded(clean_db):
     db = clean_db
     seed_alias(db, 1, "sam")
@@ -1111,6 +1177,22 @@ def test_war_absent_add_and_remove_by_alias(clean_db):
 
     run(tracker.war_absent(ctx, "remove", "sam"))
     assert db.one("wars", channel_id=CHANNEL)["absent_list"] == []
+
+
+def test_war_absent_add_accepts_several_mentions(clean_db):
+    db = clean_db
+    now = datetime.now(timezone.utc)
+    seed_alias(db, 200, "sam")
+    seed_alias(db, 201, "bob")
+    seed_war(db, war_start=(now - timedelta(hours=1)).isoformat(),
+             missing_list=[{"name": "sam"}, {"name": "bob"}], absent_list=[])
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(war_cog().war_absent(ctx, "add", "<@200> <@201>"))
+
+    row = db.one("wars", channel_id=CHANNEL)
+    assert {entry["name"] for entry in row["absent_list"]} == {"sam", "bob"}
+    assert row["missing_list"] == []
 
 
 # -------------------------------------------------- feature: team captains

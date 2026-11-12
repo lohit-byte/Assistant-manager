@@ -139,6 +139,44 @@ def _short(text, limit):
     text = str(text or "").strip() or "No reason"
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
+
+MENTION_RE = re.compile(r"<@!?(\d+)>")
+
+
+def split_targets(raw):
+    """Split one staff argument into the players it names.
+
+    ``!war missing add @a @b @c`` arrives as a single argument. Treating the
+    whole string as one alias is what produced "No alias <@1> <@2>" even though
+    every alias existed. Alias names themselves may contain spaces, so only
+    split on boundaries we can be sure of: each @mention, and
+    comma/semicolon/newline-separated names.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return []
+    mentions = [f"<@{mid}>" for mid in MENTION_RE.findall(text)]
+    rest = MENTION_RE.sub(" ", text)
+    names = [part.strip() for part in re.split(r"[,;\n]+", rest) if part.strip()]
+    if not mentions:
+        targets = names if len(names) > 1 else [text]
+    else:
+        targets = mentions + names
+    return list(dict.fromkeys(targets))
+
+
+def _players_text(names):
+    return f"{len(names)} {'player' if len(names) == 1 else 'players'}"
+
+
+def _name_list(names):
+    return ", ".join(f"`{name}`" for name in names)
+
+
+def _reply_lines(lines, limit=1900):
+    """One reply for several players, inside Discord's 2000-char message cap."""
+    return "\n".join(line for line in lines if line)[:limit]
+
 def progress_bar(current, total, length=20):
     if total == 0: return "░" * length
     fraction = max(0.0, min(1.0, current / total)) 
@@ -1154,6 +1192,29 @@ class WarTracker(commands.Cog):
             return (row.get("alias_name") or "").lower() if row else None
         return raw.lower()
 
+    async def _resolve_targets(self, ctx, args):
+        """Resolve every player named in one argument; return (rows, error lines)."""
+        targets = split_targets(args)
+        if not targets:
+            return [], []
+        team = await asyncio.to_thread(get_team_by_channel, ctx.guild.id, ctx.channel.id)
+        roster = (await asyncio.to_thread(get_team_players, ctx.guild.id, team["id"])
+                  if team else None)
+        rows, errors = [], []
+        for target in targets:
+            row, error = await self._alias_target(ctx, target)
+            if error:
+                errors.append(error)
+                continue
+            if roster and int(row.get("discord_id") or 0) not in roster:
+                errors.append(
+                    f"❌ `{(row.get('alias_name') or '').lower()}` isn't on "
+                    f"**{team.get('name')}**'s roster. Add them with "
+                    f"`!team add @user {team.get('name')}` first.")
+                continue
+            rows.append(row)
+        return rows, errors
+
     async def war_missing(self, ctx, subaction, args):
         sub = (subaction or "list").lower()
         if sub not in ("list", "add", "remove"):
@@ -1171,41 +1232,50 @@ class WarTracker(commands.Cog):
                     return await ctx.send("✅ The missing list is empty.")
                 return await ctx.send("⚠️ **Missing:** " + (self._display_entries(missing, ctx.guild) or "None"))
             if sub == "remove":
-                name = await self._removal_name(ctx, args)
-                if not name:
+                targets = split_targets(args)
+                if not targets:
                     return await ctx.send("❌ Provide an alias name to remove.")
-                if not any((m.get("name") or "").lower() == name for m in missing):
-                    return await ctx.send(f"❌ `{name}` is not on the missing list.")
-                missing = [m for m in missing if (m.get("name") or "").lower() != name]
-                await asyncio.to_thread(
-                    supabase.table("wars").update({"missing_list": missing})
-                    .eq("channel_id", ctx.channel.id).execute
-                )
-                return await ctx.send(f"✅ Removed `{name}` from missing.")
+                removed, notes = [], []
+                for target in targets:
+                    name = await self._removal_name(ctx, target)
+                    if name and any(_entry_name(entry) == name for entry in missing):
+                        missing = [entry for entry in missing if _entry_name(entry) != name]
+                        removed.append(name)
+                    else:
+                        notes.append(f"❌ `{name or target}` is not on the missing list.")
+                if removed:
+                    await asyncio.to_thread(
+                        supabase.table("wars").update({"missing_list": missing})
+                        .eq("channel_id", ctx.channel.id).execute
+                    )
+                    notes.insert(0, f"✅ Removed {_players_text(removed)} from missing: "
+                                    f"{_name_list(removed)}.")
+                return await ctx.send(_reply_lines(notes))
 
-            row, error = await self._alias_target(ctx, args)
-            if error:
-                return await ctx.send(error)
-            team = await asyncio.to_thread(get_team_by_channel, ctx.guild.id, ctx.channel.id)
-            if team:
-                roster = await asyncio.to_thread(get_team_players, ctx.guild.id, team["id"])
-                if roster and int(row.get("discord_id") or 0) not in roster:
-                    return await ctx.send(
-                        f"❌ `{(row.get('alias_name') or '').lower()}` isn't on **{team.get('name')}**'s roster. "
-                        f"Add them with `!team add @user {team.get('name')}` first.")
-            name = (row.get("alias_name") or "").lower()
-            entry = {"name": name}
-            if row.get("discord_id") is not None:
-                entry["id"] = row["discord_id"]
-            if any((a.get("name") or "").lower() == name for a in absent):
-                return await ctx.send(f"🏖️ `{name}` is excused.")
-            if not any((m.get("name") or "").lower() == name for m in missing):
-                missing.append(entry)
+            rows, errors = await self._resolve_targets(ctx, args)
+            if not rows and not errors:
+                return await ctx.send("❌ Provide an alias name or @mention an aliased member.")
+            added, notes = [], list(errors)
+            for row in rows:
+                name = (row.get("alias_name") or "").lower()
+                entry = {"name": name}
+                if row.get("discord_id") is not None:
+                    entry["id"] = row["discord_id"]
+                if any(_entry_name(item) == name for item in absent):
+                    notes.append(f"🏖️ `{name}` is excused.")
+                elif any(_entry_name(item) == name for item in missing):
+                    notes.append(f"ℹ️ `{name}` is already on the missing list.")
+                else:
+                    missing.append(entry)
+                    added.append(name)
+            if added:
                 await asyncio.to_thread(
                     supabase.table("wars").update({"missing_list": missing})
                     .eq("channel_id", ctx.channel.id).execute
                 )
-            await ctx.send(f"✅ Added `{name}` to missing. War announcements will ping them.")
+                notes.insert(0, f"✅ Added {_players_text(added)} to missing: "
+                                f"{_name_list(added)}. War announcements will ping them.")
+            return await ctx.send(_reply_lines(notes))
 
     async def war_absent(self, ctx, subaction, args):
         sub = (subaction or "list").lower()
@@ -1224,40 +1294,49 @@ class WarTracker(commands.Cog):
                     return await ctx.send("✅ The excused list is empty.")
                 return await ctx.send("🏖️ **Excused:** " + (self._display_entries(absent, ctx.guild) or "None"))
             if sub == "remove":
-                name = await self._removal_name(ctx, args)
-                if not name:
+                targets = split_targets(args)
+                if not targets:
                     return await ctx.send("❌ Provide an alias name to remove.")
-                if not any((a.get("name") or "").lower() == name for a in absent):
-                    return await ctx.send(f"❌ `{name}` is not on the excused list.")
-                absent = [a for a in absent if (a.get("name") or "").lower() != name]
-                await asyncio.to_thread(
-                    supabase.table("wars").update({"absent_list": absent})
-                    .eq("channel_id", ctx.channel.id).execute
-                )
-                return await ctx.send(f"✅ Removed `{name}` from excused.")
+                removed, notes = [], []
+                for target in targets:
+                    name = await self._removal_name(ctx, target)
+                    if name and any(_entry_name(entry) == name for entry in absent):
+                        absent = [entry for entry in absent if _entry_name(entry) != name]
+                        removed.append(name)
+                    else:
+                        notes.append(f"❌ `{name or target}` is not on the excused list.")
+                if removed:
+                    await asyncio.to_thread(
+                        supabase.table("wars").update({"absent_list": absent})
+                        .eq("channel_id", ctx.channel.id).execute
+                    )
+                    notes.insert(0, f"✅ Removed {_players_text(removed)} from excused: "
+                                    f"{_name_list(removed)}.")
+                return await ctx.send(_reply_lines(notes))
 
-            row, error = await self._alias_target(ctx, args)
-            if error:
-                return await ctx.send(error)
-            team = await asyncio.to_thread(get_team_by_channel, ctx.guild.id, ctx.channel.id)
-            if team:
-                roster = await asyncio.to_thread(get_team_players, ctx.guild.id, team["id"])
-                if roster and int(row.get("discord_id") or 0) not in roster:
-                    return await ctx.send(
-                        f"❌ `{(row.get('alias_name') or '').lower()}` isn't on **{team.get('name')}**'s roster. "
-                        f"Add them with `!team add @user {team.get('name')}` first.")
-            name = (row.get("alias_name") or "").lower()
-            entry = {"name": name}
-            if row.get("discord_id") is not None:
-                entry["id"] = row["discord_id"]
-            if not any((a.get("name") or "").lower() == name for a in absent):
-                absent.append(entry)
-                missing = [m for m in missing if (m.get("name") or "").lower() != name]
+            rows, errors = await self._resolve_targets(ctx, args)
+            if not rows and not errors:
+                return await ctx.send("❌ Provide an alias name or @mention an aliased member.")
+            added, notes = [], list(errors)
+            for row in rows:
+                name = (row.get("alias_name") or "").lower()
+                entry = {"name": name}
+                if row.get("discord_id") is not None:
+                    entry["id"] = row["discord_id"]
+                if any(_entry_name(item) == name for item in absent):
+                    notes.append(f"ℹ️ `{name}` is already excused.")
+                else:
+                    absent.append(entry)
+                    missing = [item for item in missing if _entry_name(item) != name]
+                    added.append(name)
+            if added:
                 await asyncio.to_thread(
                     supabase.table("wars").update({"absent_list": absent, "missing_list": missing})
                     .eq("channel_id", ctx.channel.id).execute
                 )
-            await ctx.send(f"🏖️ Added `{name}` to excused.")
+                notes.insert(0, f"🏖️ Added {_players_text(added)} to excused: "
+                                f"{_name_list(added)}.")
+            return await ctx.send(_reply_lines(notes))
 
     async def war_attacks(self, ctx, args):
         if not await is_team_staff(ctx.author, ctx.channel.id):

@@ -67,7 +67,8 @@ def build_topic(topic, is_staff):
             e.add_field(name="Staff", value=(
                 "`!war defence ends <time>`\n`!war attack ends <time>`\n`!war cancel`\n"
                 "`!war board` — start/refresh the live board · `!war board stop`\n"
-                "`!war missing add|remove <name>`\n`!war absent add|remove <name>`\n"
+                "`!war missing add|remove <name>` — pass several @mentions or comma-separated names at once\n"
+                "`!war absent add|remove <name>`\n"
                 "`!war attacks <name> <count>` (or `name | count`)\n"
                 "`!war set attacks <number>` · `!war set exempt on|off` (team value in a team channel)\n"
                 "`!war check` · `!war report`\n`!warning add @user <reason>` · `!warning list`"), inline=False)
