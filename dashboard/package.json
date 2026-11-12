@@ -9,7 +9,8 @@
     "lint": "next lint",
     "check:rating": "node scripts/check-rating.cjs",
     "check:attendance": "node scripts/check-attendance.cjs",
-    "check:setup": "node scripts/check-setup.cjs"
+    "check:setup": "node scripts/check-setup.cjs",
+    "check:plans": "node scripts/check-plans.cjs"
   },
   "dependencies": {
     "@paddle/paddle-js": "^1.2.1",
