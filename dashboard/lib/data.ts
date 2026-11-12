@@ -4,6 +4,7 @@ import { captainLimitError } from './setup'
 import type {
   Alias,
   Guild,
+  Id,
   MazePingMention,
   MazeSchedule,
   RaceLog,
@@ -516,6 +517,30 @@ export async function saveWarTeamRole(
 export async function deleteTeam(supabase: SupabaseClient, teamId: number): Promise<void> {
   const { error } = await supabase.from('teams').delete().eq('id', teamId)
   throwIfError(error, 'Could not delete the team')
+}
+
+export interface TeamPlayer {
+  team_id: number
+  discord_id: Id
+}
+
+/**
+ * One team's roster (`team_players`). A missing table (a deploy before the migration) or a
+ * failed read means "no roster recorded": callers fall back to every alias instead of the War
+ * page breaking.
+ */
+export async function listTeamPlayers(
+  supabase: SupabaseClient,
+  teamIds: number[],
+): Promise<TeamPlayer[]> {
+  if (teamIds.length === 0) return []
+  const { data, error } = await supabase
+    .from('team_players')
+    .select('*')
+    .in('team_id', teamIds)
+
+  if (error) return []
+  return (data as TeamPlayer[] | null) ?? []
 }
 
 export async function listTeamCaptains(

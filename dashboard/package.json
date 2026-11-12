@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "check:rating": "node scripts/check-rating.cjs",
+    "check:attendance": "node scripts/check-attendance.cjs",
     "check:setup": "node scripts/check-setup.cjs"
   },
   "dependencies": {

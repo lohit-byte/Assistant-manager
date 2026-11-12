@@ -11,9 +11,10 @@ import {
   Field, PageHeader, ProgressBar, Spinner, TextInput, type Tone,
 } from '@/components/ui'
 import {
-  addWarning, deleteWarning, getWar, getWarSettings, listAliases, listRaceLogs, listWarnings,
-  listWarLogs, saveWarSettings, saveWarTeamRole, updateWar,
+  addWarning, deleteWarning, getWar, getWarSettings, listAliases, listRaceLogs, listTeamPlayers,
+  listWarnings, listWarLogs, saveWarSettings, saveWarTeamRole, updateWar,
 } from '@/lib/data'
+import { computeAttendance, type AttendanceRow, type AttendanceStatus } from '@/lib/attendance'
 import { computeRatings, type RatingRow } from '@/lib/rating'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/lib/toast'
@@ -51,6 +52,41 @@ function sourceLabel(source: string): string {
     default:
       return source
   }
+}
+
+const ATTENDANCE_STATUS: Record<AttendanceStatus, { label: string; tone: Tone }> = {
+  done: { label: 'Done', tone: 'green' },
+  partial: { label: 'Partial', tone: 'amber' },
+  none: { label: 'Not reported', tone: 'red' },
+  excused: { label: 'Excused', tone: 'blue' },
+}
+
+/** War list entries are `{ name, id }` objects now, but old rows may still hold plain strings. */
+function entryName(entry: unknown): string {
+  if (typeof entry === 'string') return entry
+  if (entry && typeof entry === 'object' && typeof (entry as { name?: unknown }).name === 'string') {
+    return (entry as { name: string }).name
+  }
+  return ''
+}
+
+function entryId(entry: unknown): string | null {
+  if (!entry || typeof entry !== 'object') return null
+  const id = (entry as { id?: unknown }).id
+  return id === null || id === undefined || String(id).trim() === '' ? null : String(id).trim()
+}
+
+/** Name or Discord-id match against a war list, tolerant of legacy plain-string entries. */
+function listMatchesPlayer(
+  entries: unknown,
+  names: Set<string>,
+  discordId: string,
+): boolean {
+  if (!Array.isArray(entries)) return false
+  return entries.some((entry) => {
+    const name = entryName(entry).trim().toLowerCase()
+    return (name !== '' && names.has(name)) || entryId(entry) === discordId
+  })
 }
 
 function LiveTimer({ endTime }: { endTime: Date | null }) {
@@ -101,6 +137,7 @@ export default function WarPage() {
   const [settings, setSettings] = useState<WarSettings>({ guild_id: guildId, attacks_required: DEFAULT_ATTACKS_REQUIRED, exempt_absent: true })
   const [warnings, setWarnings] = useState<Warning[]>([])
   const [aliases, setAliases] = useState<Alias[]>([])
+  const [rosterIds, setRosterIds] = useState<string[]>([])
   const [counts, setCounts] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<Feedback>(null)
@@ -160,13 +197,15 @@ export default function WarPage() {
             ? nextWar.war_start ?? new Date(Date.now() - 7 * 86_400_000).toISOString()
             : new Date(Date.now() - 7 * 86_400_000).toISOString()
 
-          const [nextWarLogs, nextRaceLogs] = await Promise.all([
+          const [nextWarLogs, nextRaceLogs, nextRoster] = await Promise.all([
             listWarLogs(supabase, channelId, nextWar?.war_start ?? null, 25).catch(() => []),
             raceChannelId
               ? listRaceLogs(supabase, guildId, raceChannelId, windowStart).catch(() => [])
               : Promise.resolve([]),
+            team ? listTeamPlayers(supabase, [team.id]).catch(() => []) : Promise.resolve([]),
           ])
           setWarLogs(nextWarLogs)
+          setRosterIds(nextRoster.map((player) => String(player.discord_id)))
           setRatings(
             computeRatings({
               war: nextWar,
@@ -180,6 +219,7 @@ export default function WarPage() {
         } else {
           setWarLogs([])
           setRatings([])
+          setRosterIds([])
         }
       } catch (caught) {
         setFeedback({ tone: 'red', text: 'Could not load war data.' })
@@ -196,7 +236,18 @@ export default function WarPage() {
   const missing = war?.missing_list ?? []
   const excused = war?.absent_list ?? []
   const required = settings.attacks_required
-  const excusedNames = useMemo(() => new Set(excused.map((entry) => entry.name.toLowerCase())), [excused])
+  const attendance = useMemo(
+    () =>
+      computeAttendance({
+        war,
+        required,
+        aliases,
+        rosterIds,
+        exemptAbsent: settings.exempt_absent,
+      }),
+    [war, required, aliases, rosterIds, settings.exempt_absent],
+  )
+  const hasRoster = rosterIds.length > 0
   const rankedRatings = useMemo(() => ratings.filter((row) => !row.excused), [ratings])
   const excusedRatings = useMemo(() => ratings.filter((row) => row.excused), [ratings])
   // A one-sided team's rating renormalizes, so the missing half's column is not meaningful.
@@ -205,13 +256,6 @@ export default function WarPage() {
     [channelId, teams],
   )
   const hasRaceHalf = Boolean(ratingTeam?.race_channel_id)
-
-  const trackedNames = useMemo(() => {
-    const names = new Set<string>()
-    Object.keys(counts).forEach((name) => names.add(name))
-    missing.forEach((entry) => names.add(entry.name.toLowerCase()))
-    return Array.from(names).sort((a, b) => a.localeCompare(b))
-  }, [counts, missing])
 
   const saveSettings = async () => {
     setBusy('settings')
@@ -257,7 +301,25 @@ export default function WarPage() {
     if (!missingAlias || !war || !channelId) return
     const alias = aliases.find((entry) => entry.alias_name.toLowerCase() === missingAlias)
     if (!alias) return
-    if (missing.some((entry) => entry.name.toLowerCase() === missingAlias)) {
+    // Look at every alias of that player so a second alias row cannot slip a reported player in.
+    const playerAliases = aliases.filter((entry) => String(entry.discord_id) === String(alias.discord_id))
+    const playerNames = new Set(playerAliases.map((entry) => entry.alias_name.toLowerCase()))
+    const playerId = String(alias.discord_id)
+    let attacks = 0
+    for (const [name, value] of Object.entries(war.attack_counts ?? {})) {
+      if (!playerNames.has(name.trim().toLowerCase())) continue
+      const count = Number(value)
+      if (Number.isFinite(count) && count > 0) attacks += count
+    }
+    // Never add a player the bot would not consider short: excused players and players who
+    // already reported enough attacks are refused before any write.
+    if (settings.exempt_absent && listMatchesPlayer(excused, playerNames, playerId)) {
+      return setFeedback({ tone: 'red', text: `${alias.alias_name} is excused for this war — not added to missing.` })
+    }
+    if (required > 0 && attacks >= required) {
+      return setFeedback({ tone: 'red', text: `${alias.alias_name} already reported ${attacks}/${required} — not added to missing.` })
+    }
+    if (listMatchesPlayer(missing, playerNames, playerId)) {
       return setFeedback({ tone: 'red', text: 'That player is already on the missing list.' })
     }
     setBusy('missing')
@@ -277,17 +339,28 @@ export default function WarPage() {
     }
   }
 
-  const removeMissing = async (name: string) => {
+  const removeMissing = async (row: AttendanceRow) => {
     if (!channelId) return
-    setBusy(`missing-${name}`)
+    const playerAliases = aliases.filter(
+      (entry) => row.discordId !== null && String(entry.discord_id) === String(row.discordId),
+    )
+    const playerNames = new Set(playerAliases.map((entry) => entry.alias_name.toLowerCase()))
+    playerNames.add(row.alias.toLowerCase())
+    const playerId = row.discordId !== null ? String(row.discordId) : null
+    // A player can sit on the list under another alias of theirs, so match names and id.
+    const matchesRow = (entry: unknown): boolean => {
+      const name = entryName(entry).trim().toLowerCase()
+      if (name !== '' && playerNames.has(name)) return true
+      return playerId !== null && entryId(entry) === playerId
+    }
+    setBusy(`missing-${row.alias}`)
     try {
       await updateWar(createClient(), channelId, {
-        missing_list: missing.filter((entry) => entry.name.toLowerCase() !== name.toLowerCase()),
+        missing_list: missing.filter((entry) => !matchesRow(entry)),
       })
       await load('refresh')
-      const displayName = aliases.find((entry) => entry.alias_name.toLowerCase() === name.toLowerCase())?.alias_name ?? name
       toast.success(
-        `Removed ${displayName} from the missing list.`,
+        `Removed ${row.alias} from the missing list.`,
         'This only edits the missing list; attack reports stay in the log.',
       )
     } catch (caught) {
@@ -435,10 +508,22 @@ export default function WarPage() {
                   <Card>
                     <CardHeader title="Attendance & counts" description={`Required: ${required} attacks per player, set in War settings on the right.`} icon={<Swords className="h-5 w-5" />} />
                     <CardBody className="space-y-4">
+                      <p className="text-xs leading-relaxed text-slate-500">
+                        Every rostered player with an alias starts on the missing list and clears
+                        themselves by sending <code className="font-mono text-slate-300">attacks done</code>{' '}
+                        in Discord.
+                      </p>
+                      {!hasRoster && aliases.length > 0 ? (
+                        <p className="text-xs leading-relaxed text-slate-500">
+                          No roster is configured for this team, so every alias in the server is
+                          listed. Add players to the team in Setup to scope this list to the team.
+                        </p>
+                      ) : null}
                       {canManage ? (
                         <p className="text-xs leading-relaxed text-slate-500">
                           Add a player when the bot’s count is short: pick their alias and choose Add
-                          Missing. Removing a player only edits this missing list — it never changes
+                          Missing. Players who already reported enough attacks or are excused are
+                          refused. Removing a player only edits this missing list — it never changes
                           the attack log.
                         </p>
                       ) : null}
@@ -463,39 +548,71 @@ export default function WarPage() {
                       {canManage && aliases.length === 0 ? (
                         <p className="text-xs text-slate-500">Add players with `!alias add @user &lt;alias&gt;` in Discord first.</p>
                       ) : null}
-                      <div className="max-h-[300px] overflow-y-auto">
-                        <table className="w-full text-left text-sm">
-                          <tbody className="divide-y divide-slate-800">
-                            {trackedNames.map((name) => {
-                              const value = parseInt(counts[name] || '0')
-                              const isExcused = settings.exempt_absent && excusedNames.has(name)
-                              const isMissing = missing.some((entry) => entry.name.toLowerCase() === name)
-                              return (
-                                <tr key={name} className="hover:bg-slate-800/30">
-                                  <td className="px-3 py-2 font-medium text-slate-200">{name}</td>
-                                  <td className="px-3 py-2 text-right">
-                                    {isExcused ? <Badge tone="blue">Excused</Badge> : value >= required ? <Badge tone="green">Met</Badge> : <Badge tone="amber">Missing</Badge>}
-                                  </td>
-                                  {canManage && isMissing ? (
-                                    <td className="px-1 py-2 text-right">
-                                      <button
-                                        type="button"
-                                        onClick={() => removeMissing(name)}
-                                        disabled={busy === `missing-${name}`}
-                                        className="rounded p-1 text-slate-500 hover:text-danger-300"
-                                        aria-label={`Remove ${name} from the missing list`}
-                                        title="Remove from missing"
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                      </button>
-                                    </td>
-                                  ) : null}
-                                </tr>
-                              )
-                            })}
-                          </tbody>
-                        </table>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="green">Done {attendance.summary.done}</Badge>
+                        <Badge tone="amber">Partial {attendance.summary.partial}</Badge>
+                        <Badge tone="red">Not reported {attendance.summary.none}</Badge>
+                        <Badge tone="blue">Excused {attendance.summary.excused}</Badge>
                       </div>
+                      {attendance.rows.length === 0 ? (
+                        <p className="text-sm text-slate-500">
+                          {aliases.length === 0
+                            ? 'Add players with `!alias add @user <alias>` in Discord first.'
+                            : 'No player in this team’s roster has an alias yet. Add one with `!alias add` in Discord.'}
+                        </p>
+                      ) : (
+                        <div className="max-h-[360px] overflow-x-auto overflow-y-auto">
+                          <table className="w-full text-left text-sm">
+                            <thead>
+                              <tr className="text-[11px] uppercase tracking-wider text-slate-500">
+                                <th className="px-2 py-1.5 font-medium">Player</th>
+                                <th className="px-2 py-1.5 font-medium">Attacks</th>
+                                <th className="px-2 py-1.5 font-medium">Status</th>
+                                {canManage ? <th className="px-2 py-1.5 font-medium">Discord ID</th> : null}
+                                {canManage ? <th className="px-1 py-1.5" aria-label="Actions" /> : null}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/70">
+                              {attendance.rows.map((row) => {
+                                const meta = ATTENDANCE_STATUS[row.status]
+                                return (
+                                  <tr
+                                    key={row.discordId !== null ? `id:${String(row.discordId)}` : `name:${row.alias.toLowerCase()}`}
+                                    className="hover:bg-slate-800/30"
+                                  >
+                                    <td className="px-2 py-2 font-medium text-slate-200">{row.alias}</td>
+                                    <td className="px-2 py-2">
+                                      <Badge tone={meta.tone}>{row.attacks}/{row.required}</Badge>
+                                    </td>
+                                    <td className="px-2 py-2"><Badge tone={meta.tone}>{meta.label}</Badge></td>
+                                    {canManage ? (
+                                      <td className="px-2 py-2 font-mono text-[11px] text-slate-500">
+                                        {row.discordId !== null ? String(row.discordId) : '—'}
+                                      </td>
+                                    ) : null}
+                                    {canManage ? (
+                                      <td className="px-1 py-2 text-right">
+                                        {row.onMissingList ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => removeMissing(row)}
+                                            disabled={busy === `missing-${row.alias}`}
+                                            className="rounded p-1 text-slate-500 hover:text-danger-300"
+                                            aria-label={`Remove ${row.alias} from the missing list`}
+                                            title="Remove from missing"
+                                          >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                          </button>
+                                        ) : null}
+                                      </td>
+                                    ) : null}
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </CardBody>
                   </Card>
 
