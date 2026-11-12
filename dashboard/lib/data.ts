@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { DEFAULT_ATTACKS_REQUIRED } from './constants'
+import { captainLimitError } from './setup'
 import type {
   Alias,
   Guild,
@@ -539,6 +540,18 @@ export async function addTeamCaptain(
 ): Promise<void> {
   const cleanId = discordId.replace(/\D/g, '')
   if (cleanId.length < 17) throw new Error('Enter a valid Discord user ID (17–20 digits).')
+
+  // A team's captains are its staff; the game allows 1 leader + 3 co-leads, so four.
+  const existing = await supabase
+    .from('team_captains')
+    .select('discord_id')
+    .eq('team_id', teamId)
+  throwIfError(existing.error, 'Could not check the team captains')
+  const limitError = captainLimitError(
+    (existing.data ?? []).map((row) => String((row as { discord_id: number }).discord_id)),
+    cleanId,
+  )
+  if (limitError) throw new Error(limitError)
 
   // `team_captains.discord_id` references `users`, exactly like an alias row does.
   await supabase

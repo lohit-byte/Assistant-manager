@@ -27,6 +27,7 @@ import { createClient } from '@/lib/supabase/client'
 import { isSnowflake } from '@/lib/format'
 import {
   GUILD_SETUP_LABELS,
+  MAX_TEAM_CAPTAINS,
   validateGuildSetup,
   type GuildSetupErrors,
   type GuildSetupField,
@@ -322,6 +323,7 @@ export function TeamSetup({
     const team = current.team
     const drafts = current.draft
     const captains = team ? captainsByTeam[team.id] ?? [] : []
+    const atCaptainLimit = captains.length >= MAX_TEAM_CAPTAINS
 
     return (
       <div className="mt-4 space-y-4 border border-white/[0.1] bg-ink-950/50 p-4">
@@ -413,12 +415,22 @@ export function TeamSetup({
         {team ? (
           <div className="space-y-3">
             <div>
-              <p className="text-sm font-semibold text-slate-200">Captains</p>
+              <p className="text-sm font-semibold text-slate-200">
+                Captains ({captains.length}/{MAX_TEAM_CAPTAINS})
+              </p>
               <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
-                Captains can edit this team’s war and race channels in the dashboard and the bot.
-                They cannot change server settings, billing, aliases, the maze or other teams.
+                Up to {MAX_TEAM_CAPTAINS} team staff — 1 leader and 3 co-leads, the most the
+                game allows. Captains can edit this team’s war and race channels in the dashboard
+                and the bot. They cannot change server settings, billing, aliases, the maze or
+                other teams.
               </p>
             </div>
+
+            {atCaptainLimit ? (
+              <p className="text-xs text-slate-500">
+                This team has its {MAX_TEAM_CAPTAINS} staff members. Remove one to add another.
+              </p>
+            ) : null}
 
             {captains.length === 0 ? (
               <p className="text-xs text-slate-500">
@@ -476,7 +488,7 @@ export function TeamSetup({
                   <Button
                     variant="secondary"
                     size="sm"
-                    disabled={!captainAlias}
+                    disabled={!captainAlias || atCaptainLimit}
                     loading={busy === 'captain-add'}
                     onClick={() => void addCaptain(captainAlias)}
                   >
@@ -498,7 +510,7 @@ export function TeamSetup({
                   <Button
                     variant="secondary"
                     size="sm"
-                    disabled={!captainId.trim()}
+                    disabled={!captainId.trim() || atCaptainLimit}
                     loading={busy === 'captain-add'}
                     onClick={() => void addCaptain(captainId)}
                   >

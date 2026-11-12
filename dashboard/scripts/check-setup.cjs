@@ -77,6 +77,8 @@ const {
   parseChannelId,
   validateGuildSetup,
   buildSetupSummary,
+  MAX_TEAM_CAPTAINS,
+  captainLimitError,
 } = compile()
 
 const LEADER = '111111111111111111'
@@ -276,6 +278,24 @@ check('buildSetupSummary without a plan limit still gives a readable team value'
   if (!teams) return ['missing teams task']
   if (teams.value !== '1 team') problems.push(`teams value = ${teams.value}, want "1 team"`)
   if (!teams.configured) problems.push('one team should count as configured')
+  return problems
+})
+
+check('captainLimitError caps a team at 4 staff (1 leader + 3 co-leads)', () => {
+  const problems = []
+  if (MAX_TEAM_CAPTAINS !== 4) problems.push(`MAX_TEAM_CAPTAINS = ${MAX_TEAM_CAPTAINS}, want 4`)
+  const four = ['111111111111111111', '222222222222222222', '333333333333333333', '444444444444444444']
+  if (captainLimitError(four, '555555555555555555') === null) problems.push('a fifth captain was allowed')
+  if (captainLimitError(four.slice(0, 3), '555555555555555555') !== null) problems.push('a fourth captain was refused')
+  if (captainLimitError([], '555555555555555555') !== null) problems.push('the first captain was refused')
+  return problems
+})
+
+check('captainLimitError lets an existing captain re-add (a no-op, not a limit)', () => {
+  const problems = []
+  const four = ['111111111111111111', '222222222222222222', '333333333333333333', '444444444444444444']
+  if (captainLimitError(four, '<@222222222222222222>') !== null) problems.push('mention form of an existing captain refused')
+  if (captainLimitError(four, '222222222222222222') !== null) problems.push('plain id of an existing captain refused')
   return problems
 })
 

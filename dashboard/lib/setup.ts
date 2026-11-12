@@ -50,6 +50,26 @@ export const GUILD_SETUP_LABELS: Record<GuildSetupField, string> = {
   maze_channel_id: 'Maze channel ID',
 }
 
+/**
+ * A team's captains are its staff on the bot. The game allows one alliance leader plus
+ * three co-leaders, so four staff per team is the most anybody can actually hold.
+ */
+export const MAX_TEAM_CAPTAINS = 4
+
+/**
+ * Why adding this player to the team's captains should be refused, or null when it is
+ * fine. Re-adding someone who is already a captain is a no-op, not a limit violation.
+ */
+export function captainLimitError(captainIds: string[], discordId: string): string | null {
+  const clean = String(discordId).replace(/\D/g, '')
+  const ids = captainIds.map((id) => String(id).replace(/\D/g, ''))
+  if (ids.includes(clean)) return null
+  if (ids.length >= MAX_TEAM_CAPTAINS) {
+    return `A team can have up to ${MAX_TEAM_CAPTAINS} staff (1 leader + 3 co-leads). Remove one before adding another.`
+  }
+  return null
+}
+
 /** Trimmed string, or null when the value is empty / whitespace only. */
 export function normalizeId(value: string | number | null | undefined): string | null {
   if (value === null || value === undefined) return null
