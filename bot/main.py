@@ -3,6 +3,7 @@ from discord.ext import commands
 import os
 import asyncio
 import traceback
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 from database import supabase, get_or_create_guild, check_premium_status
@@ -15,6 +16,14 @@ if not TOKEN:
 
 # Your Discord ID - Developer Bypass
 DEVELOPER_ID = 704623764008075284
+
+# Paid plan -> (stored plan id, team limit, paid days). Elite is unlimited via the
+# 1,000,000 sentinel shared with the dashboard's lib/plans.ts.
+PLAN_TIERS = {
+    "starter": ("starter_monthly", 1, 30),
+    "pro": ("pro_monthly", 3, 30),
+    "elite": ("elite_yearly", 1_000_000, 365),
+}
 
 intents = discord.Intents.default()
 intents.message_content = True 
@@ -137,31 +146,40 @@ async def premium_gate(ctx):
 
 @bot.command(name="force")
 @commands.guild_only()
-async def force_command(ctx, action: str = None):
+async def force_command(ctx, action: str = None, tier: str = None):
     if ctx.author.id != DEVELOPER_ID:
         return await ctx.send("❌ You do not have permission to run this developer command.")
-        
+
     if action and action.lower() == "premium":
+        chosen = PLAN_TIERS.get((tier or "elite").strip().lower())
+        if not chosen:
+            return await ctx.send("Usage: `!force premium [starter|pro|elite]`")
+        plan_id, max_teams, days = chosen
         try:
             # The developer bypass never ran get_or_create_guild; make sure the
             # row exists or the update silently matches nothing.
             await asyncio.to_thread(get_or_create_guild, ctx.guild.id)
+            ends_at = datetime.now(timezone.utc) + timedelta(days=days)
             res = await asyncio.to_thread(
                 supabase.table("guilds").update({
                     "premium_status": "premium",
-                    # An expired subscription keeps its past end date; clear it or
-                    # check_premium_status will still deny everyone.
-                    "premium_ends_at": None,
+                    # Paid grants always expire; a lifetime grant stays a manual SQL choice.
+                    "premium_ends_at": ends_at.isoformat(),
+                    "plan": plan_id,
+                    "max_teams": max_teams,
                     "last_renewal_ping": 0,
                 }).eq("guild_id", ctx.guild.id).execute
             )
             if not res.data:
                 return await ctx.send("❌ Could not upgrade this server (no guild row).")
-            await ctx.send("✅ **Server force-upgraded to Premium!** You can now use all commands.")
+            await ctx.send(
+                f"✅ **Server force-upgraded to {plan_id.replace('_', ' ').title()}** "
+                f"until {ends_at.date().isoformat()}. You can now use all commands."
+            )
         except Exception as e:
             await ctx.send(f"❌ Error: {e}")
     else:
-        await ctx.send("Usage: `!force premium`")
+        await ctx.send("Usage: `!force premium [starter|pro|elite]`")
 
 if __name__ == "__main__":
     bot.run(TOKEN)

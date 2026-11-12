@@ -13,6 +13,13 @@ from ocr_engine import process_race_image
 NODES_PER_LAP = 5
 UNITS = {'K': 1e3, 'M': 1e6, 'B': 1e9}
 
+# Human names for the plan-aware team-limit message.
+PLAN_NAMES = {
+    "starter_monthly": "Starter",
+    "pro_monthly": "Pro",
+    "elite_yearly": "Elite",
+}
+
 def parse_amount(s):
     m = re.fullmatch(r'\s*([\d.,]+)\s*([KMB])?\s*', str(s), re.IGNORECASE)
     if not m: raise ValueError(f"bad amount: {s}")
@@ -168,8 +175,13 @@ def _race_channel_in_use(row):
 
 
 async def check_team_limit(guild_id, exclude_channel_id=None):
-    res = await asyncio.to_thread(supabase.table("guilds").select("max_teams").eq("guild_id", guild_id).execute)
-    max_teams = (res.data[0].get("max_teams") if res.data else None) or 1
+    """``(allowed, plan, limit)`` for this guild's active race teams."""
+    res = await asyncio.to_thread(
+        supabase.table("guilds").select("plan, max_teams").eq("guild_id", guild_id).execute
+    )
+    row = res.data[0] if res.data else {}
+    max_teams = row.get("max_teams") or 1
+    plan = row.get("plan") or ""
     active = await asyncio.to_thread(
         supabase.table("race_state")
         .select("channel_id, task_description, is_event_active")
@@ -180,7 +192,7 @@ async def check_team_limit(guild_id, exclude_channel_id=None):
         row for row in active.data
         if str(row.get("channel_id")) != str(exclude_channel_id) and _race_channel_in_use(row)
     ]
-    return len(used) < max_teams
+    return len(used) < max_teams, plan, max_teams
 
 class RaceTracker(commands.Cog):
     def __init__(self, bot):
@@ -230,8 +242,15 @@ class RaceTracker(commands.Cog):
         starts_team = action in ("target", "newnode")
         if action == "set" and subaction == "desc" and args and len(args.split(maxsplit=1)) > 1:
             starts_team = True
-        if starts_team and not await check_team_limit(ctx.guild.id, exclude_channel_id=ctx.channel.id):
-            return await ctx.send("❌ **Team limit reached!** Your server's plan only allows a certain number of active teams. Upgrade on the dashboard to add more.")
+        if starts_team:
+            allowed, plan, limit = await check_team_limit(
+                ctx.guild.id, exclude_channel_id=ctx.channel.id)
+            if not allowed:
+                plan_name = PLAN_NAMES.get(plan, "current")
+                return await ctx.send(
+                    f"❌ **Team limit reached!** Your {plan_name} plan allows {limit} team(s). "
+                    "Upgrade on the dashboard to add more."
+                )
 
         if action == "target":
             if not args or not args.isdigit(): return await ctx.send("Usage: `!race target 20`")

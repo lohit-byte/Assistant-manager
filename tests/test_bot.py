@@ -745,9 +745,13 @@ def test_force_premium_clears_a_past_expiry(clean_db):
     from database import check_premium_status
 
     ctx = make_ctx(author_id=botmain.DEVELOPER_ID)
-    run(botmain.force_command.callback(ctx, "premium"))
+    run(botmain.force_command.callback(ctx, "premium", "elite"))
 
-    assert db.one("guilds", guild_id=GUILD)["premium_ends_at"] is None
+    row = db.one("guilds", guild_id=GUILD)
+    ends = datetime.fromisoformat(row["premium_ends_at"].replace("Z", "+00:00"))
+    assert ends > datetime.now(timezone.utc)
+    assert row["plan"] == "elite_yearly"
+    assert row["max_teams"] == 1_000_000
     assert check_premium_status(GUILD) is True
 
 
@@ -3350,3 +3354,99 @@ def test_warning_is_recorded_when_the_dm_cannot_be_delivered(clean_db, monkeypat
     assert db.rows("warnings")
     assert any("dm" in text.lower() and "couldn't" in text.lower()
                for text in ctx.texts), "staff should be told the DM failed"
+
+
+# ---------------------------------------- plan tiers and reminder messages
+
+def test_force_premium_sets_the_requested_tier_with_a_term(clean_db):
+    db = clean_db
+    db.reset()
+    db.seed("guilds", {"guild_id": GUILD, "premium_status": "expired",
+                       "premium_ends_at": "2020-01-01T00:00:00+00:00"})
+    import main as botmain
+
+    ctx = make_ctx(author_id=botmain.DEVELOPER_ID)
+    before = datetime.now(timezone.utc)
+    run(botmain.force_command.callback(ctx, "premium", "starter"))
+
+    row = db.one("guilds", guild_id=GUILD)
+    assert row["plan"] == "starter_monthly"
+    assert row["max_teams"] == 1
+    ends = datetime.fromisoformat(row["premium_ends_at"].replace("Z", "+00:00"))
+    assert timedelta(days=29) < ends - before < timedelta(days=31)
+
+
+def test_force_premium_defaults_to_elite_unlimited_with_a_year(clean_db):
+    db = clean_db
+    db.reset()
+    db.seed("guilds", {"guild_id": GUILD, "premium_status": "expired"})
+    import main as botmain
+
+    ctx = make_ctx(author_id=botmain.DEVELOPER_ID)
+    before = datetime.now(timezone.utc)
+    run(botmain.force_command.callback(ctx, "premium"))
+
+    row = db.one("guilds", guild_id=GUILD)
+    assert row["plan"] == "elite_yearly"
+    assert row["max_teams"] == 1_000_000
+    ends = datetime.fromisoformat(row["premium_ends_at"].replace("Z", "+00:00"))
+    assert timedelta(days=364) < ends - before < timedelta(days=366)
+
+
+def test_team_limit_message_names_the_plan(clean_db):
+    db = clean_db
+    db.one("guilds", guild_id=GUILD)["max_teams"] = 1
+    db.one("guilds", guild_id=GUILD)["plan"] = "starter_monthly"
+    db.seed("race_state", {"channel_id": 20, "guild_id": GUILD,
+                           "task_description": "Team A", "is_event_active": False})
+    ctx = make_ctx(channel_id=CHANNEL)
+
+    run(call(RaceTracker.race_group, race_cog(), ctx, "set", args="desc Team B"))
+
+    assert any("Starter" in text and "1" in text for text in ctx.texts)
+
+
+def test_elite_team_limit_is_unlimited(clean_db):
+    import cogs.race as race_module
+
+    db = clean_db
+    db.one("guilds", guild_id=GUILD)["max_teams"] = 1_000_000
+    db.seed("race_state", {"channel_id": 20, "guild_id": GUILD,
+                           "task_description": "Team A", "is_event_active": False})
+
+    allowed, plan, limit = run(race_module.check_team_limit(GUILD))
+    assert allowed is True
+    assert limit == 1_000_000
+
+
+def test_trial_reminder_sends_once_at_two_days(clean_db):
+    db = clean_db
+    bot, guild, _channel = _maze_bot()
+    manager = object.__new__(BillingManager)
+    manager.bot = bot
+    row = db.one("guilds", guild_id=GUILD)
+    row.update({"premium_status": "trial",
+                "trial_ends_at": (datetime.now(timezone.utc) + timedelta(hours=30)).isoformat(),
+                "last_renewal_ping": 0})
+
+    run(manager._process_trial_guild(dict(row), datetime.now(timezone.utc)))
+
+    assert db.one("guilds", guild_id=GUILD)["last_renewal_ping"] == 1
+    assert guild.owner.dms, "owner should get a trial-ending DM"
+
+
+def test_billing_embeds_use_absolute_timestamps(clean_db):
+    db = clean_db
+    bot, guild, _channel = _maze_bot()
+    manager = object.__new__(BillingManager)
+    manager.bot = bot
+    row = db.one("guilds", guild_id=GUILD)
+    row.update({"premium_status": "premium",
+                "premium_ends_at": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(),
+                "last_renewal_ping": 0})
+
+    run(manager._process_guild(dict(row), datetime.now(timezone.utc)))
+
+    _content, embed = guild.owner.dms[-1]
+    joined = f"{getattr(embed, 'title', '')} {getattr(embed, 'description', '')}"
+    assert "<t:" in joined

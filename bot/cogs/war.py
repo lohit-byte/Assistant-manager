@@ -18,6 +18,13 @@ from database import (
     get_team_roster,
 )
 
+# Human names for the plan-aware team-limit message.
+PLAN_NAMES = {
+    "starter_monthly": "Starter",
+    "pro_monthly": "Pro",
+    "elite_yearly": "Elite",
+}
+
 DEFENCE = ("defence", "defense")
 PHASE = timedelta(hours=24)
 WAR = timedelta(hours=48)
@@ -248,10 +255,17 @@ async def get_settings(guild_id, channel_id=None):
     return settings
 
 async def check_team_limit(guild_id):
-    res = await asyncio.to_thread(supabase.table("guilds").select("max_teams").eq("guild_id", guild_id).execute)
-    max_teams = (res.data[0].get("max_teams") if res.data else None) or 1
-    active = await asyncio.to_thread(supabase.table("wars").select("channel_id").eq("guild_id", guild_id).eq("is_active", True).execute)
-    return len(active.data) < max_teams
+    """``(allowed, plan, limit)`` for this guild's active war channels."""
+    res = await asyncio.to_thread(
+        supabase.table("guilds").select("plan, max_teams").eq("guild_id", guild_id).execute
+    )
+    row = res.data[0] if res.data else {}
+    max_teams = row.get("max_teams") or 1
+    plan = row.get("plan") or ""
+    active = await asyncio.to_thread(
+        supabase.table("wars").select("channel_id").eq("guild_id", guild_id).eq("is_active", True).execute
+    )
+    return len(active.data) < max_teams, plan, max_teams
 
 
 def apply_attack(war, alias, delta, required):
