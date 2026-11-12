@@ -160,16 +160,24 @@ async def force_command(ctx, action: str = None, tier: str = None):
             # row exists or the update silently matches nothing.
             await asyncio.to_thread(get_or_create_guild, ctx.guild.id)
             ends_at = datetime.now(timezone.utc) + timedelta(days=days)
-            res = await asyncio.to_thread(
-                supabase.table("guilds").update({
-                    "premium_status": "premium",
-                    # Paid grants always expire; a lifetime grant stays a manual SQL choice.
-                    "premium_ends_at": ends_at.isoformat(),
-                    "plan": plan_id,
-                    "max_teams": max_teams,
-                    "last_renewal_ping": 0,
-                }).eq("guild_id", ctx.guild.id).execute
-            )
+            payload = {
+                "premium_status": "premium",
+                # Paid grants always expire; a lifetime grant stays a manual SQL choice.
+                "premium_ends_at": ends_at.isoformat(),
+                "plan": plan_id,
+                "max_teams": max_teams,
+                "last_renewal_ping": 0,
+            }
+            try:
+                res = await asyncio.to_thread(
+                    supabase.table("guilds").update(payload).eq("guild_id", ctx.guild.id).execute
+                )
+            except Exception:
+                # Dashboard/bot can be deployed before the 2026-12 migration adds `plan`.
+                legacy_payload = {key: value for key, value in payload.items() if key != "plan"}
+                res = await asyncio.to_thread(
+                    supabase.table("guilds").update(legacy_payload).eq("guild_id", ctx.guild.id).execute
+                )
             if not res.data:
                 return await ctx.send("❌ Could not upgrade this server (no guild row).")
             await ctx.send(

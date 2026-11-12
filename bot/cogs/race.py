@@ -177,7 +177,7 @@ def _race_channel_in_use(row):
 async def check_team_limit(guild_id, exclude_channel_id=None):
     """``(allowed, plan, limit)`` for this guild's active race teams."""
     res = await asyncio.to_thread(
-        supabase.table("guilds").select("plan, max_teams").eq("guild_id", guild_id).execute
+        supabase.table("guilds").select("*").eq("guild_id", guild_id).execute
     )
     row = res.data[0] if res.data else {}
     max_teams = row.get("max_teams") or 1
