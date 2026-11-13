@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Offline check for the pure rating helper (`lib/rating.ts`).
+ * Offline check for the pure war rating helper (`lib/rating.ts`).
  *
  * Compiles the helper (and its type/constants imports) to a temp directory with the local
  * TypeScript compiler, then runs a fixture table over the compiled module. No Supabase, no
@@ -106,20 +106,6 @@ function makeWar(overrides = {}) {
   }
 }
 
-function raceLogs({ player = 'sam', discordId = '900', channelId = '11', count = 1, action = 'dyp_done', lap = 1, startNode = 1, name = player } = {}) {
-  return Array.from({ length: count }, (_, index) => ({
-    id: index + 1,
-    guild_id: '1',
-    channel_id: channelId,
-    lap,
-    node: startNode + index,
-    discord_id: discordId,
-    player_name: name,
-    action_type: action,
-    created_at: '2026-11-10T01:00:00Z',
-  }))
-}
-
 function rowsFor(input) {
   return computeRatings(input)
 }
@@ -157,55 +143,7 @@ function expectRow(rows, alias, expected) {
 
 /* ------------------------------------------------------------------- checks */
 
-check('dedupe: repeated je_add on the same node counts once', () => {
-  const rows = rowsFor({
-    war: null,
-    warSettings: SETTINGS,
-    aliases: ALIASES,
-    raceLogs: [
-      { id: 1, guild_id: '1', channel_id: '11', lap: 2, node: 3, discord_id: '900', player_name: 'sam', action_type: 'je_add', created_at: null },
-      { id: 2, guild_id: '1', channel_id: '11', lap: 2, node: 3, discord_id: '900', player_name: 'sam', action_type: 'je_add', created_at: null },
-      { id: 3, guild_id: '1', channel_id: '11', lap: 2, node: 3, discord_id: '900', player_name: 'sam', action_type: 'je_done', created_at: null },
-    ],
-    raceChannelId: '11',
-  })
-  return expectRow(rows, 'sam', { raceTasks: 1 })
-})
-
-check('dedupe: claim + done on one node is one OFA task, claim alone is none', () => {
-  const rows = rowsFor({
-    war: null,
-    warSettings: SETTINGS,
-    aliases: ALIASES,
-    raceLogs: [
-      { id: 1, guild_id: '1', channel_id: '11', lap: 1, node: 1, discord_id: '900', player_name: 'sam', action_type: 'ofa_claim', created_at: null },
-      { id: 2, guild_id: '1', channel_id: '11', lap: 1, node: 1, discord_id: '900', player_name: 'sam', action_type: 'ofa_done', created_at: null },
-      { id: 3, guild_id: '1', channel_id: '11', lap: 1, node: 2, discord_id: '900', player_name: 'sam', action_type: 'dyp_done', created_at: null },
-    ],
-    raceChannelId: '11',
-  })
-  return expectRow(rows, 'sam', { raceTasks: 2 })
-})
-
-check('claim-only player gets no race task', () => {
-  const rows = rowsFor({
-    war: null,
-    warSettings: SETTINGS,
-    aliases: ALIASES,
-    raceLogs: [
-      { id: 1, guild_id: '1', channel_id: '11', lap: 1, node: 1, discord_id: '901', player_name: 'bob', action_type: 'ofa_claim', created_at: null },
-    ],
-    raceChannelId: '11',
-  })
-  const row = byAlias(rows, 'bob')
-  if (!row) return ['missing bob row']
-  const problems = []
-  if (row.raceTasks !== 0) problems.push(`raceTasks = ${row.raceTasks}, want 0`)
-  if (row.score !== 0) problems.push(`score = ${row.score}, want 0`)
-  return problems
-})
-
-check('excused on: unranked, listed last, keeps race task count', () => {
+check('excused on: unranked and listed last', () => {
   const rows = rowsFor({
     war: makeWar({
       attack_counts: { sam: 6, bob: 6 },
@@ -213,16 +151,12 @@ check('excused on: unranked, listed last, keeps race task count', () => {
     }),
     warSettings: SETTINGS,
     aliases: ALIASES,
-    raceLogs: raceLogs({ player: 'amy', discordId: '902', count: 6 }),
-    raceChannelId: '11',
-    warChannelId: '10',
   })
   const problems = []
   const amy = byAlias(rows, 'amy')
   if (!amy) return ['missing amy row']
   if (!amy.excused) problems.push('amy is ranked instead of excused')
   if (rows[rows.length - 1].alias !== 'amy') problems.push(`excused row not last (last = ${rows[rows.length - 1].alias})`)
-  if (amy.raceTasks !== 6) problems.push(`amy.raceTasks = ${amy.raceTasks}, want 6`)
   if (rows.filter((row) => row.excused).length !== 1) problems.push('ranked/excused split is wrong')
   return problems
 })
@@ -232,87 +166,49 @@ check('excused off: absent player ranks normally with no war credit', () => {
     war: makeWar({ attack_counts: { sam: 6 }, absent_list: [{ name: 'amy' }] }),
     warSettings: { ...SETTINGS, exempt_absent: false },
     aliases: ALIASES,
-    raceLogs: [],
-    warChannelId: '10',
-    raceChannelId: '11',
   })
   const problems = []
   if (rows.some((row) => row.excused)) problems.push('someone is still excused')
   return problems.concat(expectRow(rows, 'amy', { excused: false, score: 0, grade: 'D' }))
 })
 
-check('war-only team renormalizes: 3/6 attacks is 50 C', () => {
+check('3/6 attacks is 50 C', () => {
   const rows = rowsFor({
     war: makeWar({ attack_counts: { sam: 3 } }),
     warSettings: SETTINGS,
     aliases: ALIASES,
-    raceLogs: [],
-    warChannelId: '10',
-    raceChannelId: null,
   })
   return expectRow(rows, 'sam', { attacks: 3, score: 50, grade: 'C' })
 })
 
-check('war-only team caps at required: 9/6 attacks is 100 A+', () => {
+check('score caps at required: 9/6 attacks is 100 A+', () => {
   const rows = rowsFor({
     war: makeWar({ attack_counts: { sam: 9 } }),
     warSettings: SETTINGS,
     aliases: ALIASES,
-    raceLogs: [],
-    warChannelId: '10',
-    raceChannelId: null,
   })
   return expectRow(rows, 'sam', { score: 100, grade: 'A+' })
 })
 
-check('race-only team renormalizes: 10 tasks is 100 A+, 5 tasks is 50 C', () => {
-  const full = rowsFor({
-    war: null,
-    warSettings: SETTINGS,
-    aliases: ALIASES,
-    raceLogs: raceLogs({ count: 10 }),
-    warChannelId: null,
-    raceChannelId: '11',
-  })
-  const half = rowsFor({
-    war: null,
-    warSettings: SETTINGS,
-    aliases: ALIASES,
-    raceLogs: raceLogs({ count: 5 }),
-    warChannelId: null,
-    raceChannelId: '11',
-  })
-  return expectRow(full, 'sam', { score: 100, grade: 'A+' }).concat(
-    expectRow(half, 'sam', { score: 50, grade: 'C' }),
-  )
-})
-
-check('both channels, no race activity: capped at 60 C (not renormalized)', () => {
-  const rows = rowsFor({
-    war: makeWar({ attack_counts: { sam: 6 } }),
-    warSettings: SETTINGS,
-    aliases: ALIASES,
-    raceLogs: [],
-    warChannelId: '10',
-    raceChannelId: '11',
-  })
-  return expectRow(rows, 'sam', { score: 60, grade: 'C' })
-})
-
-check('pre-migration rows (no lap/node) count one task per row', () => {
+check('no war and no requirement: nobody is scored', () => {
   const rows = rowsFor({
     war: null,
+    warSettings: { ...SETTINGS, attacks_required: 0 },
+    aliases: ALIASES,
+  })
+  return rows.length === 0 ? [] : [`expected no rows, got ${rows.length}`]
+})
+
+check('rows carry only the war score fields', () => {
+  const rows = rowsFor({
+    war: makeWar({ attack_counts: { sam: 3 } }),
     warSettings: SETTINGS,
     aliases: ALIASES,
-    raceLogs: [
-      { id: 1, guild_id: '1', channel_id: null, lap: null, node: null, discord_id: '900', player_name: 'sam', action_type: 'je_add', created_at: null },
-      { id: 2, guild_id: '1', channel_id: null, lap: null, node: null, discord_id: '900', player_name: 'sam', action_type: 'je_add', created_at: null },
-      { id: 3, guild_id: '1', channel_id: null, lap: null, node: null, discord_id: '900', player_name: 'sam', action_type: 'dyp_done', created_at: null },
-    ],
-    warChannelId: null,
-    raceChannelId: '11',
   })
-  return expectRow(rows, 'sam', { raceTasks: 3 })
+  const keys = Object.keys(rows[0] || {}).sort()
+  return same(keys, ['alias', 'attacks', 'discordId', 'excused', 'grade', 'required', 'score'])
+    ? []
+    : [`unexpected row keys: ${keys.join(',')}`]
 })
 
 check('multi-alias player folds into one row with combined attacks', () => {
@@ -320,37 +216,16 @@ check('multi-alias player folds into one row with combined attacks', () => {
     war: makeWar({ attack_counts: { sam: 3, sammy: 3 } }),
     warSettings: SETTINGS,
     aliases: MULTI_ALIASES,
-    raceLogs: raceLogs({ player: 'Sammy', name: 'sammy', count: 10 }),
-    warChannelId: '10',
-    raceChannelId: '11',
   })
   const samRows = rows.filter((row) => String(row.discordId) === '900')
   const problems = []
   if (samRows.length !== 1) problems.push(`expected 1 row for discord id 900, got ${samRows.length}`)
   if (samRows.length === 1) {
     if (samRows[0].attacks !== 6) problems.push(`attacks = ${samRows[0].attacks}, want 6`)
-    if (samRows[0].raceTasks !== 10) problems.push(`raceTasks = ${samRows[0].raceTasks}, want 10`)
     if (samRows[0].score !== 100) problems.push(`score = ${samRows[0].score}, want 100`)
     if (samRows[0].grade !== 'A+') problems.push(`grade = ${samRows[0].grade}, want A+`)
   }
   return problems
-})
-
-check('multi-alias dedupes race nodes by discord id', () => {
-  const rows = rowsFor({
-    war: makeWar({}),
-    warSettings: SETTINGS,
-    aliases: MULTI_ALIASES,
-    raceLogs: [
-      { id: 1, guild_id: '1', channel_id: '11', lap: 1, node: 1, discord_id: '900', player_name: 'sam', action_type: 'dyp_done', created_at: null },
-      { id: 2, guild_id: '1', channel_id: '11', lap: 1, node: 1, discord_id: '900', player_name: 'sammy', action_type: 'dyp_done', created_at: null },
-    ],
-    warChannelId: '10',
-    raceChannelId: '11',
-  })
-  const samRows = rows.filter((row) => String(row.discordId) === '900')
-  if (samRows.length !== 1) return [`expected 1 row, got ${samRows.length}`]
-  return samRows[0].raceTasks === 1 ? [] : [`raceTasks = ${samRows[0].raceTasks}, want 1`]
 })
 
 check('legacy plain-string lists still create rows', () => {
@@ -358,14 +233,33 @@ check('legacy plain-string lists still create rows', () => {
     war: makeWar({ missing_list: ['bob'], absent_list: ['amy'], attack_counts: { sam: 6 } }),
     warSettings: SETTINGS,
     aliases: ALIASES,
-    raceLogs: [],
-    warChannelId: '10',
-    raceChannelId: null,
   })
   const problems = []
   if (!byAlias(rows, 'sam')) problems.push('missing sam row')
   if (!byAlias(rows, 'bob') || byAlias(rows, 'bob').excused) problems.push('bob should be a ranked missing row')
   if (!byAlias(rows, 'amy') || !byAlias(rows, 'amy').excused) problems.push('amy should be an excused row')
+  return problems
+})
+
+check('list entry with only a Discord id resolves to its alias', () => {
+  const rows = rowsFor({
+    war: makeWar({ missing_list: [{ id: '901' }] }),
+    warSettings: SETTINGS,
+    aliases: ALIASES,
+  })
+  return rows.length === 1 && rows[0].alias === 'bob' ? [] : [`rows = ${JSON.stringify(rows.map((r) => r.alias))}, want [bob]`]
+})
+
+check('unresolved list entry shows "No alias", never an id', () => {
+  const rows = rowsFor({
+    war: makeWar({ missing_list: [{ id: '123456789012345678' }] }),
+    warSettings: SETTINGS,
+    aliases: ALIASES,
+  })
+  const problems = []
+  if (rows.length !== 1) return [`expected 1 row, got ${rows.length}`]
+  if (rows[0].alias !== 'No alias') problems.push(`alias = ${JSON.stringify(rows[0].alias)}, want "No alias"`)
+  if (/\d{17,}/.test(rows[0].alias)) problems.push('alias contains a snowflake')
   return problems
 })
 

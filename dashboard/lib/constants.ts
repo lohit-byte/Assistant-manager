@@ -9,16 +9,6 @@ export const SUPPORT_EMAIL = 'warbot.support@gmail.com'
 export const TRIAL_DAYS = 7
 export const DEFAULT_ATTACKS_REQUIRED = 6
 export const MAX_ATTACKS_REQUIRED = 6
-export const NODES_PER_LAP = 5
-
-/**
- * Activity rating (war attendance 60 %, race contributions 40 %). Tunable from one place:
- * `RACE_ACTIVITY_TARGET` is the number of distinct race tasks that make a full race half.
- * If a team only has a war or only a race channel, the two weights are renormalized.
- */
-export const WAR_RATING_WEIGHT = 0.6
-export const RACE_RATING_WEIGHT = 0.4
-export const RACE_ACTIVITY_TARGET = 10
 
 export const PERMISSION_ADMINISTRATOR = BigInt(0x8)
 export const PERMISSION_MANAGE_GUILD = BigInt(0x20)
@@ -84,7 +74,6 @@ export const DISCORD_GUILD_ICON = (guildId: string, icon: string, size = 128) =>
 export const NAV_ITEMS = [
   { name: 'Overview', href: '', icon: 'overview' as const },
   { name: 'War', href: '/war', icon: 'war' as const },
-  { name: 'Race', href: '/race', icon: 'race' as const },
   { name: 'Maze', href: '/maze', icon: 'maze' as const },
   { name: 'Aliases', href: '/aliases', icon: 'aliases' as const },
   { name: 'Billing', href: '/billing', icon: 'billing' as const },

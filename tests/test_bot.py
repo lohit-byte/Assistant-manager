@@ -5,6 +5,7 @@ Run with:  /data/data/com.termux/files/usr/bin/python3 -m pytest tests -q
 
 import json
 import os
+import re
 import types
 from datetime import datetime, timezone, timedelta
 
@@ -30,8 +31,6 @@ from cogs.admin import Admin
 from cogs.billing import BillingManager
 from cogs.help import Help
 from cogs.maze import MazeTracker
-from cogs.race import (RaceTracker, clean_val, format_amount, parse_amount,
-                       parse_dyp_target, parse_node_args, parse_sheet_csv)
 from cogs.team import Teams
 from cogs.war import (
     AttackView,
@@ -47,9 +46,6 @@ from cogs.war import (
     phase_at,
     progress_bar,
 )
-import ocr_engine
-import node_sheet
-from node_sheet import bundled_sheet, default_path, load_nodesheet, parse_nodesheet
 
 GUILD = 100
 CHANNEL = 10
@@ -57,10 +53,6 @@ CHANNEL = 10
 
 def war_cog():
     return WarTracker(FakeBot())
-
-
-def race_cog():
-    return RaceTracker(FakeBot())
 
 
 def admin_cog():
@@ -85,32 +77,6 @@ def seed_war(db, **overrides):
     }
     row.update(overrides)
     db.seed("wars", row)
-    return row
-
-
-def seed_race(db, **overrides):
-    row = {
-        "channel_id": CHANNEL,
-        "guild_id": GUILD,
-        "current_lap": 1,
-        "current_node": 1,
-        "target_laps": 0,
-        "task_description": "Kill the dragon",
-        "ofa_holder_id": None,
-        "ofa_target": "10",
-        "ofa_done": False,
-        "dyp_progress": 0,
-        "dyp_target": 5,
-        "dyp_contributors": [],
-        "je_progress": "0",
-        "je_target": "1000",
-        "je_done": False,
-        "pending_ofa_message_id": None,
-        "pending_ofa_user_id": None,
-        "active_race_sheet": None,
-    }
-    row.update(overrides)
-    db.seed("race_state", row)
     return row
 
 
@@ -397,68 +363,6 @@ def test_alias_list(clean_db):
     assert any(embed is not None for _content, embed in ctx.sent)
 
 
-# ------------------------------------------------------------------- race
-
-
-def test_race_clear_sets_guild_id(clean_db):
-    db = clean_db
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "clear"))
-
-    row = db.one("race_state", channel_id=CHANNEL)
-    assert row is not None
-    assert row.get("guild_id") == GUILD
-
-
-def test_race_set_desc_does_not_store_the_keyword(clean_db):
-    db = clean_db
-    seed_race(db)
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "set", args="desc Kill the dragon"))
-
-    assert db.one("race_state", channel_id=CHANNEL)["task_description"] == "Kill the dragon"
-
-
-def test_race_dyp_without_target_does_not_report_completion(clean_db):
-    db = clean_db
-    seed_alias(db, 1, "tester")
-    seed_race(db, dyp_target=0, dyp_contributors=[])
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(race_cog().handle_task(ctx, "dyp", None, None))
-
-    row = db.one("race_state", channel_id=CHANNEL)
-    assert row["dyp_progress"] == 0
-    assert row["dyp_contributors"] == []
-    assert not any("Target Reached" in text for text in ctx.texts)
-    assert any("target" in text.lower() for text in ctx.texts)
-
-
-def test_race_ofa_release_clears_the_holder(clean_db):
-    db = clean_db
-    seed_race(db, ofa_holder_id=555, ofa_done=False)
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(race_cog().handle_task(ctx, "ofa", "release", "ofa release"))
-
-    assert db.one("race_state", channel_id=CHANNEL)["ofa_holder_id"] is None
-
-
-def test_race_dmp_logs_contribution(clean_db):
-    db = clean_db
-    seed_alias(db, 1, "tester")
-    seed_race(db, dyp_target=5, dyp_progress=0, dyp_contributors=[])
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(race_cog().handle_task(ctx, "dyp", None, None))
-
-    row = db.one("race_state", channel_id=CHANNEL)
-    assert row["dyp_progress"] == 1
-    assert row["dyp_contributors"] == ["1"]
-
-
 # ------------------------------------------------------------------- maze
 
 
@@ -578,25 +482,6 @@ def test_phase_timeline():
     assert phase_at(start, start + timedelta(hours=48)) == "ended"
 
 
-def test_formatting_helpers():
-    assert fmt_td(timedelta(hours=3, minutes=5)) == "3h 5m"
-    assert len(progress_bar(50, 100)) == 20
-    assert progress_bar(50, 100).count("█") == 10
-    assert format_amount(1_500_000) == "1.5 M"
-    assert parse_amount("1.2M") == 1_200_000
-
-
-def test_parse_node_args():
-    parsed = parse_node_args("50 hatch | 10 breed | 5 craft")
-    assert [task for _value, task in parsed] == ["hatch", "breed", "craft"]
-    assert [value for value, _task in parsed] == ["50", "10", "5"]
-
-
-def test_ocr_clean_val_handles_thousands_separator():
-    assert ocr_engine.clean_val("1,200") == 1200
-    assert ocr_engine.clean_val("1.2M") == 1_200_000
-
-
 # ------------------------------------------------------------------- main
 
 
@@ -663,23 +548,6 @@ def test_maze_status_is_public(clean_db):
 # ------------------------------------------------- audit round 2 regressions
 
 
-def test_team_limit_blocks_second_team_via_set_desc(clean_db):
-    db = clean_db
-    db.one("guilds", guild_id=GUILD)["max_teams"] = 1
-    db.seed("race_state", {"channel_id": 20, "guild_id": GUILD,
-                           "task_description": "Team A", "is_event_active": False})
-    ctx = make_ctx(channel_id=CHANNEL)
-    race = race_cog()
-
-    run(call(RaceTracker.race_group, race, ctx, "set", args="desc Team B"))
-    assert db.one("race_state", channel_id=CHANNEL) is None
-    assert any("Team limit" in text for text in ctx.texts)
-
-    run(call(RaceTracker.race_group, race, ctx, "target", args="20"))
-    assert db.one("race_state", channel_id=CHANNEL) is None
-    assert sum("Team limit" in text for text in ctx.texts) == 2
-
-
 def test_war_attacks_resolves_a_mention(clean_db):
     db = clean_db
     seed_alias(db, 200, "sam")
@@ -709,32 +577,6 @@ def test_war_attacks_lowering_count_readds_to_missing(clean_db):
     assert any(m["name"] == "sam" for m in row["missing_list"])
 
 
-def test_race_je_accepts_text_target_from_sheet(clean_db):
-    db = clean_db
-    seed_alias(db, 1, "tester")
-    seed_race(db, je_target="Breed 36 C", je_progress="0", je_done=False)
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(race_cog().handle_task(ctx, "je", "+500k", "+500k"))
-
-    row = db.one("race_state", channel_id=CHANNEL)
-    assert row["je_progress"] == "500 K"
-    assert row["je_done"] is False
-    assert not any("Invalid amount" in text for text in ctx.texts)
-
-
-def test_race_log_insert_does_not_report_failure(clean_db, capsys):
-    db = clean_db
-    seed_alias(db, 1, "tester")
-    seed_race(db, dyp_target=5, dyp_progress=0, dyp_contributors=[])
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(race_cog().handle_task(ctx, "dyp", None, None))
-
-    assert db.rows("race_logs"), "race action should be logged"
-    assert "Failed to log race action" not in capsys.readouterr().out
-
-
 def test_force_premium_clears_a_past_expiry(clean_db):
     db = clean_db
     db.reset()
@@ -762,13 +604,6 @@ def test_premium_gate_defers_dm_to_guild_only_check(clean_db):
     ctx.guild = None
     ctx.command = types.SimpleNamespace(name="war")
     assert run(botmain.premium_gate(ctx)) is True
-
-
-def test_parse_node_args_keeps_thousands_separator():
-    parsed = parse_node_args("1,200 hatch | 10 breed | 5 craft")
-    assert [value for value, _task in parsed] == ["1,200", "10", "5"]
-    from cogs.race import clean_val
-    assert clean_val("1,200") == 1200
 
 
 def test_maze_old_date_rolls_into_the_future(clean_db):
@@ -900,36 +735,6 @@ def test_maze_status_shows_ping_details(clean_db):
     field_names = [field.name for field in embed.fields]
     assert "Ping mention" in field_names
     assert "Next discounts" in field_names
-
-
-# --------------------------------------------------- feature: race sheets
-
-
-def test_parse_sheet_csv_lap_and_node():
-    data = parse_sheet_csv(
-        "lap,node,ofa,dyp,je\n1,1,Hatch 5,Collect 20k,5\n1,2,Breed 3,10 members,Craft 2\n"
-    )
-    assert set(data) == {"1.1", "1.2"}
-    assert data["1.1"] == {"ofa": "Hatch 5", "dyp": "Collect 20k", "je": "5"}
-
-
-def test_parse_sheet_csv_node_key_column():
-    data = parse_sheet_csv("node,ofa,dyp,je\n0.1,Hatch,10,5\n")
-    assert data == {"0.1": {"ofa": "Hatch", "dyp": "10", "je": "5"}}
-
-
-def test_upload_sheet_accepts_csv(clean_db):
-    db = clean_db
-    ctx = make_ctx(channel_id=CHANNEL)
-    ctx.message.attachments = [FakeAttachment(
-        "nodes.csv", "lap,node,ofa,dyp,je\n1,1,Hatch,10,5\n"
-    )]
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "uploadsheet", args="my sheet"))
-
-    row = db.one("race_sheets", guild_id=GUILD, name="my sheet")
-    assert row is not None
-    assert row["data"] == {"1.1": {"ofa": "Hatch", "dyp": "10", "je": "5"}}
 
 
 # --------------------------------------------------- feature: war timeline
@@ -1300,11 +1105,10 @@ def test_war_absent_add_accepts_several_mentions(clean_db):
 
 
 def seed_team(db, team_id=1, guild=GUILD, name="A", war_channel_id=CHANNEL,
-              race_channel_id=None, team_role_id=None,
+              team_role_id=None,
               attacks_required=None, exempt_absent=None):
     db.seed("teams", {"id": team_id, "guild_id": guild, "name": name,
                       "war_channel_id": war_channel_id,
-                      "race_channel_id": race_channel_id,
                       "team_role_id": team_role_id,
                       "attacks_required": attacks_required,
                       "exempt_absent": exempt_absent})
@@ -1445,13 +1249,13 @@ def test_fake_db_team_captains_enforces_foreign_keys(clean_db):
         db.table("team_captains").insert({"team_id": 5, "discord_id": 900}).execute()
 
 
-def test_team_captain_map_resolves_war_and_race_channels(clean_db):
+def test_team_captain_map_resolves_the_war_channel(clean_db):
     db = clean_db
-    seed_team(db, 1, war_channel_id=10, race_channel_id=11)
+    seed_team(db, 1, war_channel_id=10)
     seed_captain(db, 1, 900)
     database._team_cache.clear()
 
-    assert database.get_team_captain_map(GUILD) == {10: {900}, 11: {900}}
+    assert database.get_team_captain_map(GUILD) == {10: {900}}
 
 
 def test_team_captain_map_without_teams_is_empty(clean_db):
@@ -1462,28 +1266,26 @@ def test_team_captain_map_without_teams_is_empty(clean_db):
 
 def test_captain_is_team_staff_but_not_global_staff(clean_db):
     db = clean_db
-    seed_team(db, 1, war_channel_id=CHANNEL, race_channel_id=11)
+    seed_team(db, 1, war_channel_id=CHANNEL)
     seed_captain(db, 1, 900)
     database._team_cache.clear()
     guild = FakeGuild(GUILD, me=FakeMember(999, "Bot", administrator=False))
     captain = FakeMember(900, "Cap", administrator=False, guild=guild)
 
     assert run(database.is_team_staff(captain, CHANNEL)) is True
-    assert run(database.is_team_staff(captain, 11)) is True
     assert run(database.is_team_staff(captain, 12)) is False
     assert run(database.is_staff_member(captain)) is False
 
 
 def test_plain_member_is_not_team_staff(clean_db):
     db = clean_db
-    seed_team(db, 1, war_channel_id=CHANNEL, race_channel_id=11)
+    seed_team(db, 1, war_channel_id=CHANNEL)
     seed_captain(db, 1, 900)
     database._team_cache.clear()
     guild = FakeGuild(GUILD, me=FakeMember(999, "Bot", administrator=False))
     member = FakeMember(901, "Plain", administrator=False, guild=guild)
 
     assert run(database.is_team_staff(member, CHANNEL)) is False
-    assert run(database.is_team_staff(member, 11)) is False
 
 
 def test_staff_role_columns_cover_leader_helper_and_staff(clean_db):
@@ -1817,204 +1619,11 @@ def test_war_reminder_carries_the_attack_view(clean_db):
     assert channel.sent_kwargs[-1].get("view") is not None
 
 
-# --------------------------------------------- feature: bundled node sheet
-
-
-NODE_1_2 = {"1.2": {"ofa": "Hatch 5", "dyp": "10 members", "je": "5"}}
-NODE_1_3 = {"1.3": {"ofa": "Breed 3", "dyp": "5 members", "je": "2"}}
-
-
-def write_nodesheet(tmp_path, payload, monkeypatch, name="nodesheet.json"):
-    path = tmp_path / name
-    if isinstance(payload, str):
-        path.write_text(payload, encoding="utf-8")
-    else:
-        path.write_text(json.dumps(payload), encoding="utf-8")
-    monkeypatch.setenv("NODESHEET_PATH", str(path))
-    return path
-
-
-def test_parse_nodesheet_accepts_wrapper_and_skips_bad_nodes():
-    data, warnings = parse_nodesheet({
-        "nodes": {
-            "0.1": {"ofa": "a", "dyp": "b", "je": "c"},
-            "0.2": {"ofa": "a"},
-        }
-    })
-
-    assert data == {"0.1": {"ofa": "a", "dyp": "b", "je": "c"}}
-    assert len(warnings) == 1
-
-
-def test_parse_nodesheet_rejects_bad_top_level():
-    with pytest.raises(ValueError):
-        parse_nodesheet(["nope"])
-    with pytest.raises(ValueError):
-        parse_nodesheet({"nodes": "nope"})
-
-
-def test_parse_nodesheet_skips_a_node_without_lap_context():
-    data, warnings = parse_nodesheet({
-        "1": {"ofa": "a", "dyp": "b", "je": "c"},
-        "0.1": {"ofa": "a", "dyp": "b", "je": "c"},
-    })
-
-    assert set(data) == {"0.1"}
-    assert warnings
-
-
-def test_default_path_uses_the_environment_override(tmp_path, monkeypatch):
-    path = tmp_path / "sheet.json"
-    monkeypatch.setenv("NODESHEET_PATH", str(path))
-
-    assert default_path() == str(path)
-
-
-def test_missing_or_broken_nodesheet_is_ignored(tmp_path, monkeypatch):
-    monkeypatch.setenv("NODESHEET_PATH", str(tmp_path / "missing.json"))
-    assert load_nodesheet() is None
-    assert bundled_sheet() is None
-
-    write_nodesheet(tmp_path, "{ not valid json", monkeypatch)
-    assert load_nodesheet() is None
-
-
-def test_load_nodesheet_tolerates_bom_and_whitespace(tmp_path, monkeypatch):
-    write_nodesheet(tmp_path, "\ufeff\n  " + json.dumps(NODE_1_2) + "\n", monkeypatch)
-
-    assert load_nodesheet() == NODE_1_2
-
-
-def test_load_nodesheet_reloads_when_the_file_changes(tmp_path, monkeypatch):
-    path = write_nodesheet(tmp_path, NODE_1_2, monkeypatch)
-    assert load_nodesheet() == NODE_1_2
-
-    path.write_text(json.dumps(NODE_1_3), encoding="utf-8")
-    future = os.path.getmtime(path) + 10
-    os.utime(path, (future, future))
-
-    assert load_nodesheet() == NODE_1_3
-
-
-def test_race_next_falls_back_to_the_bundled_sheet(clean_db, monkeypatch, tmp_path):
-    db = clean_db
-    write_nodesheet(tmp_path, NODE_1_2, monkeypatch)
-    seed_race(db, current_lap=1, current_node=1, active_race_sheet=None)
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "next"))
-
-    row = db.one("race_state", channel_id=CHANNEL)
-    assert (row["current_lap"], row["current_node"]) == (1, 2)
-    assert row["dyp_target"] == 10
-    assert any("default (bundled)" in text for text in ctx.texts)
-
-
-def test_race_use_default_selects_the_bundled_sheet(clean_db, monkeypatch, tmp_path):
-    db = clean_db
-    write_nodesheet(tmp_path, NODE_1_2, monkeypatch)
-    seed_race(db, active_race_sheet=None)
-    ctx = make_ctx(channel_id=CHANNEL)
-    race = race_cog()
-
-    run(call(RaceTracker.race_group, race, ctx, "use", args="default"))
-    assert db.one("race_state", channel_id=CHANNEL)["active_race_sheet"] == "default"
-
-    run(call(RaceTracker.race_group, race, ctx, "use", args="bundled"))
-    assert db.one("race_state", channel_id=CHANNEL)["active_race_sheet"] == "default"
-
-
-def test_race_use_default_without_a_bundled_sheet_errors(clean_db, monkeypatch, tmp_path):
-    db = clean_db
-    monkeypatch.setenv("NODESHEET_PATH", str(tmp_path / "missing.json"))
-    seed_race(db, active_race_sheet=None)
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "use", args="default"))
-
-    assert db.one("race_state", channel_id=CHANNEL)["active_race_sheet"] is None
-    assert any("bundled" in text.lower() for text in ctx.texts)
-
-
-def test_race_sheets_lists_guild_sheets_and_the_bundled_default(clean_db, monkeypatch, tmp_path):
-    db = clean_db
-    write_nodesheet(tmp_path, NODE_1_2, monkeypatch)
-    db.seed("race_sheets", {"id": 1, "guild_id": GUILD, "name": "alpha", "data": {}})
-    db.seed("race_sheets", {"id": 2, "guild_id": GUILD, "name": "beta", "data": {}})
-    seed_race(db, active_race_sheet="alpha")
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "sheets"))
-
-    text = " ".join(ctx.texts)
-    assert "alpha" in text and "beta" in text
-    assert "default (bundled)" in text
-
-
-def test_race_log_records_channel_and_node(clean_db):
-    db = clean_db
-    seed_alias(db, 1, "tester")
-    seed_race(db, current_lap=1, current_node=1)
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(race_cog().handle_task(ctx, "dyp", None, None))
-
-    log = db.rows("race_logs")[-1]
-    assert (log["channel_id"], log["lap"], log["node"]) == (CHANNEL, 1, 1)
-
-
-def test_ofa_claim_reaction_logs_channel_lap_node(clean_db):
-    db = clean_db
-    seed_race(db, current_lap=2, current_node=3,
-              pending_ofa_message_id=555, pending_ofa_user_id=200)
-    bot, guild, channel = _maze_bot()
-    guild.members.append(FakeMember(1, "Staff", administrator=True, guild=guild))
-    tracker = race_cog()
-    tracker.bot = bot
-
-    run(tracker.on_raw_reaction_add(
-        FakeReactionPayload(guild_id=GUILD, channel_id=CHANNEL, message_id=555, user_id=1,
-                            emoji="✅")))
-
-    log = db.rows("race_logs")[-1]
-    assert (log["channel_id"], log["lap"], log["node"]) == (CHANNEL, 2, 3)
-
-
-def test_missing_or_broken_nodesheet_does_not_crash_a_command(clean_db, monkeypatch, tmp_path):
-    db = clean_db
-    write_nodesheet(tmp_path, "{ not valid json", monkeypatch)
-    seed_race(db, current_lap=1, current_node=1, active_race_sheet=None)
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "next"))
-
-    assert ctx.texts, "the command should reply instead of crashing"
-    assert db.one("race_state", channel_id=CHANNEL)["current_lap"] == 1
-
-
-def test_upload_sheet_skips_a_bad_node_and_keeps_the_rest(clean_db):
-    db = clean_db
-    ctx = make_ctx(channel_id=CHANNEL)
-    ctx.message.attachments = [FakeAttachment(
-        "nodes.json",
-        json.dumps({"0.1": {"ofa": "Hatch 5", "dyp": "10 members", "je": "5"},
-                    "0.2": {"ofa": "missing the rest"}}),
-    )]
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "uploadsheet", args="my sheet"))
-
-    row = db.one("race_sheets", guild_id=GUILD, name="my sheet")
-    assert row is not None
-    assert set(row["data"]) == {"0.1"}
-    assert any("skipped" in text.lower() for text in ctx.texts)
-
-
 # ------------------------------------------------ feature: team-scoped staff
 
 
-def seed_captain_team(db, channel_id=CHANNEL, captain_id=900, team_id=1,
-                      race_channel_id=CHANNEL):
-    seed_team(db, team_id, war_channel_id=channel_id, race_channel_id=race_channel_id)
+def seed_captain_team(db, channel_id=CHANNEL, captain_id=900, team_id=1):
+    seed_team(db, team_id, war_channel_id=channel_id)
     seed_captain(db, team_id, captain_id)
     database._team_cache.clear()
 
@@ -2075,7 +1684,7 @@ def test_plain_member_cannot_run_team_commands(clean_db):
 def test_captain_cannot_manage_another_teams_channel(clean_db):
     db = clean_db
     seed_team(db, 1, war_channel_id=CHANNEL)
-    seed_team(db, 2, name="B", war_channel_id=12, race_channel_id=13)
+    seed_team(db, 2, name="B", war_channel_id=12)
     seed_captain(db, 1, 900)
     database._team_cache.clear()
     seed_alias(db, 200, "sam")
@@ -2088,56 +1697,10 @@ def test_captain_cannot_manage_another_teams_channel(clean_db):
     assert any("Staff only" in text for text in ctx.texts)
 
 
-def test_captain_can_advance_their_race_node(clean_db):
-    db = clean_db
-    seed_captain_team(db)
-    seed_race(db)
-    ctx = make_ctx(channel_id=CHANNEL, author_id=900, administrator=False)
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "newnode",
-             args="5 hatch | 2 breed | 1 craft"))
-
-    row = db.one("race_state", channel_id=CHANNEL)
-    assert (row["current_lap"], row["current_node"]) == (1, 2)
-    assert "hatch" in row["task_description"]
-
-
-def test_captain_can_select_the_team_sheet_and_list_sheets(clean_db, monkeypatch, tmp_path):
-    db = clean_db
-    write_nodesheet(tmp_path, NODE_1_2, monkeypatch)
-    seed_captain_team(db)
-    seed_race(db, current_lap=1, current_node=1, active_race_sheet=None)
-    ctx = make_ctx(channel_id=CHANNEL, author_id=900, administrator=False)
-    race = race_cog()
-
-    run(call(RaceTracker.race_group, race, ctx, "sheets"))
-    assert any("default (bundled)" in text for text in ctx.texts)
-
-    run(call(RaceTracker.race_group, race, ctx, "use", args="default"))
-    assert db.one("race_state", channel_id=CHANNEL)["active_race_sheet"] == "default"
-
-    run(call(RaceTracker.race_group, race, ctx, "next"))
-    assert db.one("race_state", channel_id=CHANNEL)["current_node"] == 2
-
-
-def test_captain_cannot_upload_a_race_sheet(clean_db):
-    db = clean_db
-    seed_captain_team(db)
-    ctx = make_ctx(channel_id=CHANNEL, author_id=900, administrator=False)
-    ctx.message.attachments = [FakeAttachment(
-        "nodes.csv", "lap,node,ofa,dyp,je\n1,1,Hatch,10,5\n")]
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "uploadsheet", args="cap sheet"))
-
-    assert db.one("race_sheets", name="cap sheet") is None
-    assert any("Staff only" in text for text in ctx.texts)
-
-
-def test_captain_cannot_issue_warnings_or_clear_a_race_node(clean_db):
+def test_captain_cannot_issue_warnings(clean_db):
     db = clean_db
     seed_captain_team(db)
     seed_alias(db, 200, "sam")
-    seed_race(db)
     ctx = make_ctx(channel_id=CHANNEL, author_id=900, administrator=False)
     member = FakeMember(200, "Sam", administrator=False, guild=ctx.guild)
     ctx.guild.members.append(member)
@@ -2146,35 +1709,6 @@ def test_captain_cannot_issue_warnings_or_clear_a_race_node(clean_db):
 
     run(call(WarTracker.warning_group, war, ctx, "add", member.mention, reason="late"))
     assert db.rows("warnings") == []
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "clear"))
-    assert db.one("race_state", channel_id=CHANNEL)["task_description"] == "Kill the dragon"
-
-
-def test_captain_can_approve_ofa_but_a_plain_member_cannot(clean_db):
-    db = clean_db
-    seed_captain_team(db)
-    seed_race(db, pending_ofa_message_id=555, pending_ofa_user_id=200)
-    bot = FakeBot()
-    guild = FakeGuild(GUILD, me=FakeMember(999, "Bot", administrator=False))
-    bot.guilds.append(guild)
-    guild.add_channel(FakeChannel(CHANNEL, guild=guild))
-    guild.members.append(FakeMember(901, "Plain", administrator=False, guild=guild))
-    guild.members.append(FakeMember(900, "Cap", administrator=False, guild=guild))
-    tracker = race_cog()
-    tracker.bot = bot
-
-    def react(user_id):
-        return FakeReactionPayload(guild_id=GUILD, channel_id=CHANNEL,
-                                   message_id=555, user_id=user_id, emoji="✅")
-
-    run(tracker.on_raw_reaction_add(react(901)))
-    assert db.one("race_state", channel_id=CHANNEL)["pending_ofa_message_id"] == 555
-
-    run(tracker.on_raw_reaction_add(react(900)))
-    row = db.one("race_state", channel_id=CHANNEL)
-    assert row["ofa_holder_id"] == 200
-    assert row["pending_ofa_message_id"] is None
 
 
 # ------------------------------------- feature: team role on a fresh war row
@@ -2199,22 +1733,6 @@ def test_war_start_keeps_the_existing_war_role_over_the_team_role(clean_db):
     run(call(WarTracker.war_group, war_cog(), ctx, "defence", "ends", args="20h"))
 
     assert db.one("wars", channel_id=CHANNEL)["team_role_id"] == 888
-
-
-def test_race_next_prefers_the_guild_sheet_over_the_bundled(clean_db, monkeypatch, tmp_path):
-    db = clean_db
-    write_nodesheet(tmp_path, NODE_1_2, monkeypatch)
-    db.seed("race_sheets", {"id": 1, "guild_id": GUILD, "name": "mine", "data": {
-        "1.2": {"ofa": "Guild OFA", "dyp": "4 members", "je": "Guild JE"}}})
-    seed_race(db, current_lap=1, current_node=1, active_race_sheet="mine")
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "next"))
-
-    row = db.one("race_state", channel_id=CHANNEL)
-    assert "Guild OFA" in row["task_description"]
-    assert row["dyp_target"] == 4
-    assert any("mine" in text for text in ctx.texts)
 
 
 def test_captain_can_cancel_the_team_war(clean_db):
@@ -2272,27 +1790,6 @@ def test_war_set_role_without_a_team_row_keeps_working(clean_db):
 
     assert db.one("wars", channel_id=CHANNEL)["team_role_id"] == 777
     assert db.rows("teams") == []
-
-
-def test_default_path_resolves_repo_root_then_cwd(tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    cwd = tmp_path / "cwd"
-    repo.mkdir()
-    cwd.mkdir()
-    monkeypatch.delenv("NODESHEET_PATH", raising=False)
-    monkeypatch.setattr(node_sheet, "ROOT_DIR", str(repo))
-    monkeypatch.chdir(cwd)
-
-    # Neither file exists -> repo-root fallback (the historical behaviour).
-    assert default_path() == str(repo / "nodesheet.json")
-
-    # Docker layout (`COPY bot/ .`): only the working directory has the file.
-    (cwd / "nodesheet.json").write_text("{}", encoding="utf-8")
-    assert default_path() == str(cwd / "nodesheet.json")
-
-    # A repo-root file still wins over the working directory.
-    (repo / "nodesheet.json").write_text("{}", encoding="utf-8")
-    assert default_path() == str(repo / "nodesheet.json")
 
 
 def test_alias_rename_accepts_quoted_names_with_spaces(clean_db):
@@ -2616,7 +2113,7 @@ def test_12h_reminder_keeps_stored_discord_ids(clean_db):
 # ----------------------------------------- help embeds stay inside Discord limits
 
 def test_every_help_page_stays_within_discord_embed_limits(clean_db):
-    topics = (None, "war", "race", "maze", "team", "alias", "ids", "roles", "warning", "pings")
+    topics = (None, "war", "maze", "team", "alias", "ids", "roles", "warning", "pings")
 
     for topic in topics:
         ctx = make_ctx()
@@ -2663,42 +2160,6 @@ def test_member_warning_list_keeps_long_reasons_inside_embed_limits(clean_db):
     assert embed is not None
     assert len(embed) <= 6000
     assert all(len(field.value) <= 1024 for field in embed.fields)
-
-
-def test_race_status_truncates_a_long_node_description(clean_db):
-    db = clean_db
-    db.seed("race_state", {
-        "channel_id": CHANNEL, "guild_id": GUILD, "current_lap": 1, "current_node": 2,
-        "task_description": "x" * 5000, "is_event_active": True,
-        "ofa_holder_id": None, "pending_ofa_message_id": None, "ofa_done": False,
-        "dyp_progress": 0, "dyp_target": 0, "je_progress": "0", "je_target": "0",
-        "je_done": False, "target_laps": 10, "active_race_sheet": None,
-    })
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(RaceTracker.show_status(race_cog(), ctx))
-
-    embed = ctx.sent[-1][1]
-    assert embed is not None
-    assert len(embed) <= 6000
-    assert all(len(field.value) <= 1024 for field in embed.fields)
-
-
-def test_je_unknown_input_tells_the_user_the_usage(clean_db):
-    db = clean_db
-    seed_alias(db, 1, "tester")
-    db.seed("race_state", {
-        "channel_id": CHANNEL, "guild_id": GUILD, "current_lap": 1, "current_node": 2,
-        "task_description": "OFA: x | DYP: y | JE: z", "is_event_active": True,
-        "ofa_holder_id": None, "pending_ofa_message_id": None, "ofa_done": False,
-        "dyp_progress": 0, "dyp_target": 0, "je_progress": "0", "je_target": "0",
-        "je_done": False, "target_laps": 10, "active_race_sheet": None,
-    })
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "je", args="banana"))
-
-    assert any("+" in text or "usage" in text.lower() for text in ctx.texts)
 
 
 # ------------------------- premium gate covers message/button attack logging
@@ -2893,63 +2354,6 @@ def test_resolve_member_prefers_the_named_alias_over_an_unrelated_mention(clean_
     assert found is sam
 
 
-# --------------------------------------------- audit fixes: race and OCR
-
-def test_ocr_fraction_numbers_keep_thousands_separators():
-    assert ocr_engine._fraction_number("1,200") == "1,200"
-    assert int(ocr_engine.clean_val(ocr_engine._fraction_number("1,200"))) == 1200
-    assert int(ocr_engine.clean_val(ocr_engine._fraction_number("1O,5"))) == 10
-
-
-def test_ocr_clean_val_survives_huge_numbers():
-    assert ocr_engine.clean_val("9" * 400) == 0
-
-
-def test_parse_dyp_target_reads_members_and_grouped_numbers():
-    assert parse_dyp_target("Collect 10 members") == 10
-    assert parse_dyp_target("Collect 1,000 members") == 1000
-    assert parse_dyp_target("Collect 1.5K members") == 1500
-    assert parse_dyp_target("Collect 20,000 gold") == 20000
-    assert parse_dyp_target("no numbers here") == 0
-
-
-def test_race_clean_val_and_parse_amount_survive_huge_numbers():
-    assert clean_val("9" * 400) == 0
-    with pytest.raises(ValueError):
-        parse_amount("9" * 400)
-
-
-def test_je_stays_completed_after_more_progress(clean_db):
-    db = clean_db
-    seed_alias(db, 1, "tester")
-    seed_race(db, je_done=True, je_progress="1000", je_target="1000", task_description="JE done")
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "je", args="+500k"))
-
-    assert any("already" in text.lower() for text in ctx.texts)
-    assert db.one("race_state", channel_id=CHANNEL)["je_progress"] == "1000"
-
-
-def test_race_status_clips_a_long_ofa_target(clean_db):
-    db = clean_db
-    seed_race(db, ofa_target="y" * 1500)
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(RaceTracker.show_status(race_cog(), ctx))
-
-    embed = ctx.sent[-1][1]
-    assert all(len(field.value) <= 1024 for field in embed.fields)
-
-
-def test_node_sheet_rejects_keys_outside_the_lap_node_grid():
-    node = {"ofa": "a", "dyp": "b", "je": "c"}
-    data, warnings = parse_nodesheet({"1.6": node, "2.1": node})
-
-    assert set(data) == {"2.1"}
-    assert warnings
-
-
 # ---------------------------------------- audit fixes: maze and billing
 
 def test_maze_pings_stop_for_an_expired_server(clean_db):
@@ -3013,11 +2417,11 @@ def test_help_subcommand_bypasses_the_expired_trial_gate(clean_db):
     import main as botmain
 
     ctx = make_ctx()
-    ctx.command = types.SimpleNamespace(name="race")
-    ctx.message.content = "!race help"
+    ctx.command = types.SimpleNamespace(name="maze")
+    ctx.message.content = "!maze help"
     assert run(botmain.premium_gate(ctx)) is True
 
-    ctx.message.content = "!race status"
+    ctx.message.content = "!maze status"
     assert run(botmain.premium_gate(ctx)) is False
 
 
@@ -3068,29 +2472,6 @@ def test_alias_add_and_remove_accept_quoted_names(clean_db):
 
 
 # --------------------------------------- aliases: identity and departed members
-
-def test_race_task_without_alias_tells_the_player_to_set_one(clean_db):
-    db = clean_db
-    seed_race(db, dyp_target=5, dyp_progress=0, dyp_contributors=[])
-    ctx = make_ctx(channel_id=CHANNEL, author_id=7, display_name="Lone", administrator=False)
-
-    run(race_cog().handle_task(ctx, "dyp", None, None))
-
-    assert any("set your alias first" in text.lower() for text in ctx.texts)
-    assert db.one("race_state", channel_id=CHANNEL)["dyp_progress"] == 0
-
-
-def test_race_task_logs_the_alias_instead_of_the_display_name(clean_db):
-    db = clean_db
-    seed_race(db, dyp_target=5, dyp_progress=0, dyp_contributors=[])
-    seed_alias(db, 1, "sam")
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(race_cog().handle_task(ctx, "dyp", None, None))
-
-    assert db.rows("race_logs")[-1]["player_name"] == "sam"
-    assert any("sam" in text for text in ctx.texts)
-
 
 def test_alias_list_marks_members_who_left_the_server(clean_db):
     db = clean_db
@@ -3393,32 +2774,6 @@ def test_force_premium_defaults_to_elite_unlimited_with_a_year(clean_db):
     assert timedelta(days=364) < ends - before < timedelta(days=366)
 
 
-def test_team_limit_message_names_the_plan(clean_db):
-    db = clean_db
-    db.one("guilds", guild_id=GUILD)["max_teams"] = 1
-    db.one("guilds", guild_id=GUILD)["plan"] = "starter_monthly"
-    db.seed("race_state", {"channel_id": 20, "guild_id": GUILD,
-                           "task_description": "Team A", "is_event_active": False})
-    ctx = make_ctx(channel_id=CHANNEL)
-
-    run(call(RaceTracker.race_group, race_cog(), ctx, "set", args="desc Team B"))
-
-    assert any("Starter" in text and "1" in text for text in ctx.texts)
-
-
-def test_elite_team_limit_is_unlimited(clean_db):
-    import cogs.race as race_module
-
-    db = clean_db
-    db.one("guilds", guild_id=GUILD)["max_teams"] = 1_000_000
-    db.seed("race_state", {"channel_id": 20, "guild_id": GUILD,
-                           "task_description": "Team A", "is_event_active": False})
-
-    allowed, plan, limit = run(race_module.check_team_limit(GUILD))
-    assert allowed is True
-    assert limit == 1_000_000
-
-
 def test_trial_reminder_sends_once_at_two_days(clean_db):
     db = clean_db
     bot, guild, _channel = _maze_bot()
@@ -3450,3 +2805,79 @@ def test_billing_embeds_use_absolute_timestamps(clean_db):
     _content, embed = guild.owner.dms[-1]
     joined = f"{getattr(embed, 'title', '')} {getattr(embed, 'description', '')}"
     assert "<t:" in joined
+
+
+# ------------------------------------------------------- alias-first output
+# Players are shown by alias. No Discord snowflake and no <@id> mention may
+# appear in these display embeds; warning ticket numbers (short) stay.
+
+SNOWFLAKE_A = 123456789012345678
+SNOWFLAKE_B = 987654321098765432
+
+_LONG_DIGITS = re.compile(r"\d{17,20}")
+
+
+def _embed_text(embed):
+    parts = [embed.title or "", embed.description or ""]
+    for field in getattr(embed, "fields", []) or []:
+        parts.append(field.name or "")
+        parts.append(field.value or "")
+    return "\n".join(parts)
+
+
+def _assert_alias_only(text):
+    assert not _LONG_DIGITS.search(text), text
+    assert "<@" not in text, text
+
+
+def test_team_players_shows_alias_and_name_without_ids(clean_db):
+    db = clean_db
+    seed_team(db)
+    seed_team_player(db, 1, SNOWFLAKE_A, "sam")
+    seed_team_player(db, 1, SNOWFLAKE_B, "gone")
+    ctx = make_ctx()
+    ctx.guild.members.append(FakeMember(SNOWFLAKE_A, "Sam The Man", guild=ctx.guild))
+
+    run(call(Teams.team_group, Teams(FakeBot()), ctx, "players", args="A"))
+
+    text = _embed_text(ctx.sent[-1][1])
+    _assert_alias_only(text)
+    assert "• `sam` — Sam The Man" in text
+    assert "• `gone` — ⚠️ left the server" in text
+
+
+def test_alias_list_shows_alias_and_name_without_ids(clean_db):
+    db = clean_db
+    seed_alias(db, SNOWFLAKE_A, "sam")
+    seed_alias(db, SNOWFLAKE_B, "gone")
+    ctx = make_ctx()
+    ctx.guild.members.append(FakeMember(SNOWFLAKE_A, "Sam The Man", guild=ctx.guild))
+
+    run(call(Admin.alias_group, admin_cog(), ctx, "list"))
+
+    text = _embed_text(ctx.sent[-1][1])
+    _assert_alias_only(text)
+    assert "• `sam` → Sam The Man" in text
+    assert "• `gone` → ⚠️ left the server" in text
+
+
+def test_warning_list_names_the_player_by_alias_and_keeps_the_ticket_id(clean_db):
+    db = clean_db
+    seed_alias(db, SNOWFLAKE_A, "sam")
+    seed_alias(db, SNOWFLAKE_B, "gone")  # member left the server: alias still shows
+    db.seed("users", {"discord_id": 555555555555555555})  # alias was pruned
+    for ticket, discord_id, reason in (
+            (7, SNOWFLAKE_A, "late"), (8, SNOWFLAKE_B, "afk"),
+            (9, 555555555555555555, "no show")):
+        db.seed("warnings", {"id": ticket, "guild_id": GUILD, "discord_id": discord_id,
+                             "reason": reason, "issued_by": 1})
+    ctx = make_ctx()
+
+    run(call(WarTracker.warning_group, war_cog(), ctx, "list"))
+
+    text = _embed_text(ctx.sent[-1][1])
+    _assert_alias_only(text)
+    assert "ID 7 · sam" in text
+    assert "ID 8 · gone" in text
+    assert "ID 9 · No alias" in text
+    assert "late" in text and "afk" in text and "no show" in text

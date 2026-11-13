@@ -41,7 +41,7 @@ The spine half of the proposal is now shipped:
   missing / excused / logged counters, built from the same `.war-board` / `.rail` / `.board-count`
   styles as the landing hero.
 - `app/dashboard/[guildId]/page.tsx` — the spine sits under the page header; the duplicate war
-  stat card and war detail card are gone; plan / race / maze stats remain and the detail cards are
+  stat card and war detail card are gone; plan / maze stats remain and the detail cards are
   a three-up grid.
 - `app/globals.css` — `.board-clock--page` scales the clock for in-app use, plus coarse-pointer
   min-heights on the phase switch.

@@ -1,7 +1,7 @@
 """Test bootstrap: stub the third-party modules that are not needed offline.
 
-The bot imports ``supabase`` (client), ``dotenv`` and ``PIL`` at module import
-time.  None of those are exercised by the tests, so they are replaced with tiny
+The bot imports ``supabase`` (client) and ``dotenv`` at module import
+time.  Neither is exercised by the tests, so they are replaced with tiny
 in-memory stubs before the bot modules are imported.
 """
 
@@ -39,18 +39,6 @@ sys.modules.setdefault("supabase", _supabase)
 _dotenv = types.ModuleType("dotenv")
 _dotenv.load_dotenv = lambda *args, **kwargs: None
 sys.modules.setdefault("dotenv", _dotenv)
-
-_pil = types.ModuleType("PIL")
-
-
-class _Image:
-    @staticmethod
-    def open(*args, **kwargs):
-        raise RuntimeError("Pillow is not installed in the offline test environment")
-
-
-_pil.Image = _Image
-sys.modules.setdefault("PIL", _pil)
 
 
 def seed_guild(guild_id=100, **overrides):

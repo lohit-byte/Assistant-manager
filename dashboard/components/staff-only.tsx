@@ -5,7 +5,7 @@ import { Card, CardBody } from '@/components/ui'
 
 /**
  * Shown instead of staff-only pages (aliases, billing, maze) when the viewer is not server
- * staff. Team captains manage only their own team's war/race channels; read-only alias
+ * staff. Team captains manage only their own team's war channel; read-only alias
  * members can view the snapshot but change nothing.
  */
 export function StaffOnlyPanel({ area }: { area: string }) {
@@ -16,8 +16,8 @@ export function StaffOnlyPanel({ area }: { area: string }) {
           <ShieldAlert className="mx-auto mb-3 h-8 w-8 text-slate-600" aria-hidden />
           <p className="text-lg font-semibold tracking-tight text-slate-200">Staff only</p>
           <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-500">
-            {area} is limited to server staff. Team captains can manage their own team’s war and
-            race channels, and read-only members cannot change server configuration. Ask a server
+            {area} is limited to server staff. Team captains can manage their own team’s war
+            channel, and read-only members cannot change server configuration. Ask a server
             manager if you need something changed.
           </p>
           <p className="mx-auto mt-3 max-w-md text-xs leading-relaxed text-slate-500">

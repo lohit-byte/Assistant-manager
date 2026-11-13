@@ -12,8 +12,8 @@ DASHBOARD_URL = os.getenv("DASHBOARD_URL", "").rstrip("/")
 
 # Reminder copy follows the UX psychology guide: one exact, localized deadline, the loss
 # (what pauses) and the reassurance (what is kept), then a one-click action.
-PAUSES = "War timers, missing lists, race nodes and maze pings pause"
-KEPT = "Nothing is deleted — teams, aliases, settings and war/race/maze history are kept."
+PAUSES = "War timers, missing lists and maze pings pause"
+KEPT = "Nothing is deleted — teams, aliases, settings and war and maze history are kept."
 
 
 def dashboard_link(label: str) -> str:

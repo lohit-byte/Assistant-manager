@@ -17,8 +17,8 @@ ALTER TABLE guilds ADD COLUMN IF NOT EXISTS member_role_id BIGINT;
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS maze_channel_id BIGINT;
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS absence_channel_id BIGINT;
 
--- Per-subteam channel configuration (one team = one war channel + one race
--- channel + captains) is stored in the `teams` and `team_captains` tables.
+-- Per-subteam channel configuration (one team = one war channel +
+-- captains) is stored in the `teams` and `team_captains` tables.
 -- Those tables were introduced earlier; if this project has never run the
 -- "MIGRATIONS for existing databases" section of shared/schema.sql, run that
 -- whole block once — it creates `teams`, `team_captains`, `team_players` and

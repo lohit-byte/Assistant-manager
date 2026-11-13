@@ -11,6 +11,7 @@ from database import (
     is_staff_member,
     is_team_staff,
     ensure_user,
+    get_player_alias,
     get_staff_role_ids,
     get_team_by_channel,
     get_team_players,
@@ -1567,8 +1568,15 @@ class WarTracker(commands.Cog):
                 if not res.data:
                     return await ctx.send("✅ No warnings recorded for this server.")
                 embed = discord.Embed(title=f"⚠️ Warnings ({len(res.data)})", color=discord.Color.red())
+                # Players are shown by alias, never by Discord id or mention. The
+                # ticket number stays: `!warning remove <id>` needs it.
+                aliases = {}
+                for discord_id in {w["discord_id"] for w in res.data}:
+                    aliases[discord_id] = await asyncio.to_thread(
+                        get_player_alias, ctx.guild.id, discord_id)
                 for w in res.data:
-                    embed.add_field(name=f"ID {w['id']} · <@{w['discord_id']}>",
+                    who = aliases.get(w["discord_id"]) or "No alias"
+                    embed.add_field(name=f"ID {w['id']} · {who}",
                                     value=_short(w.get("reason"), 300), inline=False)
                 return await ctx.send(embed=embed)
 

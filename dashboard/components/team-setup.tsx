@@ -25,7 +25,7 @@ import {
 } from '@/lib/data'
 import { createClient } from '@/lib/supabase/client'
 import { effectiveTeamLimit, isPremiumActive, planLabel, teamLimitLabel } from '@/lib/plans'
-import { isSnowflake } from '@/lib/format'
+import { aliasForDiscordId, isSnowflake, NO_ALIAS_LABEL } from '@/lib/format'
 import {
   GUILD_SETUP_LABELS,
   MAX_TEAM_CAPTAINS,
@@ -44,7 +44,6 @@ export interface TeamSetupProps {
   captainsByTeam: Record<number, TeamCaptain[]>
   aliases: Alias[]
   detectedWarChannels: string[]
-  detectedRaceChannels: string[]
   /** Reload the guild row and the teams snapshot after every write. */
   onChanged: () => Promise<void> | void
 }
@@ -52,7 +51,6 @@ export interface TeamSetupProps {
 interface TeamDraft {
   name: string
   war_channel_id: string
-  race_channel_id: string
   team_role_id: string
 }
 
@@ -83,7 +81,6 @@ function valuesFromTeam(team?: Team | null): TeamDraft {
   return {
     name: team?.name ?? '',
     war_channel_id: channel(team?.war_channel_id ?? null),
-    race_channel_id: channel(team?.race_channel_id ?? null),
     team_role_id: channel(team?.team_role_id ?? null),
   }
 }
@@ -96,15 +93,10 @@ function validateChannelId(value: string, label: string): string | null {
   return null
 }
 
-function aliasForCaptain(aliases: Alias[], captain: TeamCaptain): string | null {
-  const found = aliases.find((alias) => String(alias.discord_id) === String(captain.discord_id))
-  return found ? found.alias_name : null
-}
-
 /**
  * Staff-only "Server & team setup" card: the guild-level fields that used to live on the
- * Settings page, plus the teams that pair a war channel with a race channel and own captains.
- * Detected channels the bot already tracks can be imported as a half team.
+ * Settings page, plus the teams (one war channel each) and their captains.
+ * Detected war channels the bot already tracks can be imported as a team.
  */
 export function TeamSetup({
   guild,
@@ -112,7 +104,6 @@ export function TeamSetup({
   captainsByTeam,
   aliases,
   detectedWarChannels,
-  detectedRaceChannels,
   onChanged,
 }: TeamSetupProps) {
   const [server, setServer] = useState<GuildSetupValues>(() => guildSetupValues(guild))
@@ -145,7 +136,7 @@ export function TeamSetup({
   const maxTeamsLabel = teamLimitLabel(maxTeams)
   const planText = guild.premium_status === 'trial' ? 'Free trial' : isPremiumActive(guild) ? planLabel(guild) : 'Expired'
   const atTeamLimit = teams.length >= maxTeams
-  const detectedCount = detectedWarChannels.length + detectedRaceChannels.length
+  const detectedCount = detectedWarChannels.length
 
   const availableCaptainAliases = useMemo(() => {
     const teamId = editor?.team?.id
@@ -157,7 +148,7 @@ export function TeamSetup({
     return aliases.filter((alias) => !taken.has(String(alias.discord_id)))
   }, [aliases, captainsByTeam, editor?.team?.id])
 
-  const openNew = (prefill?: { war?: string; race?: string }) => {
+  const openNew = (prefill?: { war?: string }) => {
     setFeedback(null)
     setCaptainAlias('')
     setCaptainId('')
@@ -166,7 +157,6 @@ export function TeamSetup({
       draft: {
         name: `Team ${teams.length + 1}`,
         war_channel_id: prefill?.war ?? '',
-        race_channel_id: prefill?.race ?? '',
         team_role_id: '',
       },
     })
@@ -227,7 +217,6 @@ export function TeamSetup({
     const name = values.name.trim()
     const channelError =
       validateChannelId(values.war_channel_id, 'War channel ID') ??
-      validateChannelId(values.race_channel_id, 'Race channel ID') ??
       validateChannelId(values.team_role_id, 'Team role ID')
     if (!name || channelError) {
       setFeedback({ tone: 'red', text: channelError ?? 'Enter a team name.' })
@@ -262,7 +251,7 @@ export function TeamSetup({
   const removeTeam = async (team: Team) => {
     if (
       !window.confirm(
-        `Delete “${team.name}”? Its war and race data is kept — only the team and its captains are removed.`,
+        `Delete “${team.name}”? Its war data is kept — only the team and its captains are removed.`,
       )
     ) {
       return
@@ -273,7 +262,7 @@ export function TeamSetup({
       await deleteTeam(createClient(), team.id)
       setEditor(null)
       await reload()
-      toast.success(`Team “${team.name}” deleted.`, 'Its war and race history is kept.')
+      toast.success(`Team “${team.name}” deleted.`, 'Its war history is kept.')
     } catch (caught) {
       setFeedback({
         tone: 'red',
@@ -293,7 +282,7 @@ export function TeamSetup({
       setCaptainAlias('')
       setCaptainId('')
       await reload()
-      toast.success('Captain added.', 'They can now manage this team’s war and race channels.')
+      toast.success('Captain added.', 'They can now manage this team’s war channel.')
     } catch (caught) {
       setFeedback({
         tone: 'red',
@@ -366,22 +355,11 @@ export function TeamSetup({
           </Field>
           <Field
             label="War channel ID"
-            hint="Discord channel ID (17–20 digits) where the bot tracks this team’s war. Leave it empty if the team only races."
+            hint="Discord channel ID (17–20 digits) where the bot tracks this team’s war. Leave it empty until the team has a war channel."
           >
             <TextInput
               value={drafts.war_channel_id}
               onChange={(event) => updateDraft({ war_channel_id: event.target.value })}
-              placeholder="e.g. 123456789012345678"
-              inputMode="numeric"
-            />
-          </Field>
-          <Field
-            label="Race channel ID"
-            hint="Discord channel ID (17–20 digits) where the bot tracks this team’s race. Leave it empty if the team only wars."
-          >
-            <TextInput
-              value={drafts.race_channel_id}
-              onChange={(event) => updateDraft({ race_channel_id: event.target.value })}
               placeholder="e.g. 123456789012345678"
               inputMode="numeric"
             />
@@ -408,7 +386,7 @@ export function TeamSetup({
 
         {team ? (
           <p className="text-xs leading-relaxed text-slate-500">
-            Deleting removes the team and its captains. Its war and race history stays with the
+            Deleting removes the team and its captains. Its war history stays with the
             channels, so you can link them again later.
           </p>
         ) : null}
@@ -423,7 +401,7 @@ export function TeamSetup({
               </p>
               <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
                 Up to {MAX_TEAM_CAPTAINS} team staff — 1 leader and 3 co-leads, the most the
-                game allows. Captains can edit this team’s war and race channels in the dashboard
+                game allows. Captains can edit this team’s war channel in the dashboard
                 and the bot. They cannot change server settings, billing, aliases, the maze or
                 other teams.
               </p>
@@ -441,8 +419,8 @@ export function TeamSetup({
               </p>
             ) : (
               <ul className="space-y-1.5">
-                {captains.map((captain) => {
-                  const alias = aliasForCaptain(aliases, captain)
+                {captains.map((captain, index) => {
+                  const alias = aliasForDiscordId(aliases, captain.discord_id)
                   return (
                     <li
                       key={String(captain.discord_id)}
@@ -450,17 +428,14 @@ export function TeamSetup({
                     >
                       <span className="flex min-w-0 items-center gap-2 text-sm">
                         <UserRound className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-                        <span className="truncate text-slate-200">{alias ?? 'No alias'}</span>
-                        <span className="truncate font-mono text-[11px] text-slate-600">
-                          {String(captain.discord_id)}
-                        </span>
+                        <span className="truncate text-slate-200">{alias ?? NO_ALIAS_LABEL}</span>
                       </span>
                       <button
                         type="button"
                         onClick={() => removeCaptain(captain)}
                         disabled={busy === `captain-${captain.discord_id}`}
                         className="p-1 text-slate-500 transition-colors hover:text-danger-300"
-                        aria-label={`Remove captain ${alias ?? captain.discord_id}`}
+                        aria-label={`Remove captain ${alias ?? index + 1}`}
                       >
                         <X className="h-3.5 w-3.5" />
                       </button>
@@ -534,7 +509,7 @@ export function TeamSetup({
     <Card className="mb-6">
       <CardHeader
         title="Server setup"
-        description="Staff only. Each subteam pairs one war channel with one race channel — link them, add captains, and set the roles the bot treats as staff."
+        description="Staff only. Each subteam is one war channel — link it, add captains, and set the roles the bot treats as staff."
         icon={<ServerCog className="h-5 w-5" />}
         action={<Badge tone="purple">{teams.length}/{maxTeamsLabel} teams</Badge>}
       />
@@ -544,17 +519,17 @@ export function TeamSetup({
           <ol className="mt-2 list-decimal space-y-1.5 pl-4 text-xs leading-relaxed text-slate-500">
             <li>
               <span className="font-semibold text-slate-300">Link a team.</span> Give it a name and
-              paste the war and race channel IDs the bot watches. A team pairs one war channel with
-              one race channel; either half can stay empty.
+              paste the war channel ID the bot watches. A team is one war channel; leave it empty
+              until you have the ID.
             </li>
             <li>
               <span className="font-semibold text-slate-300">Add captains.</span> Captains manage
-              their own team’s war and race channels in the dashboard and the bot. They cannot change
+              their own team’s war channel in the dashboard and the bot. They cannot change
               server settings, billing or other teams.
             </li>
             <li>
               <span className="font-semibold text-slate-300">Verify on Overview.</span> Open the
-              team cards to check the war, race and activity numbers the bot records.
+              team cards to check the war numbers the bot records.
             </li>
           </ol>
           <p className="mt-2 text-xs leading-relaxed text-slate-500">
@@ -634,8 +609,7 @@ export function TeamSetup({
             Plan:{' '}
             <span className="font-semibold text-slate-300">{planText}</span> · up to{' '}
             {maxTeamsLabel === 'Unlimited' ? 'unlimited' : maxTeamsLabel}{' '}
-            {maxTeams === 1 ? 'team' : 'teams'} on this plan, and each team pairs one war channel
-            with one race channel.
+            {maxTeams === 1 ? 'team' : 'teams'} on this plan, and each team is one war channel.
           </p>
           <Button onClick={saveServer} loading={busy === 'server'} size="sm">
             <Save className="h-3.5 w-3.5" /> Save server setup
@@ -648,8 +622,7 @@ export function TeamSetup({
           <div>
             <p className="text-sm font-semibold text-slate-200">Subteams</p>
             <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
-              One team = one war channel + one race channel. Either half can be empty, and the bot
-              uses these channels for its war and race commands.
+              One team = one war channel. The bot uses it for its war commands.
             </p>
           </div>
           <Button size="sm" onClick={() => openNew()} disabled={atTeamLimit || editor?.team === null}>
@@ -668,7 +641,7 @@ export function TeamSetup({
           <EmptyState
             icon={<Users className="h-7 w-7" />}
             title="No teams yet"
-            description="Add the first team and point it at the war and race channels the bot already watches."
+            description="Add the first team and point it at the war channel the bot already watches."
           />
         ) : (
           <div className="space-y-2.5">
@@ -695,24 +668,14 @@ export function TeamSetup({
                           )}
                         </span>
                         <span>
-                          Race:{' '}
-                          {team.race_channel_id ? (
-                            <span className="font-mono text-slate-400">
-                              {String(team.race_channel_id)}
-                            </span>
-                          ) : (
-                            <span className="text-warn-300">not linked</span>
-                          )}
-                        </span>
-                        <span>
                           Captains:{' '}
                           {captains.length === 0
                             ? 'none'
                             : captains
                                 .map(
                                   (captain) =>
-                                    aliasForCaptain(aliases, captain) ??
-                                    `User ${captain.discord_id}`,
+                                    aliasForDiscordId(aliases, captain.discord_id) ??
+                                    NO_ALIAS_LABEL,
                                 )
                                 .join(', ')}
                         </span>
@@ -752,9 +715,8 @@ export function TeamSetup({
             <div>
               <p className="text-sm font-semibold text-slate-200">Detected channels</p>
               <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
-                The bot has already recorded war or race activity in these channels, but no team
-                owns them yet. “Add as team” starts a new team with that channel filled in — add the
-                other channel, then save it.
+                The bot has already recorded war activity in these channels, but no team owns them
+                yet. “Add as team” starts a new team with that channel filled in.
               </p>
               <ul className="mt-2 space-y-1.5">
                 {detectedWarChannels.map((channelId) => (
@@ -771,25 +733,6 @@ export function TeamSetup({
                       variant="secondary"
                       disabled={atTeamLimit}
                       onClick={() => openNew({ war: channelId })}
-                    >
-                      <Plus className="h-3.5 w-3.5" /> Add as team
-                    </Button>
-                  </li>
-                ))}
-                {detectedRaceChannels.map((channelId) => (
-                  <li
-                    key={`race-${channelId}`}
-                    className="flex flex-wrap items-center justify-between gap-2 border border-white/[0.06] bg-white/[0.02] px-3 py-1.5 text-sm"
-                  >
-                    <span className="flex items-center gap-2">
-                      <Badge tone="green">Race</Badge>
-                      <span className="font-mono text-xs text-slate-400">{channelId}</span>
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={atTeamLimit}
-                      onClick={() => openNew({ race: channelId })}
                     >
                       <Plus className="h-3.5 w-3.5" /> Add as team
                     </Button>

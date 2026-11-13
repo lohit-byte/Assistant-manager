@@ -1,16 +1,11 @@
-import {
-  RACE_ACTIVITY_TARGET,
-  RACE_RATING_WEIGHT,
-  WAR_RATING_WEIGHT,
-} from './constants'
-import type { Alias, Id, RaceLog, War, WarSettings } from './types'
+import { NO_ALIAS_LABEL } from './format'
+import type { Alias, Id, War, WarSettings } from './types'
 
 export interface RatingRow {
   alias: string
   discordId: Id | null
   attacks: number
   required: number
-  raceTasks: number
   score: number
   grade: string
   excused: boolean
@@ -19,15 +14,7 @@ export interface RatingRow {
 export interface RatingInput {
   war: War | null
   warSettings: WarSettings
-  raceLogs: RaceLog[]
   aliases: Alias[]
-  /**
-   * The team's channels, when known. Used to decide which halves of the score exist so a
-   * one-sided team renormalizes its weights. When omitted, the halves are inferred from the
-   * war row and from whether any race logs were loaded.
-   */
-  warChannelId?: Id | null
-  raceChannelId?: Id | null
 }
 
 /** A+ ≥ 90, A ≥ 80, B ≥ 65, C ≥ 50, else D. */
@@ -39,30 +26,8 @@ export function gradeFor(score: number): string {
   return 'D'
 }
 
-/**
- * Race action → the one task kind it counts for. A claim is not a contribution, and the
- * JE loop keeps writing `je_add` rows so the same node is only ever counted once.
- */
-const RACE_TASK_KIND: Record<string, string | null> = {
-  ofa_done: 'ofa',
-  dyp_done: 'dyp',
-  je_done: 'je',
-  je_add: 'je',
-  ofa_claim: null,
-}
-
 function normalizeName(name: string | null | undefined): string {
   return (name ?? '').trim().toLowerCase()
-}
-
-function raceTaskKind(actionType: string | null | undefined): string | null {
-  if (!actionType) return null
-  const kind = RACE_TASK_KIND[actionType]
-  return kind === undefined ? null : kind
-}
-
-function channelPresent(channelId: Id | null | undefined): boolean {
-  return channelId !== null && channelId !== undefined && String(channelId) !== ''
 }
 
 function hasDiscordId(discordId: Id | null | undefined): discordId is Id {
@@ -70,10 +35,10 @@ function hasDiscordId(discordId: Id | null | undefined): discordId is Id {
 }
 
 /**
- * Pure war + race activity rating. No Supabase calls: the page/component loads the rows and
+ * Pure war attack rating. No Supabase calls: the page/component loads the rows and
  * this function decides the score, so the rules can be read and tested in one place.
  *
- * Rows are the union of war attack counts, the missing list, the absent list and race loggers,
+ * Rows are the union of war attack counts, the missing list and the absent list,
  * sorted by score (then alias). Rows are folded by Discord user id when it is known, so a player
  * with two alias rows cannot appear twice with half a score. Excused players (absent list and
  * `exempt_absent` on) are never ranked and are returned after the ranked rows so the UI can list
@@ -116,7 +81,6 @@ export function computeRatings(input: RatingInput): RatingRow[] {
       discordId,
       attacks: 0,
       required,
-      raceTasks: 0,
       score: 0,
       grade: 'D',
       excused: false,
@@ -130,17 +94,17 @@ export function computeRatings(input: RatingInput): RatingRow[] {
     const aliasFromId = hasDiscordId(discordId)
       ? aliasByDiscordId.get(String(discordId)) ?? null
       : null
-    // Prefer the alias row so a mixed-case war key and a race logger land on the same player.
+    // Prefer the alias row so a mixed-case war key and a list entry land on the same player.
     const alias = aliasFromId ?? (clean ? aliasByName.get(normalizeName(clean)) ?? null : null)
     if (alias) return rowFor(alias.alias_name, alias.discord_id)
     if (!clean) {
       if (!hasDiscordId(discordId)) return null
-      return rowFor(`User ${discordId}`, discordId)
+      return rowFor(NO_ALIAS_LABEL, discordId)
     }
     return rowFor(clean, discordId)
   }
 
-  /* War half: attack counts are keyed by alias, the lists carry names (or legacy strings). */
+  /* Attack counts are keyed by alias, the lists carry names (or legacy strings). */
   for (const [name, count] of Object.entries(input.war?.attack_counts ?? {})) {
     const row = rowForIdentity(name, null)
     if (!row) continue
@@ -159,9 +123,13 @@ export function computeRatings(input: RatingInput): RatingRow[] {
       if (!entry || typeof entry !== 'object') continue
       const named = entry as { name?: unknown; id?: Id | null }
       const name = typeof named.name === 'string' ? named.name : null
-      if (!name) continue
-      const alias = aliasByName.get(normalizeName(name))
-      rowFor(alias?.alias_name ?? name, alias?.discord_id ?? named.id ?? null)
+      const id = hasDiscordId(named.id) ? named.id : null
+      if (name && name.trim()) {
+        const alias = aliasByName.get(normalizeName(name))
+        rowFor(alias?.alias_name ?? name, alias?.discord_id ?? id)
+      } else if (id) {
+        rowForIdentity(null, id)
+      }
     }
   }
 
@@ -169,61 +137,6 @@ export function computeRatings(input: RatingInput): RatingRow[] {
   // Excused players may sit only on the absent list (staff remove them from missing), but the
   // UI still lists them, so they join the union as unranked rows.
   addListRows(input.war?.absent_list)
-
-  /* Race half: one distinct (channel, lap, node, player, kind) per task. */
-  const taskKeys = new Set<string>()
-  for (const log of input.raceLogs ?? []) {
-    if (!log) continue
-    const kind = raceTaskKind(log.action_type)
-    const aliasFromId = hasDiscordId(log.discord_id)
-      ? aliasByDiscordId.get(String(log.discord_id)) ?? null
-      : null
-    const row = rowForIdentity(
-      aliasFromId?.alias_name ?? log.player_name,
-      aliasFromId?.discord_id ?? log.discord_id ?? null,
-    )
-    if (!row || !kind) continue
-
-    // Fold by Discord id when known so two aliases of one player cannot inflate a node, and
-    // fall back to the name for logs written before aliases carried a Discord id.
-    const playerKey = hasDiscordId(row.discordId)
-      ? `id:${String(row.discordId)}`
-      : `name:${normalizeName(row.alias)}`
-    // Rows written before the migration have no node: they fall back to one task per row.
-    const hasNode =
-      log.lap !== null &&
-      log.lap !== undefined &&
-      log.node !== null &&
-      log.node !== undefined
-    const taskKey = hasNode
-      ? `${String(log.channel_id ?? '')}|${log.lap}|${log.node}|${playerKey}|${kind}`
-      : `row|${log.id ?? `${log.created_at}|${playerKey}|${kind}`}`
-    if (taskKeys.has(taskKey)) continue
-    taskKeys.add(taskKey)
-    row.raceTasks += 1
-  }
-
-  /* Which halves exist? Prefer the explicit team channels; fall back for legacy callers. */
-  const hasWar = channelPresent(
-    input.warChannelId !== undefined ? input.warChannelId : input.war?.channel_id ?? null,
-  )
-  const hasRace = channelPresent(
-    input.raceChannelId !== undefined
-      ? input.raceChannelId
-      : (input.raceLogs ?? []).length > 0
-        ? 'race'
-        : null,
-  )
-
-  let warWeight = WAR_RATING_WEIGHT
-  let raceWeight = RACE_RATING_WEIGHT
-  if (hasWar && !hasRace) {
-    warWeight = 1
-    raceWeight = 0
-  } else if (!hasWar && hasRace) {
-    warWeight = 0
-    raceWeight = 1
-  }
 
   const absentNames = new Set<string>()
   const absentIds = new Set<string>()
@@ -251,9 +164,7 @@ export function computeRatings(input: RatingInput): RatingRow[] {
 
   const all = Array.from(rows.values())
   for (const row of all) {
-    const warPart = hasWar && required > 0 ? Math.min(row.attacks / required, 1) : 0
-    const racePart = hasRace ? Math.min(row.raceTasks / RACE_ACTIVITY_TARGET, 1) : 0
-    row.score = Math.round(100 * (warWeight * warPart + raceWeight * racePart))
+    row.score = required > 0 ? Math.round(100 * Math.min(row.attacks / required, 1)) : 0
     row.grade = gradeFor(row.score)
     row.excused =
       (hasDiscordId(row.discordId) && absentIds.has(String(row.discordId))) ||

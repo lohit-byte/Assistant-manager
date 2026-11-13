@@ -120,8 +120,7 @@ _team_cache = {}
 def get_team_captain_map(guild_id: int) -> dict:
     """Map each team channel of a guild to the Discord ids of its captains.
 
-    A team has a war channel and/or a race channel; both resolve to the same
-    captain set. Failures (table missing before the migration, network) log and
+    A team has one war channel, which maps to the team's captain set. Failures (table missing before the migration, network) log and
     return an empty map so the caller treats everyone as "not a captain" and the
     global staff path keeps working.
     """
@@ -132,7 +131,7 @@ def get_team_captain_map(guild_id: int) -> dict:
     mapping = {}
     try:
         res = supabase.table("teams").select(
-            "id, war_channel_id, race_channel_id").eq("guild_id", guild_id).execute()
+            "id, war_channel_id").eq("guild_id", guild_id).execute()
         teams = res.data or []
         team_ids = [team["id"] for team in teams if team.get("id") is not None]
         captains_by_team = {}
@@ -147,10 +146,9 @@ def get_team_captain_map(guild_id: int) -> dict:
             captains = captains_by_team.get(team.get("id"))
             if not captains:
                 continue
-            for key in ("war_channel_id", "race_channel_id"):
-                channel_id = team.get(key)
-                if channel_id is not None:
-                    mapping.setdefault(int(channel_id), set()).update(captains)
+            channel_id = team.get("war_channel_id")
+            if channel_id is not None:
+                mapping.setdefault(int(channel_id), set()).update(captains)
     except Exception as e:
         # Do not cache a failed lookup as "no captains" for the next minute.
         print(f"Team captain lookup failed: {e}")
@@ -177,7 +175,7 @@ _roster_cache = {}
 
 
 def get_team_by_channel(guild_id: int, channel_id: int):
-    """The team that owns this war/race channel, if any."""
+    """The team that owns this war channel, if any."""
     if channel_id is None:
         return None
     try:
@@ -186,12 +184,8 @@ def get_team_by_channel(guild_id: int, channel_id: int):
         print(f"Team channel lookup failed: {e}")
         return None
     for team in res.data or []:
-        owned = {
-            str(value) for value in
-            (team.get("war_channel_id"), team.get("race_channel_id"))
-            if value is not None
-        }
-        if str(channel_id) in owned:
+        war_channel = team.get("war_channel_id")
+        if war_channel is not None and str(channel_id) == str(war_channel):
             return team
     return None
 
@@ -379,7 +373,7 @@ def get_player_team(guild_id: int, discord_id: int):
 
 
 def get_player_alias(guild_id: int, discord_id: int):
-    """First alias for a player (aliases are the identity used by war/race)."""
+    """First alias for a player (aliases are the identity used by war)."""
     try:
         res = supabase.table("aliases").select("alias_name").eq(
             "guild_id", guild_id).eq("discord_id", discord_id).order(
@@ -417,17 +411,13 @@ def get_team_roster(guild_id: int, team: dict) -> list:
 
 
 def get_team_role_id(guild_id: int, channel_id: int):
-    """The role configured on the team that owns this war/race channel, if any."""
+    """The role configured on the team that owns this war channel, if any."""
     try:
         res = supabase.table("teams").select(
-            "war_channel_id, race_channel_id, team_role_id"
+            "war_channel_id, team_role_id"
         ).eq("guild_id", guild_id).execute()
         for team in res.data or []:
-            owns_channel = (
-                str(team.get("war_channel_id")) == str(channel_id)
-                or str(team.get("race_channel_id")) == str(channel_id)
-            )
-            if owns_channel:
+            if str(team.get("war_channel_id")) == str(channel_id):
                 role_id = team.get("team_role_id")
                 return int(role_id) if role_id else None
     except Exception as e:

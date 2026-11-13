@@ -8,8 +8,6 @@ import type {
   MazeEvent,
   MazePingMention,
   MazeSchedule,
-  RaceLog,
-  RaceState,
   Team,
   TeamCaptain,
   War,
@@ -118,36 +116,6 @@ export async function endWar(supabase: SupabaseClient, channelId: string): Promi
     phase: 'ended',
     status_message_id: null,
   })
-}
-
-/* ------------------------------------------------------------------- race */
-
-export async function getRaceState(
-  supabase: SupabaseClient,
-  channelId: string,
-): Promise<RaceState | null> {
-  const { data, error } = await supabase
-    .from('race_state')
-    .select('*')
-    .eq('channel_id', channelId)
-    .limit(1)
-    .maybeSingle()
-
-  throwIfError(error, 'Could not load race state')
-  return (data as RaceState | null) ?? null
-}
-
-export async function saveRaceState(
-  supabase: SupabaseClient,
-  channelId: string,
-  guildId: string,
-  patch: Partial<Omit<RaceState, 'guild_id' | 'channel_id'>>,
-): Promise<void> {
-  const { error } = await supabase.from('race_state').upsert(
-    { channel_id: channelId, guild_id: guildId, ...patch },
-    { onConflict: 'channel_id' },
-  )
-  throwIfError(error, 'Could not save race state')
 }
 
 /* ------------------------------------------------------------------- maze */
@@ -548,7 +516,6 @@ export async function renameAlias(
 export interface TeamValues {
   name: string
   war_channel_id: string | null
-  race_channel_id: string | null
   team_role_id: string | null
 }
 
@@ -561,9 +528,6 @@ function throwTeamWriteError(error: WriteError, context: string): void {
     const text = `${error.message ?? ''} ${error.details ?? ''}`
     if (/war_channel/i.test(text)) {
       throw new Error('That war channel is already linked to another team.')
-    }
-    if (/race_channel/i.test(text)) {
-      throw new Error('That race channel is already linked to another team.')
     }
     if (/name/i.test(text)) {
       throw new Error('A team with that name already exists.')
@@ -627,7 +591,6 @@ export async function createTeam(
     guild_id: guildId,
     name,
     war_channel_id: warChannelId,
-    race_channel_id: cleanSnowflake(values.race_channel_id),
     team_role_id: teamRoleId,
   })
   throwTeamWriteError(error, 'Could not create the team')
@@ -657,7 +620,6 @@ export async function saveTeam(
     .update({
       name,
       war_channel_id: warChannelId,
-      race_channel_id: cleanSnowflake(values.race_channel_id),
       team_role_id: teamRoleId,
     })
     .eq('id', team.id)
@@ -841,68 +803,41 @@ export async function listWarLogs(
   return (data as WarLog[] | null) ?? []
 }
 
-export async function listRaceLogs(
-  supabase: SupabaseClient,
-  guildId: string,
-  channelId: string,
-  sinceIso: string | null,
-): Promise<RaceLog[]> {
-  let query = supabase
-    .from('race_logs')
-    .select('*')
-    .eq('guild_id', guildId)
-    .eq('channel_id', channelId)
-    .order('created_at', { ascending: false })
-    .limit(500)
-  if (sinceIso) query = query.gte('created_at', sinceIso)
-
-  const { data, error } = await query
-  throwIfError(error, 'Could not load race activity')
-  return (data as RaceLog[] | null) ?? []
-}
-
 /* ------------------------------------------------------------- teams overview */
 
 export interface TeamSnapshot {
   team: Team
   captains: TeamCaptain[]
   war: War | null
-  race: RaceState | null
   /**
    * Newest `war_logs` row only, used for the "last attack" label. Raw log rows stay on the
    * staff/captain War page; the Overview never ships the whole log to members.
    */
   lastWarLog: WarLog | null
-  raceLogs: RaceLog[]
 }
 
 export interface TeamsOverview {
   teams: TeamSnapshot[]
   /** War channels the bot knows about that no team owns yet (Setup can import them). */
   detectedWarChannels: string[]
-  /** Race channels the bot knows about that no team owns yet. */
-  detectedRaceChannels: string[]
   warSettings: WarSettings
   aliases: Alias[]
 }
 
 /**
- * Everything the one-stop Overview needs: the guild's teams with their war/race rows, captains
- * and activity logs, plus channels the bot already tracks that are not in a team yet.
+ * Everything the one-stop Overview needs: the guild's teams with their war rows, captains
+ * and attack logs, plus channels the bot already tracks that are not in a team yet.
  * Team queries tolerate a missing `teams` table so a pre-migration deploy still renders.
  */
 export async function getTeamsOverview(
   supabase: SupabaseClient,
   guildId: string,
 ): Promise<TeamsOverview> {
-  const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString()
-
-  const [settingsResult, aliasesResult, warsResult, raceResult, teamsResult] =
+  const [settingsResult, aliasesResult, warsResult, teamsResult] =
     await Promise.allSettled([
       getWarSettings(supabase, guildId),
       listAliases(supabase, guildId),
       supabase.from('wars').select('*').eq('guild_id', guildId),
-      supabase.from('race_state').select('*').eq('guild_id', guildId),
       listTeams(supabase, guildId),
     ])
 
@@ -915,14 +850,9 @@ export async function getTeamsOverview(
     warsResult.status === 'fulfilled' && !warsResult.value.error
       ? ((warsResult.value.data as War[] | null) ?? [])
       : []
-  const races =
-    raceResult.status === 'fulfilled' && !raceResult.value.error
-      ? ((raceResult.value.data as RaceState[] | null) ?? [])
-      : []
   const teams = teamsResult.status === 'fulfilled' ? teamsResult.value : []
 
   const warByChannel = new Map(wars.map((war) => [String(war.channel_id), war]))
-  const raceByChannel = new Map(races.map((race) => [String(race.channel_id), race]))
 
   const captains =
     teams.length > 0
@@ -932,30 +862,18 @@ export async function getTeamsOverview(
   const snapshots = await Promise.all(
     teams.map(async (team): Promise<TeamSnapshot> => {
       const warChannel = team.war_channel_id !== null ? String(team.war_channel_id) : null
-      const raceChannel = team.race_channel_id !== null ? String(team.race_channel_id) : null
       const war = warChannel ? warByChannel.get(warChannel) ?? null : null
-      const race = raceChannel ? raceByChannel.get(raceChannel) ?? null : null
-      // The race half of the rating looks at the active war's window; without an active war
-      // it falls back to the last seven days.
-      const windowStart = war?.is_active ? war.war_start ?? sevenDaysAgo : sevenDaysAgo
 
-      const [lastWarLog, raceLogs] = await Promise.all([
-        warChannel
-          ? listWarLogs(supabase, warChannel, war?.war_start ?? null, 1)
-              .then((rows) => rows[0] ?? null)
-              .catch(() => null)
-          : Promise.resolve<WarLog | null>(null),
-        raceChannel
-          ? listRaceLogs(supabase, guildId, raceChannel, windowStart).catch(() => [])
-          : Promise.resolve<RaceLog[]>([]),
-      ])
+      const lastWarLog = warChannel
+        ? await listWarLogs(supabase, warChannel, war?.war_start ?? null, 1)
+            .then((rows) => rows[0] ?? null)
+            .catch(() => null)
+        : null
 
       return {
         team,
         war,
-        race,
         lastWarLog,
-        raceLogs,
         captains: captains.filter((captain) => Number(captain.team_id) === Number(team.id)),
       }
     }),
@@ -966,25 +884,14 @@ export async function getTeamsOverview(
       .filter((team) => team.war_channel_id !== null)
       .map((team) => String(team.war_channel_id)),
   )
-  const teamRaceChannels = new Set(
-    teams
-      .filter((team) => team.race_channel_id !== null)
-      .map((team) => String(team.race_channel_id)),
-  )
-
   const detectedWarChannels = wars
     .map((war) => String(war.channel_id))
     .filter((channelId) => !teamWarChannels.has(channelId))
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-  const detectedRaceChannels = races
-    .map((race) => String(race.channel_id))
-    .filter((channelId) => !teamRaceChannels.has(channelId))
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
 
   return {
     teams: snapshots,
     detectedWarChannels,
-    detectedRaceChannels,
     warSettings,
     aliases,
   }
@@ -1040,7 +947,6 @@ export async function deleteWarning(
 
 export interface GuildSummary {
   war: War | null
-  race: RaceState | null
   maze: MazeSchedule | null
   mazeEvent: MazeEvent | null
   mazeWindows: MazeWindow[] | null
@@ -1053,18 +959,13 @@ export async function getGuildSummary(
   guildId: string,
   channelId?: string | null
 ): Promise<GuildSummary> {
-  // If a channel is selected, fetch its specific war and race. Otherwise, fetch the first available.
+  // If a channel is selected, fetch its specific war. Otherwise, fetch the first available.
   const warPromise = channelId 
     ? getWar(supabase, channelId)
     : supabase.from('wars').select('*').eq('guild_id', guildId).eq('is_active', true).limit(1).maybeSingle().then(res => res.data as War);
 
-  const racePromise = channelId
-    ? getRaceState(supabase, channelId)
-    : supabase.from('race_state').select('*').eq('guild_id', guildId).limit(1).maybeSingle().then(res => res.data as RaceState);
-
-  const [war, race, maze, mazeEvent, mazeSettings, aliases, warnings] = await Promise.allSettled([
+  const [war, maze, mazeEvent, mazeSettings, aliases, warnings] = await Promise.allSettled([
     warPromise,
-    racePromise,
     getMazeSchedule(supabase, guildId),
     getActiveMazeEvent(supabase),
     getMazeSettings(supabase),
@@ -1074,7 +975,6 @@ export async function getGuildSummary(
 
   return {
     war: war.status === 'fulfilled' ? war.value : null,
-    race: race.status === 'fulfilled' ? race.value : null,
     maze: maze.status === 'fulfilled' ? maze.value : null,
     mazeEvent: mazeEvent.status === 'fulfilled' ? mazeEvent.value : null,
     mazeWindows:

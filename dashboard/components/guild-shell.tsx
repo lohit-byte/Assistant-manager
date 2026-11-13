@@ -32,7 +32,6 @@ import {
   ShieldAlert,
   Sparkles,
   Swords,
-  Trophy,
   Users,
   X,
 } from 'lucide-react'
@@ -61,7 +60,7 @@ interface GuildContextValue {
   teams: Team[]
   /** Ids of the teams this viewer captains (empty for staff). */
   captainTeamIds: number[]
-  /** Staff everywhere, captains on their team's war/race channels. */
+  /** Staff everywhere, captains on their team's war channel. */
   canManageChannel(channelId: string | null | undefined): boolean
   refresh: () => Promise<void>
 }
@@ -82,7 +81,7 @@ const NAV_GROUPS = [
         name: 'Overview',
         segment: '',
         icon: LayoutDashboard,
-        hint: 'The live war/race snapshot and a setup checklist',
+        hint: 'The live war snapshot and a setup checklist',
       },
     ],
   },
@@ -90,7 +89,6 @@ const NAV_GROUPS = [
     label: 'Events',
     items: [
       { name: 'War', segment: '/war', icon: Swords, hint: 'War clock, missing attacks, warnings and rating' },
-      { name: 'Race', segment: '/race', icon: Trophy, hint: 'Race nodes, targets and node sheets' },
       { name: 'Maze', segment: '/maze', icon: Map, hint: 'Shared maze event, discount timeline and alerts' },
     ],
   },
@@ -101,7 +99,7 @@ const NAV_GROUPS = [
         name: 'Server setup',
         segment: '/setup',
         icon: ServerCog,
-        hint: 'Each subteam’s war and race channels, captains, and the staff roles the bot reads',
+        hint: 'Each subteam’s war channel, captains, and the staff roles the bot reads',
       },
       { name: 'Aliases', segment: '/aliases', icon: Users, hint: 'Map in-game names to Discord users' },
     ],
@@ -126,7 +124,7 @@ const STAFF_ONLY_SEGMENTS = new Set(['/aliases', '/billing', '/setup'])
 
 // Captains can only act on their own team's channels. Settings stays available because the
 // appearance preference is personal, not server configuration.
-const CAPTAIN_SEGMENTS = new Set(['', '/war', '/race', '/settings'])
+const CAPTAIN_SEGMENTS = new Set(['', '/war', '/settings'])
 
 type AccessError =
   | { kind: 'discord'; message: string }
@@ -442,7 +440,7 @@ export default function GuildShell({
       return teams.some(
         (team) =>
           captainTeamIds.includes(Number(team.id)) &&
-          (String(team.war_channel_id) === id || String(team.race_channel_id) === id),
+          String(team.war_channel_id) === id,
       )
     },
     [captainTeamIds, isStaff, teams],
@@ -493,7 +491,7 @@ export default function GuildShell({
   const activeItem =
     allItems.find((item) => pathname === `/dashboard/${guildId}${item.segment}`) ?? allItems[0]
   const isCaptain = !context.isStaff && context.captainTeamIds.length > 0
-  // Staff see everything; captains only Overview/War/Race; read-only alias members lose the
+  // Staff see everything; captains only Overview/War; read-only alias members lose the
   // staff-only pages but keep their read-only Maze view.
   const navGroups = context.isStaff
     ? NAV_GROUPS
@@ -631,7 +629,7 @@ export default function GuildShell({
                       : 'Unlock premium'}
                   </p>
                   <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
-                    Keep war, race and maze tracking running after the trial.
+                    Keep war and maze tracking running after the trial.
                   </p>
                 </Link>
               ) : null}
@@ -750,7 +748,7 @@ export default function GuildShell({
                       Team captain access
                     </p>
                     <p className="mt-0.5 text-sm text-slate-400">
-                      You can manage your own team&apos;s war and race channels. Server settings,
+                      You can manage your own team&apos;s war channel. Server settings,
                       aliases, maze and other teams stay staff-only.
                     </p>
                   </div>

@@ -412,7 +412,7 @@ export function ProgressBar({
 }
 
 /**
- * Donut progress ring. Used for trial days and race progress where the
+ * Donut progress ring. Used for trial days and plan usage where the
  * proportion matters more than the raw number.
  */
 export function Ring({

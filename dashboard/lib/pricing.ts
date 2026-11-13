@@ -57,7 +57,6 @@ export const PRICING_PLANS: PricingPlan[] = [
 export const PLAN_FEATURES = [
   'War tracking with defence and attack timers',
   'Missing, excused and attack-count lists',
-  'Race node, OFA, DYP and JE progress',
   '7-day and 3-day maze schedules with discounts',
   'Aliases and warnings shared with the bot',
   'Full dashboard access for this server',

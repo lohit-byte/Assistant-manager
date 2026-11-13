@@ -114,12 +114,12 @@ async def premium_gate(ctx):
         return True
 
     # Help must stay reachable when a trial expires so people can find support.
-    # That includes the per-cog help pages (`!war help`, `!race help`, `!maze help`).
+    # That includes the per-cog help pages (`!war help`, `!maze help`).
     if ctx.command is not None:
         name = ctx.command.name
         if name == "help":
             return True
-        if name in ("war", "race", "maze"):
+        if name in ("war", "maze"):
             parts = (getattr(ctx.message, "content", "") or "").split()
             if len(parts) > 1 and parts[1].lower() == "help":
                 return True

@@ -7,7 +7,7 @@ passes stay consistent. The critic never sees this file.
 
 - **Subject.** Legends Assistant, a Discord bot and web dashboard for Monster Legends alliances.
   It tracks the 48-hour alliance war (24 h defence, 24 h attack), missing and excused attacks,
-  race nodes (OFA, DYP, JE), maze island discount moments and player aliases.
+  maze island discount moments and player aliases.
 - **Audience.** Alliance leaders and staff. They play on a phone, coordinate in Discord, and
   currently keep the war in a spreadsheet, a pinned message or their head.
 - **The site's job.** Get a server admin to sign in with Discord and start the 7-day trial.
@@ -24,7 +24,7 @@ passes stay consistent. The critic never sees this file.
 
 **The site is the alliance war board.** One 48-hour clock is the spine: defence holds the first
 24 hours, attack takes the last 24, and the board counts down to zero. Everything the staff has
-to remember (missing attacks, excused players, race nodes, maze discounts) hangs off that clock
+to remember (missing attacks, excused players, maze discounts) hangs off that clock
 as pinned evidence, ruled rows and counters. The landing page shows a working board, not a
 picture of one.
 

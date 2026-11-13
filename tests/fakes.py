@@ -34,8 +34,7 @@ def _matches(row, filters, in_filters=()):
 class FakeDB:
     TABLES = (
         "guilds", "users", "aliases", "warnings", "war_settings", "wars",
-        "race_state", "race_sheets", "race_logs", "maze_schedules",
-        "player_ping_settings", "teams", "team_captains", "team_players", "war_logs",
+        "maze_schedules", "player_ping_settings", "teams", "team_captains", "team_players", "war_logs",
     )
 
     def __init__(self):

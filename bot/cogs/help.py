@@ -6,20 +6,19 @@ def _embed(title, color, desc=None):
     return discord.Embed(title=title, description=desc, color=color)
 
 def build_overview(is_staff):
-    topics = "`war`, `race`, `maze`, `team`, `alias`"
+    topics = "`war`, `maze`, `team`, `alias`"
     if is_staff:
         topics += ", `ids`, `roles`, `warning`, `pings`"
     e = _embed("📖 Bot Help", discord.Color.blurple(),
                f"Use `!help <topic>` for details: {topics}")
     e.add_field(name="🛡️ War", value="`!war status` · `!war missing list`\nType `attacks done` to log your attacks", inline=False)
-    e.add_field(name="🏁 Race", value="`!race status` · `!race ofa` · `!race dyp` · `!race je +500k`", inline=False)
     e.add_field(name="🗺️ Maze", value="`!maze status` · `!maze alerts dm|here|off` · `!maze start 7d 6d12h`", inline=False)
     e.add_field(
         name="👑 Captains",
-        value=("A team captain can run their team's war and race commands in the team's "
-               "channels (war tracking, lists, `!war attacks`, node/target/sheet selection, "
+        value=("A team captain can run their team's war commands in the team's war "
+               "channel (war tracking, lists, `!war attacks`, "
                "that team's `!war set attacks` / `!war set exempt`). "
-               "Server settings, warnings, aliases, sheet uploads and other teams stay staff-only."),
+               "Server settings, warnings, aliases and other teams stay staff-only."),
         inline=False,
     )
     team_help = "`!team list` — teams, channels, roster sizes and each team's war rules"
@@ -78,24 +77,6 @@ def build_topic(topic, is_staff):
                 "`!war set attacks <number>` · `!war set exempt on|off` (team value in a team channel)\n"
                 "`!war check` · `!war report`\n`!warning add @user <reason>` · `!warning list`"), inline=False)
         return e
-    if topic == "race":
-        e = _embed("🏁 Race Commands", discord.Color.green())
-        e.add_field(name="Everyone", value="`!race status`\n`!race ofa` · `!race ofa done`\n`!race dyp` (`dmp` works too)\n`!race je +500k` · `!race je done`\n*Logging a task needs your alias — ask staff for* `!alias add @you <name>`.", inline=False)
-        e.add_field(
-            name="Captains",
-            value=("A team captain can run the team race commands in their team's race channel: "
-                   "`!race use`, `!race next`, `!race target`, `!race newnode`, `!race set`, "
-                   "`!race sheets`, and OFA approve/cancel/release. Sheet uploads stay staff-only."),
-            inline=False,
-        )
-        if is_staff:
-            e.add_field(name="Staff", value=(
-                "`!race uploadsheet <name>` (.json/.csv/.tsv) · `!race use <name>` · `!race use default` (bundled)\n"
-                "`!race sheets` — guild sheets + default (bundled)\n`!race next`\n"
-                "`!race newnode <image>` or `!race newnode 50 hatch | 10 breed`\n"
-                "`!race set <desc|dyp|je|ofa> <value>`\n`!race target <number>`\n"
-                "`!race ofa cancel` · `!race ofa release` · `!race clear`"), inline=False)
-        return e
     if topic == "maze":
         e = _embed("🗺️ Maze Commands", discord.Color.purple())
         e.add_field(name="Everyone", value=(
@@ -140,7 +121,7 @@ def build_topic(topic, is_staff):
         return e
     if topic in ("team", "teams", "roster"):
         e = _embed("👥 Teams", discord.Color.teal(),
-                   "Teams group players for war and race; each team has its own roster and war rules.")
+                   "Teams group players for war; each team has its own roster and war rules.")
         e.add_field(name="Everyone",
                     value="`!team list` — teams, channels, roster size and that team's war rules",
                     inline=False)
@@ -182,7 +163,7 @@ class Help(commands.Cog):
             return await ctx.send(embed=build_overview(staff))
         e = build_topic(topic.lower(), staff)
         if e is None:
-            return await ctx.send("❌ Unknown topic. Try `!help`, `!help war`, `!help race`, `!help maze`, `!help team`, `!help ids`, `!help roles`.")
+            return await ctx.send("❌ Unknown topic. Try `!help`, `!help war`, `!help maze`, `!help team`, `!help ids`, `!help roles`.")
         await ctx.send(embed=e)
 
 async def setup(bot):

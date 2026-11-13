@@ -377,7 +377,7 @@ export default function Landing() {
           <div className="frame py-16 lg:py-24">
             <div className="section-head">
               <span className="mono-label text-accent-400">{features.stamp}</span>
-              <span className="mono-label hidden sm:block">Six tools, one board</span>
+              <span className="mono-label hidden sm:block">Five tools, one board</span>
             </div>
             <div className="max-w-[62ch]">
               <h2 className="display text-[clamp(2rem,4vw,3.5rem)] text-slate-50">

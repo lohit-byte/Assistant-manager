@@ -101,10 +101,10 @@ export const ROADMAP: RoadmapItem[] = [
     shippedAt: '2026-11-06',
   },
   {
-    id: 'war-race-maze',
-    title: 'War, race and maze controls',
+    id: 'war-maze',
+    title: 'War and maze controls',
     description:
-      'Phase timers, missing and excused lists, race progress and maze discount schedules in one place.',
+      'Phase timers, missing and excused lists and maze discount schedules in one place.',
     status: 'shipped',
     area: 'Dashboard',
     shippedAt: '2026-11-06',

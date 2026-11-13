@@ -2,7 +2,7 @@
 
 Monster Legends alliances run several teams (a main team plus feeder/recruiting
 teams). The bot's aliases are guild-wide, so this cog maps players onto teams
-and shows the team's war settings. War/race channels and roles are still edited
+and shows the team's war settings. The war channel and role are still edited
 from the dashboard; the roster lives here because it changes with recruitment.
 """
 
@@ -37,7 +37,7 @@ def _words(raw):
 
 
 def _channel_id(team):
-    return team.get("war_channel_id") or team.get("race_channel_id")
+    return team.get("war_channel_id")
 
 
 class Teams(commands.Cog):
@@ -97,13 +97,8 @@ class Teams(commands.Cog):
             attacks = default_attacks if attacks is None else attacks
             exempt = team.get("exempt_absent")
             exempt = default_exempt if exempt is None else exempt
-            channels = []
-            war_id, race_id = team.get("war_channel_id"), team.get("race_channel_id")
-            if war_id:
-                channels.append("⚔️ <#%s>" % war_id)
-            if race_id:
-                channels.append("🏁 <#%s>" % race_id)
-            channel_text = " ".join(channels) or "_no channels_"
+            war_id = team.get("war_channel_id")
+            channel_text = "⚔️ <#%s>" % war_id if war_id else "_no channel_"
             absence = "absences exempt" if exempt else "absences count"
             lines.append("• **%s** — 👥 %s · %s · %s attacks · %s"
                          % (name, count, channel_text, attacks, absence))
@@ -135,10 +130,9 @@ class Teams(commands.Cog):
             alias = ", ".join(row["aliases"]) or "⚠️ no alias"
             if member is None:
                 departed += 1
-                lines.append(f"• `{alias}` — <@{row['discord_id']}> ⚠️ left the server")
+                lines.append(f"• `{alias}` — ⚠️ left the server")
             else:
-                lines.append(
-                    f"• `{alias}` — {member.display_name} (`{row['discord_id']}`)")
+                lines.append(f"• `{alias}` — {member.display_name}")
         text = "\n".join(lines)
         if departed:
             text += f"\n\n⚠️ {departed} player(s) left the server; `!alias prune` cleans their aliases."
@@ -173,7 +167,7 @@ class Teams(commands.Cog):
         if not alias:
             return await ctx.send(
                 "❌ Give them an alias first with `!alias add @user <name>` — "
-                "war/race tracking uses aliases, so a roster row without one can't be checked."
+                "war tracking uses aliases, so a roster row without one can't be checked."
             )
         moved = await asyncio.to_thread(
             set_team_player, ctx.guild.id, team["id"], target.id)

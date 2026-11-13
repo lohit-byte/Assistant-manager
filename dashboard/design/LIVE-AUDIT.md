@@ -62,6 +62,6 @@ live overview and I'll produce a true before/after and score it the same way as 
 Two options:
 1. **Implement the overview composition** (touches `app/dashboard/[guildId]/page.tsx`, plus a small `WarSpine`
    component reusing the war-board rail styles).
-2. **Extend the spine to war / race / maze** first, then the overview inherits it.
+2. **Extend the spine to war / maze** first, then the overview inherits it.
 
 Either way it's an additive pass on the live system — no new palette, no new fonts, no route or data changes.

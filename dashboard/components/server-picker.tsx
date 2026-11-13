@@ -213,7 +213,7 @@ export default function ServerPicker() {
             </li>
             <li className="flex flex-wrap items-center gap-2">
               <Badge tone="blue">Team captain</Badge>
-              <span>You captain a team here: you manage that team’s war and race channels.</span>
+              <span>You captain a team here: you manage that team’s war channel.</span>
             </li>
             <li className="flex flex-wrap items-center gap-2">
               <Badge tone="purple" dot>Premium</Badge>

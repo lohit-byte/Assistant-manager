@@ -10,23 +10,28 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { CheckCircle2, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, X } from 'lucide-react'
 
 /**
- * Success notifications for dashboard writes.
+ * Notifications for dashboard writes (success) and gentle nudges (warn).
  *
  * Staff presses a save button, the toast confirms what changed. Validation and load errors stay
  * inline next to the form (they need to point at the field); success is confirmed here so it is
- * visible wherever the button was on the page. Announced politely for screen readers.
+ * visible wherever the button was on the page. `warn` is for something staff should fix but that
+ * did not fail (for example, no aliases yet). Both are announced politely for screen readers.
  */
+type ToastVariant = 'success' | 'warn'
+
 interface ToastItem {
   id: number
+  variant: ToastVariant
   message: string
   detail?: string
 }
 
 interface ToastApi {
   success: (message: string, detail?: string) => void
+  warn: (message: string, detail?: string) => void
   dismiss: (id: number) => void
 }
 
@@ -53,17 +58,29 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts((current) => current.filter((toast) => toast.id !== id))
   }, [])
 
-  const success = useCallback(
-    (message: string, detail?: string) => {
+  const push = useCallback(
+    (variant: ToastVariant, message: string, detail?: string) => {
       const id = nextId.current++
       // Keep the newest three; a burst of writes must not stack up the whole screen.
-      setToasts((current) => [...current.slice(-(MAX_VISIBLE - 1)), { id, message, detail }])
+      setToasts((current) => [
+        ...current.slice(-(MAX_VISIBLE - 1)),
+        { id, variant, message, detail },
+      ])
       timers.current.set(
         id,
         setTimeout(() => dismiss(id), AUTO_DISMISS_MS),
       )
     },
     [dismiss],
+  )
+
+  const success = useCallback(
+    (message: string, detail?: string) => push('success', message, detail),
+    [push],
+  )
+  const warn = useCallback(
+    (message: string, detail?: string) => push('warn', message, detail),
+    [push],
   )
 
   useEffect(() => {
@@ -74,7 +91,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const api = useMemo<ToastApi>(() => ({ success, dismiss }), [dismiss, success])
+  const api = useMemo<ToastApi>(
+    () => ({ success, warn, dismiss }),
+    [dismiss, success, warn],
+  )
 
   return (
     <ToastContext.Provider value={api}>
@@ -88,10 +108,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={toast.id}
             role="status"
-            className="toast-in pointer-events-auto w-full border border-sage-500/40 bg-ink-800 px-3.5 py-3 text-sm shadow-[0_12px_32px_rgba(0,0,0,0.35)] sm:w-auto sm:min-w-[320px] sm:max-w-[420px]"
+            aria-live="polite"
+            data-variant={toast.variant}
+            className={`toast-in pointer-events-auto w-full border bg-ink-800 px-3.5 py-3 text-sm shadow-[0_12px_32px_rgba(0,0,0,0.35)] sm:w-auto sm:min-w-[320px] sm:max-w-[420px] ${
+              toast.variant === 'warn' ? 'border-warn-500/50' : 'border-sage-500/40'
+            }`}
           >
             <div className="flex items-start gap-2.5">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-sage-400" aria-hidden />
+              {toast.variant === 'warn' ? (
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn-400" aria-hidden />
+              ) : (
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-sage-400" aria-hidden />
+              )}
               <div className="min-w-0 flex-1">
                 <p className="font-semibold leading-snug text-slate-100">{toast.message}</p>
                 {toast.detail ? (

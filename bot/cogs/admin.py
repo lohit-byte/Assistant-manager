@@ -48,11 +48,12 @@ class Admin(commands.Cog):
                     ctx.guild.get_member(int(row["discord_id"]))
                     if row.get("discord_id") is not None else None
                 )
-                suffix = ""
                 if member is None:
                     departed += 1
-                    suffix = " ⚠️ left the server"
-                lines.append(f"• `{row['alias_name']}` → <@{row['discord_id']}>{suffix}")
+                    who = "⚠️ left the server"
+                else:
+                    who = member.display_name
+                lines.append(f"• `{row['alias_name']}` → {who}")
             text = "\n".join(lines)
             if departed:
                 text += f"\n\n⚠️ {departed} alias(es) belong to members who left — `!alias prune` cleans them."

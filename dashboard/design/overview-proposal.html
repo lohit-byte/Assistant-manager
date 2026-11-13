@@ -168,9 +168,6 @@
   .bar.steel i{background:rgba(169,188,207,.55)}
   .bar.sage i{background:rgba(147,180,138,.65)}
   .bar.acc i{background:var(--accent)}
-  .laps{display:flex;gap:4px;margin-top:8px}
-  .laps i{flex:1;height:6px;background:rgba(241,236,224,.08)}
-  .laps i.on{background:rgba(147,180,138,.7)}
   .task{border:1px solid var(--line);background:var(--raised);padding:8px 10px;display:flex;
     justify-content:space-between;gap:10px;align-items:center;font-size:11px;color:#cfc9bb}
   .task b{font-family:var(--font-mono);font-size:10px;color:var(--sage);font-weight:500}
@@ -243,7 +240,6 @@
     <div class="ng">
       <p>Events</p>
       <a class="nav"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4h16M4 20h16M7 4v16M17 4v16"/></svg>War<span class="k">3</span></a>
-      <a class="nav"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 21h8M12 17v4M7 4h10v6a5 5 0 0 1-10 0V4Z"/></svg>Race<span class="k">5/8</span></a>
       <a class="nav"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"/><path d="M9 3v15M15 6v15"/></svg>Maze<span class="k">42m</span></a>
     </div>
     <div class="ng">
@@ -286,7 +282,7 @@
       <div class="phead" style="border-bottom:0;padding-bottom:0;margin-bottom:-4px">
         <div>
           <h1 class="display">Server snapshot</h1>
-          <p>One board for the 48-hour war, race laps, maze windows and the roster. Everything below is read from the same tables the bot writes.</p>
+          <p>One board for the 48-hour war, maze windows and the roster. Everything below is read from the same tables the bot writes.</p>
         </div>
         <div class="acts">
           <a class="btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>Refresh</a>
@@ -331,20 +327,6 @@
             <div class="logrow"><span class="p">Tobi</span><span class="pips"><em class="pip" data-on="true"></em><em class="pip" data-on="true"></em><em class="pip miss"></em><em class="pip miss"></em><em class="pip miss"></em><em class="pip miss"></em></span><span style="color:var(--red)">2/6</span></div>
             <div class="logrow"><span class="p">Rhea</span><span class="pips"><em class="pip miss"></em><em class="pip miss"></em><em class="pip miss"></em><em class="pip miss"></em><em class="pip miss"></em><em class="pip miss"></em></span><span style="color:var(--red)">0/6</span></div>
             <div class="rowl" style="margin-top:2px"><span>Warnings</span><b>3 open · 1 sent today</b></div>
-          </div>
-        </section>
-
-        <section class="card">
-          <div class="chead">
-            <div><div class="t">Race</div><div class="s">OFA · lap 5 of 8</div></div>
-            <a href="#">Manage →</a>
-          </div>
-          <div class="cbody">
-            <div class="rowl"><span>Laps claimed</span><b>5 / 8</b></div>
-            <div class="laps"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div>
-            <div class="task"><span>Collect 40 fire orbs — volcano node</span><span><b>12 / 40</b></span></div>
-            <div><div class="rowl"><span>DYP</span><b>12 / 20</b></div><div class="bar sage"><i style="width:60%"></i></div></div>
-            <div class="tags"><span class="tag acc">OFA claimed</span><span class="tag">JE 2/5</span><span class="tag">3 contributors</span></div>
           </div>
         </section>
 

@@ -259,3 +259,19 @@ export function computeAttendance(input: AttendanceInput): AttendanceResult {
 
   return { rows, summary }
 }
+
+/**
+ * Why a row cannot be added to the missing list, or null when it can. Mirrors the war page's
+ * own refusals (excused, enough attacks, already listed) so the row drawer can disable the
+ * action up front with a one-line reason instead of failing after the click.
+ */
+export function addToMissingBlockReason(
+  row: Pick<AttendanceRow, 'status' | 'onMissingList' | 'attacks' | 'required'>,
+): string | null {
+  if (row.status === 'excused') return 'Excused for this war.'
+  if (row.required > 0 && row.attacks >= row.required) {
+    return `Already reported ${row.attacks}/${row.required} attacks.`
+  }
+  if (row.onMissingList) return 'Already on the missing list.'
+  return null
+}

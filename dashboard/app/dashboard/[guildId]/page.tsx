@@ -13,7 +13,6 @@ import {
   ServerCog,
   ShieldCheck,
   Target,
-  Trophy,
   Users,
 } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
@@ -36,7 +35,7 @@ import {
 import { getGuildSummary, type GuildSummary } from '@/lib/data'
 import { buildSetupSummary } from '@/lib/setup'
 import { createClient } from '@/lib/supabase/client'
-import { NODES_PER_LAP, PLAN_META, TRIAL_DAYS } from '@/lib/constants'
+import { PLAN_META, TRIAL_DAYS } from '@/lib/constants'
 import {
   currentMazeMoment,
   formatDateTime,
@@ -89,12 +88,6 @@ export default function OverviewPage() {
   const warMissing = summary?.war?.missing_list?.length ?? 0
   const warExcused = summary?.war?.absent_list?.length ?? 0
   const warLogged = Object.keys(summary?.war?.attack_counts ?? {}).length
-  const race = summary?.race
-  const raceLap = race?.current_lap ?? 0
-  const raceNode = race?.current_node ?? 0
-  const raceTarget = race?.target_laps ?? 0
-  const dypProgress = race?.dyp_progress ?? 0
-  const dypTarget = race?.dyp_target ?? 0
 
   const maze = summary?.maze
   const mazeEvent = summary?.mazeEvent
@@ -154,7 +147,7 @@ export default function OverviewPage() {
                   : `${setup.percent}% set up. The bot is already in the server — finish the rest in Server setup.`}
               </p>
               <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-400">
-                Each subteam pairs one war channel with one race channel. Captains and the Leader,
+                Each subteam is one war channel. Captains and the Leader,
                 Helper (co-lead) and Staff roles the bot treats as staff are all configured there.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -182,7 +175,7 @@ export default function OverviewPage() {
         </Alert>
       ) : null}
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="mb-6 grid gap-4 sm:grid-cols-2">
         <Stat
           label="Plan"
           value={plan.label}
@@ -196,18 +189,6 @@ export default function OverviewPage() {
           footer={
             guild.premium_status === 'trial' ? (
               <ProgressBar value={trialDays} max={TRIAL_DAYS} tone={plan.tone} size="sm" />
-            ) : undefined
-          }
-        />
-        <Stat
-          label="Race"
-          value={`Lap ${raceLap}.${raceNode}`}
-          hint={raceTarget > 0 ? `Target ${raceTarget} laps` : 'No target set'}
-          icon={<Trophy className="h-4 w-4" />}
-          tone="green"
-          footer={
-            raceTarget > 0 ? (
-              <ProgressBar value={raceLap} max={raceTarget} tone="green" size="sm" />
             ) : undefined
           }
         />
@@ -243,95 +224,7 @@ export default function OverviewPage() {
       {loading ? (
         <Spinner label="Loading server data…" />
       ) : (
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-          <Card>
-            <CardHeader
-              title="Race"
-              description="Current node and task progress"
-              icon={<Trophy className="h-4 w-4" />}
-              action={
-                <Link
-                  href={`/dashboard/${guildId}/race`}
-                  className="-my-1 inline-flex items-center gap-1 py-1.5 text-xs font-semibold text-accent-300 transition-colors hover:text-accent-200"
-                >
-                  Manage <ArrowRight className="h-3.5 w-3.5" />
-                </Link>
-              }
-            />
-            <CardBody className="space-y-5">
-              {race ? (
-                <>
-                  <div className="flex items-center justify-between gap-4 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
-                    <div>
-                      <p className="text-[11px] uppercase tracking-wider text-slate-500">
-                        Progress
-                      </p>
-                      <p className="mt-1 text-lg font-semibold tracking-tight text-slate-50">
-                        Lap {raceLap}.{raceNode}
-                        <span className="ml-2 text-xs font-normal text-slate-500">
-                          / {NODES_PER_LAP} nodes
-                        </span>
-                      </p>
-                    </div>
-                    <Badge tone={raceTarget > 0 ? 'green' : 'slate'}>
-                      {raceTarget > 0 ? `${raceLap}/${raceTarget} laps` : 'No target'}
-                    </Badge>
-                  </div>
-
-                  <div className="flex items-center gap-1.5">
-                    {Array.from({ length: NODES_PER_LAP }).map((_, index) => (
-                      <span
-                        key={index}
-                        className={`h-1.5 flex-1 rounded-full ${
-                          index < raceNode
-                            ? 'bg-gradient-to-r from-sage-400 to-sage-500'
-                            : 'bg-white/[0.07]'
-                        }`}
-                      />
-                    ))}
-                  </div>
-
-                  <div>
-                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                      Task
-                    </p>
-                    <p className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-sm text-slate-300">
-                      {race.task_description || 'No active node'}
-                    </p>
-                  </div>
-
-                  {dypTarget > 0 ? (
-                    <ProgressBar
-                      value={dypProgress}
-                      max={dypTarget}
-                      tone="green"
-                      label={`DYP ${dypProgress}/${dypTarget}`}
-                    />
-                  ) : null}
-
-                  <div className="flex flex-wrap gap-2">
-                    <Badge tone={race.ofa_done ? 'green' : race.ofa_holder_id ? 'amber' : 'slate'}>
-                      OFA {race.ofa_done ? 'done' : race.ofa_holder_id ? 'claimed' : 'open'}
-                    </Badge>
-                    <Badge tone={race.je_done ? 'green' : 'slate'}>
-                      JE{' '}
-                      {race.je_done ? 'done' : `${race.je_progress ?? '0'}/${race.je_target ?? '0'}`}
-                    </Badge>
-                    <Badge tone="slate">
-                      {race.dyp_contributors?.length ?? 0} DYP contributors
-                    </Badge>
-                  </div>
-                </>
-              ) : (
-                <EmptyState
-                  icon={<Trophy className="h-7 w-7" />}
-                  title="No race data yet"
-                  description="Advance a node in Discord with !race newnode. The current node will show here."
-                />
-              )}
-            </CardBody>
-          </Card>
-
+        <div className="grid gap-5 sm:grid-cols-2">
           <Card>
             <CardHeader
               title="Maze schedule"

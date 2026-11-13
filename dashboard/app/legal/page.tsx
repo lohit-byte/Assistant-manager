@@ -18,7 +18,7 @@ const sections = [
       'By inviting the "Assistant Manager for Monster Legends" bot to your Discord server or using this dashboard, you agree to these terms.',
       '1. Non-affiliation: this is a third-party community tool. We are not affiliated, associated, authorized, endorsed by, or in any way officially connected with Socialpoint or Monster Legends.',
       '2. Acceptable use: you may not use this bot to spam, abuse Discord APIs, or attempt to exploit the dashboard. We reserve the right to blacklist any user or server that violates these terms without prior notice.',
-      '3. Service availability: while we aim for high uptime, the bot and dashboard are provided "as is". We are not liable for missed war timers, race deadlines, or game consequences resulting from downtime.',
+      '3. Service availability: while we aim for high uptime, the bot and dashboard are provided "as is". We are not liable for missed war timers, maze deadlines, or game consequences resulting from downtime.',
     ],
   },
   {
@@ -38,7 +38,7 @@ const sections = [
     tag: '03 / Privacy',
     title: 'Privacy Policy',
     body: [
-      '1. Data we collect: we store your Discord server ID, Discord user IDs for attack and alias tracking, and the data you enter (war timers, race nodes, maze schedules).',
+      '1. Data we collect: we store your Discord server ID, Discord user IDs for attack and alias tracking, and the data you enter (war timers, attack counts, maze schedules).',
       '2. Payments: all payment processing is handled by Cashfree. We do not store card, bank or UPI details on our servers.',
       '3. Data sharing: we do not sell your data. It is stored in our Supabase database.',
     ],

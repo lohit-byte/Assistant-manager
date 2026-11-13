@@ -12,7 +12,8 @@
     "check:setup": "node scripts/check-setup.cjs",
     "check:plans": "node scripts/check-plans.cjs",
     "check:maze": "node scripts/check-maze.cjs",
-    "check:wheel": "node scripts/check-wheel.cjs"
+    "check:wheel": "node scripts/check-wheel.cjs",
+    "check:labels": "node scripts/check-labels.cjs"
   },
   "dependencies": {
     "@paddle/paddle-js": "^1.2.1",

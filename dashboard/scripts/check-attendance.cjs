@@ -71,7 +71,7 @@ function compile() {
   return require(compiled)
 }
 
-const { computeAttendance } = compile()
+const { computeAttendance, addToMissingBlockReason } = compile()
 
 /* ------------------------------------------------------------------ fixtures */
 
@@ -306,6 +306,20 @@ check('empty war: every aliased player shows as not reported', () => {
     problems.push('a player without a war row is not "none"')
   }
   if (summary.none !== 4) problems.push(`none = ${summary.none}, want 4`)
+  return problems
+})
+
+check('addToMissing refusal: excused, enough attacks and already-listed rows are blocked', () => {
+  const problems = []
+  const row = (over) => ({ alias: 'sam', discordId: '900', attacks: 0, required: 6, status: 'none', onMissingList: false, ...over })
+  if (typeof addToMissingBlockReason !== 'function') return ['addToMissingBlockReason is not exported']
+  if (addToMissingBlockReason(row({})) !== null) problems.push('a short player should be addable')
+  if (addToMissingBlockReason(row({ attacks: 3, status: 'partial' })) !== null) problems.push('a partial player should be addable')
+  if (!/excused/i.test(addToMissingBlockReason(row({ status: 'excused' })) || '')) problems.push('excused is not refused')
+  if (!/6\/6/.test(addToMissingBlockReason(row({ attacks: 6, status: 'done' })) || '')) problems.push('enough attacks is not refused with the count')
+  if (!/already on the missing list/i.test(addToMissingBlockReason(row({ onMissingList: true })) || '')) problems.push('already listed is not refused')
+  if (addToMissingBlockReason(row({ attacks: 2, required: 0, status: 'none' })) !== null) problems.push('required 0 must not refuse on attacks')
+  if (/\d{17,}/.test(addToMissingBlockReason(row({ status: 'excused' })) || '')) problems.push('reason leaks an id')
   return problems
 })
 

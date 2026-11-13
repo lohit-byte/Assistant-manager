@@ -1,26 +1,29 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Activity, AlertTriangle, ChevronDown, Clock, Plus, RefreshCw, Save, Swords, Trash2, Trophy, Users,
 } from 'lucide-react'
 import { useGuild } from '@/components/guild-shell'
+import { WarRowActionsCell, WarRowDrawer } from '@/components/war-row-actions'
 import {
   Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState,
   Field, PageHeader, ProgressBar, Spinner, TextInput, type Tone,
 } from '@/components/ui'
 import {
-  addWarning, deleteWarning, getWar, getWarSettings, listAliases, listRaceLogs, listTeamPlayers,
+  addWarning, deleteWarning, getWar, getWarSettings, listAliases, listTeamPlayers,
   listWarnings, listWarLogs, saveWarSettings, saveWarTeamRole, updateWar,
 } from '@/lib/data'
-import { computeAttendance, type AttendanceRow, type AttendanceStatus } from '@/lib/attendance'
+import {
+  addToMissingBlockReason, computeAttendance, type AttendanceRow, type AttendanceStatus,
+} from '@/lib/attendance'
 import { computeRatings, type RatingRow } from '@/lib/rating'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/lib/toast'
 import { DEFAULT_ATTACKS_REQUIRED, MAX_ATTACKS_REQUIRED } from '@/lib/constants'
 import {
-  formatDateTime, getWarWindow, isSnowflake, warPhaseLabel,
+  formatDateTime, getWarWindow, isSnowflake, playerLabel, warPhaseLabel,
 } from '@/lib/format'
 import { useNow } from '@/lib/hooks'
 import type { War, WarLog, WarSettings, Warning, Alias } from '@/lib/types'
@@ -142,7 +145,12 @@ export default function WarPage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<Feedback>(null)
 
+  const [aliasesLoaded, setAliasesLoaded] = useState(false)
   const [missingAlias, setMissingAlias] = useState('')
+  // The one open row drawer (by player key, never rendered) and its in-progress warning.
+  const [drawer, setDrawer] = useState<{ key: string; warn: boolean } | null>(null)
+  const [drawerReason, setDrawerReason] = useState('')
+  const nudged = useRef(false)
   const [teamRole, setTeamRole] = useState('')
   const [warningId, setWarningId] = useState('')
   const [warningReason, setWarningReason] = useState('')
@@ -176,6 +184,7 @@ export default function WarPage() {
         setSettings(nextSettings)
         setWarnings(nextWarnings)
         setAliases(nextAliases)
+        setAliasesLoaded(true)
 
         // Fetch Channel-specific War Data
         if (channelId) {
@@ -186,22 +195,10 @@ export default function WarPage() {
             setTeamRole(nextWar.team_role_id ? String(nextWar.team_role_id) : '')
           }
 
-          // The team that owns this war channel links it to the race channel used for the rating.
           const team = teams.find((item) => String(item.war_channel_id) === channelId) ?? null
-          const raceChannelId =
-            team?.race_channel_id !== null && team?.race_channel_id !== undefined
-              ? String(team.race_channel_id)
-              : null
-          // Only an active war narrows the race window; otherwise rating uses the last 7 days.
-          const windowStart = nextWar?.is_active
-            ? nextWar.war_start ?? new Date(Date.now() - 7 * 86_400_000).toISOString()
-            : new Date(Date.now() - 7 * 86_400_000).toISOString()
 
-          const [nextWarLogs, nextRaceLogs, nextRoster] = await Promise.all([
+          const [nextWarLogs, nextRoster] = await Promise.all([
             listWarLogs(supabase, channelId, nextWar?.war_start ?? null, 25).catch(() => []),
-            raceChannelId
-              ? listRaceLogs(supabase, guildId, raceChannelId, windowStart).catch(() => [])
-              : Promise.resolve([]),
             team ? listTeamPlayers(supabase, [team.id]).catch(() => []) : Promise.resolve([]),
           ])
           setWarLogs(nextWarLogs)
@@ -210,10 +207,7 @@ export default function WarPage() {
             computeRatings({
               war: nextWar,
               warSettings: nextSettings,
-              raceLogs: nextRaceLogs,
               aliases: nextAliases,
-              warChannelId: channelId,
-              raceChannelId,
             }),
           )
         } else {
@@ -250,12 +244,32 @@ export default function WarPage() {
   const hasRoster = rosterIds.length > 0
   const rankedRatings = useMemo(() => ratings.filter((row) => !row.excused), [ratings])
   const excusedRatings = useMemo(() => ratings.filter((row) => row.excused), [ratings])
-  // A one-sided team's rating renormalizes, so the missing half's column is not meaningful.
   const ratingTeam = useMemo(
     () => teams.find((item) => String(item.war_channel_id) === channelId) ?? null,
     [channelId, teams],
   )
-  const hasRaceHalf = Boolean(ratingTeam?.race_channel_id)
+
+  // Staff-only nudge, once per visit: without aliases every player would show as "No alias".
+  useEffect(() => {
+    if (!aliasesLoaded || !isStaff || aliases.length > 0 || nudged.current) return
+    nudged.current = true
+    toast.warn(
+      'No aliases yet — players show by alias, not Discord ID.',
+      '!alias add @user <name> or the Aliases page',
+    )
+  }, [aliasesLoaded, isStaff, aliases.length, toast])
+
+  // Aliases whose player has no row in the attendance table (guests, loans, roster changes).
+  const aliasesWithoutRow = useMemo(() => {
+    const rowIds = new Set(
+      attendance.rows.filter((row) => row.discordId !== null).map((row) => String(row.discordId)),
+    )
+    const rowNames = new Set(attendance.rows.map((row) => row.alias.trim().toLowerCase()))
+    return aliases.filter(
+      (alias) =>
+        !rowIds.has(String(alias.discord_id)) && !rowNames.has(alias.alias_name.trim().toLowerCase()),
+    )
+  }, [aliases, attendance.rows])
 
   const saveSettings = async () => {
     setBusy('settings')
@@ -297,13 +311,17 @@ export default function WarPage() {
     }
   }
 
-  const addMissing = async () => {
-    if (!missingAlias || !war || !channelId) return
-    const alias = aliases.find((entry) => entry.alias_name.toLowerCase() === missingAlias)
+  const addMissing = async (target: { alias: string; discordId: string | number | null }) => {
+    if (!war || !channelId) return
+    const alias =
+      (target.discordId !== null
+        ? aliases.find((entry) => String(entry.discord_id) === String(target.discordId))
+        : undefined) ?? aliases.find((entry) => entry.alias_name.toLowerCase() === target.alias.toLowerCase())
     if (!alias) return
     // Look at every alias of that player so a second alias row cannot slip a reported player in.
     const playerAliases = aliases.filter((entry) => String(entry.discord_id) === String(alias.discord_id))
     const playerNames = new Set(playerAliases.map((entry) => entry.alias_name.toLowerCase()))
+    playerNames.add(target.alias.toLowerCase())
     const playerId = String(alias.discord_id)
     let attacks = 0
     for (const [name, value] of Object.entries(war.attack_counts ?? {})) {
@@ -320,13 +338,14 @@ export default function WarPage() {
       return setFeedback({ tone: 'red', text: `${alias.alias_name} already reported ${attacks}/${required} — not added to missing.` })
     }
     if (listMatchesPlayer(missing, playerNames, playerId)) {
-      return setFeedback({ tone: 'red', text: 'That player is already on the missing list.' })
+      return setFeedback({ tone: 'red', text: `${alias.alias_name} is already on the missing list.` })
     }
     setBusy('missing')
     try {
-      const nextMissing = [...missing, { name: missingAlias, id: alias.discord_id }]
+      const nextMissing = [...missing, { name: alias.alias_name.toLowerCase(), id: alias.discord_id }]
       await updateWar(createClient(), channelId, { missing_list: nextMissing })
       setMissingAlias('')
+      setDrawer(null)
       await load('refresh')
       toast.success(
         `${alias.alias_name} added to the missing list.`,
@@ -371,10 +390,11 @@ export default function WarPage() {
   }
 
   const submitWarning = async () => {
-    if (!warningId) return setFeedback({ tone: 'red', text: 'Please select a player to warn.' })
+    const target = aliases.find((entry) => String(entry.id) === warningId)
+    if (!target) return setFeedback({ tone: 'red', text: 'Please select a player to warn.' })
     setBusy('warning')
     try {
-      await addWarning(createClient(), guildId, warningId, warningReason, null)
+      await addWarning(createClient(), guildId, String(target.discord_id), warningReason, null)
       setWarnings(await listWarnings(createClient(), guildId))
       setWarningId(''); setWarningReason('')
       toast.success(
@@ -382,6 +402,46 @@ export default function WarPage() {
         'Appears in Recorded warnings below. The bot does not message the player automatically.',
       )
     } catch (e) { setFeedback({ tone: 'red', text: 'Could not record warning.' }) } finally { setBusy(null) }
+  }
+
+  /* Row drawer: one open at a time, keyed by player (never rendered or used as a DOM id). */
+  const rowKey = (row: AttendanceRow) =>
+    row.discordId !== null ? `id:${String(row.discordId)}` : `name:${row.alias.toLowerCase()}`
+
+  const closeDrawer = (returnFocusTo?: string) => {
+    setDrawer(null)
+    setDrawerReason('')
+    if (returnFocusTo) {
+      requestAnimationFrame(() => document.getElementById(returnFocusTo)?.focus())
+    }
+  }
+
+  const toggleDrawer = (row: AttendanceRow, plusId: string) => {
+    if (drawer?.key === rowKey(row)) return closeDrawer(plusId)
+    setDrawer({ key: rowKey(row), warn: false })
+    setDrawerReason('')
+    if (row.discordId === null) {
+      // A legacy name-only row has no Discord user behind it: nothing to act on until it has one.
+      toast.warn('Add an alias first', '!alias add @user <name>')
+    }
+  }
+
+  const warnFromRow = async (row: AttendanceRow, plusId: string) => {
+    if (row.discordId === null) return
+    setBusy('row-warning')
+    try {
+      await addWarning(createClient(), guildId, String(row.discordId), drawerReason, null)
+      setWarnings(await listWarnings(createClient(), guildId))
+      closeDrawer(plusId)
+      toast.success(
+        'Warning recorded.',
+        'Appears in Recorded warnings. The bot does not message the player automatically.',
+      )
+    } catch (e) {
+      setFeedback({ tone: 'red', text: 'Could not record warning.' })
+    } finally {
+      setBusy(null)
+    }
   }
 
   const removeWarning = async (id: number) => {
@@ -413,7 +473,14 @@ export default function WarPage() {
                   aria-label="War channel"
                   className="appearance-none bg-slate-900 border border-slate-700 text-slate-50 text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:border-accent-500"
                 >
-                  {availableChannels.map(id => <option key={id} value={id}>Team Channel ({id})</option>)}
+                  {availableChannels.map((id, index) => {
+                    const owner = teams.find((item) => String(item.war_channel_id) === id)
+                    return (
+                      <option key={id} value={id}>
+                        {owner ? `Team — ${owner.name}` : `Channel ${index + 1}`}
+                      </option>
+                    )
+                  })}
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
               </div>
@@ -499,7 +566,7 @@ export default function WarPage() {
                         </>
                       ) : (
                         <p className="text-sm text-slate-400">
-                          Team role: {war.team_role_id ? `ID ${war.team_role_id}` : 'none — @here fallback'}
+                          Team role: {war.team_role_id ? 'set' : 'none — @here fallback'}
                         </p>
                       )}
                     </CardBody>
@@ -521,29 +588,11 @@ export default function WarPage() {
                       ) : null}
                       {canManage ? (
                         <p className="text-xs leading-relaxed text-slate-500">
-                          Add a player when the bot’s count is short: pick their alias and choose Add
-                          Missing. Players who already reported enough attacks or are excused are
+                          Add a player when the bot’s count is short: tap + on their row and choose Add
+                          to missing. Players who already reported enough attacks or are excused are
                           refused. Removing a player only edits this missing list — it never changes
                           the attack log.
                         </p>
-                      ) : null}
-                      {canManage ? (
-                        <div className="flex flex-col gap-2 sm:flex-row">
-                          <select
-                            value={missingAlias}
-                            onChange={(e) => setMissingAlias(e.target.value)}
-                            aria-label="Player to add to the missing list"
-                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-50 focus:border-accent-500 sm:flex-1"
-                          >
-                            <option value="" disabled>Select a player (alias)…</option>
-                            {aliases.map((alias) => (
-                              <option key={alias.id} value={alias.alias_name.toLowerCase()}>
-                                {alias.alias_name}
-                              </option>
-                            ))}
-                          </select>
-                          <Button onClick={addMissing} loading={busy === 'missing'}>Add Missing</Button>
-                        </div>
                       ) : null}
                       {canManage && aliases.length === 0 ? (
                         <p className="text-xs text-slate-500">Add players with `!alias add @user &lt;alias&gt;` in Discord first.</p>
@@ -568,51 +617,93 @@ export default function WarPage() {
                                 <th className="px-2 py-1.5 font-medium">Player</th>
                                 <th className="px-2 py-1.5 font-medium">Attacks</th>
                                 <th className="px-2 py-1.5 font-medium">Status</th>
-                                {canManage ? <th className="px-2 py-1.5 font-medium">Discord ID</th> : null}
                                 {canManage ? <th className="px-1 py-1.5" aria-label="Actions" /> : null}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-800/70">
-                              {attendance.rows.map((row) => {
+                              {attendance.rows.map((row, index) => {
                                 const meta = ATTENDANCE_STATUS[row.status]
+                                const label = playerLabel(row.alias, aliases, row.discordId)
+                                const key = rowKey(row)
+                                const plusId = `war-row-plus-${index}`
+                                const drawerId = `war-row-drawer-${index}`
+                                const expanded = drawer?.key === key
                                 return (
-                                  <tr
-                                    key={row.discordId !== null ? `id:${String(row.discordId)}` : `name:${row.alias.toLowerCase()}`}
-                                    className="hover:bg-slate-800/30"
-                                  >
-                                    <td className="px-2 py-2 font-medium text-slate-200">{row.alias}</td>
-                                    <td className="px-2 py-2">
-                                      <Badge tone={meta.tone}>{row.attacks}/{row.required}</Badge>
-                                    </td>
-                                    <td className="px-2 py-2"><Badge tone={meta.tone}>{meta.label}</Badge></td>
-                                    {canManage ? (
-                                      <td className="px-2 py-2 font-mono text-[11px] text-slate-500">
-                                        {row.discordId !== null ? String(row.discordId) : '—'}
+                                  <Fragment key={key}>
+                                    <tr className="hover:bg-slate-800/30">
+                                      <td className="px-2 py-2 font-medium text-slate-200">{label}</td>
+                                      <td className="px-2 py-2">
+                                        <Badge tone={meta.tone}>{row.attacks}/{row.required}</Badge>
                                       </td>
+                                      <td className="px-2 py-2"><Badge tone={meta.tone}>{meta.label}</Badge></td>
+                                      {canManage ? (
+                                        <WarRowActionsCell
+                                          alias={label}
+                                          plusId={plusId}
+                                          drawerId={drawerId}
+                                          expanded={expanded}
+                                          onToggle={() => toggleDrawer(row, plusId)}
+                                          canRemove={row.onMissingList}
+                                          removing={busy === `missing-${row.alias}`}
+                                          onRemove={() => removeMissing(row)}
+                                        />
+                                      ) : null}
+                                    </tr>
+                                    {canManage && expanded ? (
+                                      <WarRowDrawer
+                                        id={drawerId}
+                                        colSpan={4}
+                                        alias={label}
+                                        hasDiscordId={row.discordId !== null}
+                                        addBlockedReason={addToMissingBlockReason(row)}
+                                        canWarn={isStaff}
+                                        warnOpen={drawer?.warn === true}
+                                        warnReason={drawerReason}
+                                        busy={
+                                          busy === 'missing' ? 'add' : busy === 'row-warning' ? 'warn' : null
+                                        }
+                                        onAdd={() => void addMissing({ alias: row.alias, discordId: row.discordId })}
+                                        onWarnOpen={() =>
+                                          setDrawer((current) => (current ? { ...current, warn: !current.warn } : current))
+                                        }
+                                        onWarnReasonChange={setDrawerReason}
+                                        onWarnSubmit={() => void warnFromRow(row, plusId)}
+                                        onClose={() => closeDrawer(plusId)}
+                                      />
                                     ) : null}
-                                    {canManage ? (
-                                      <td className="px-1 py-2 text-right">
-                                        {row.onMissingList ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => removeMissing(row)}
-                                            disabled={busy === `missing-${row.alias}`}
-                                            className="rounded p-1 text-slate-500 hover:text-danger-300"
-                                            aria-label={`Remove ${row.alias} from the missing list`}
-                                            title="Remove from missing"
-                                          >
-                                            <Trash2 className="h-3.5 w-3.5" />
-                                          </button>
-                                        ) : null}
-                                      </td>
-                                    ) : null}
-                                  </tr>
+                                  </Fragment>
                                 )
                               })}
                             </tbody>
                           </table>
                         </div>
                       )}
+                      {canManage && aliasesWithoutRow.length > 0 ? (
+                        <div className="mt-3 flex items-center gap-2">
+                          <select
+                            value={missingAlias}
+                            onChange={(e) => setMissingAlias(e.target.value)}
+                            aria-label="Add someone not in this list"
+                            className="min-w-0 flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-50 focus:border-accent-500"
+                          >
+                            <option value="" disabled>Add someone not in this list…</option>
+                            {aliasesWithoutRow.map((alias) => (
+                              <option key={alias.id} value={alias.alias_name.toLowerCase()}>
+                                {alias.alias_name}
+                              </option>
+                            ))}
+                          </select>
+                          <Button
+                            size="sm"
+                            className="min-h-[40px] shrink-0"
+                            disabled={!missingAlias}
+                            onClick={() => void addMissing({ alias: missingAlias, discordId: null })}
+                            loading={busy === 'missing' && drawer === null}
+                          >
+                            Add
+                          </Button>
+                        </div>
+                      ) : null}
                     </CardBody>
                   </Card>
 
@@ -635,7 +726,7 @@ export default function WarPage() {
                               <li key={log.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
                                 <div className="min-w-0">
                                   <p className="truncate text-sm font-medium text-slate-200">
-                                    {log.player_name || `User ${log.discord_id ?? '—'}`}
+                                    {playerLabel(log.player_name, aliases, log.discord_id)}
                                   </p>
                                   <p className="text-xs text-slate-500">
                                     {formatDateTime(log.created_at)} · {sourceLabel(log.source)}
@@ -656,11 +747,7 @@ export default function WarPage() {
                     <Card>
                       <CardHeader
                         title="Team rating"
-                        description={
-                          hasRaceHalf
-                            ? 'War attendance 60% + race tasks 40%. Excused players are not ranked.'
-                            : 'War-only team: attendance is the whole score. Excused players are not ranked.'
-                        }
+                        description="Attack attendance is the whole score. Excused players are not ranked."
                         icon={<Trophy className="h-5 w-5" />}
                       />
                       <CardBody className="space-y-4">
@@ -668,7 +755,7 @@ export default function WarPage() {
                           <EmptyState
                             icon={<Trophy className="h-7 w-7" />}
                             title="No rating yet"
-                            description="Attack counts and race tasks appear here after the bot logs activity for this team."
+                            description="Attack counts appear here after players report attacks for this team."
                           />
                         ) : (
                           <>
@@ -679,8 +766,7 @@ export default function WarPage() {
                                     <th className="px-2 py-1.5 font-medium">#</th>
                                     <th className="px-2 py-1.5 font-medium">Player</th>
                                     <th className="px-2 py-1.5 font-medium">Score</th>
-                                    <th className="px-2 py-1.5 text-right font-medium">War</th>
-                                    <th className="px-2 py-1.5 text-right font-medium">Race</th>
+                                    <th className="px-2 py-1.5 text-right font-medium">Attacks</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-800/70">
@@ -690,13 +776,12 @@ export default function WarPage() {
                                       className="hover:bg-slate-800/30"
                                     >
                                       <td className="px-2 py-2 font-mono text-xs text-slate-600">{index + 1}</td>
-                                      <td className="px-2 py-2 text-slate-200">{row.alias}</td>
+                                      <td className="px-2 py-2 text-slate-200">{playerLabel(row.alias, aliases, row.discordId)}</td>
                                       <td className="px-2 py-2">
                                         <span className="font-semibold text-slate-50">{row.score}</span>{' '}
                                         <Badge tone={gradeTone(row.grade)}>{row.grade}</Badge>
                                       </td>
                                       <td className="px-2 py-2 text-right font-mono text-xs text-slate-400">{row.attacks}/{row.required}</td>
-                                      <td className="px-2 py-2 text-right font-mono text-xs text-slate-400">{hasRaceHalf ? row.raceTasks : '—'}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -711,7 +796,7 @@ export default function WarPage() {
                                     <Badge
                                       key={row.discordId ? String(row.discordId) : `${row.alias}-${index}`}
                                       tone="blue"
-                                    >{row.alias} · {row.raceTasks} race</Badge>
+                                    >{playerLabel(row.alias, aliases, row.discordId)}</Badge>
                                   ))}
                                 </div>
                                 <p className="mt-1.5 text-[11px] text-slate-600">Excused players are not ranked and do not receive a grade.</p>
@@ -755,7 +840,7 @@ export default function WarPage() {
               <CardBody className="space-y-6">
                 <Field
                   label="Required Attacks"
-                  hint={`How many attacks each player should use in a war (1–${MAX_ATTACKS_REQUIRED}). It decides who shows as missing and feeds the war part of the team rating.`}
+                  hint={`How many attacks each player should use in a war (1–${MAX_ATTACKS_REQUIRED}). It decides who shows as missing and feeds the team rating.`}
                 >
                   <div className="flex items-center gap-4">
                     <input type="range" min="1" max={MAX_ATTACKS_REQUIRED} value={settings.attacks_required} onChange={(e) => setSettings({...settings, attacks_required: parseInt(e.target.value)})} aria-label="Required attacks per player" className="w-full accent-accent-500" />
@@ -792,8 +877,8 @@ export default function WarPage() {
                   >
                     <option value="" disabled>Select a player (alias)…</option>
                     {aliases.map(a => (
-                      <option key={a.id} value={String(a.discord_id)}>
-                        {a.alias_name} ({a.discord_id})
+                      <option key={a.id} value={String(a.id)}>
+                        {a.alias_name}
                       </option>
                     ))}
                   </select>
@@ -812,8 +897,7 @@ export default function WarPage() {
                   <p className="text-sm text-slate-500">No warnings recorded yet.</p>
                 ) : (
                   warnings.map(w => {
-                    const player = aliases.find(a => String(a.discord_id) === String(w.discord_id))
-                    const displayName = player ? player.alias_name : `User ${w.discord_id}`
+                    const displayName = playerLabel(null, aliases, w.discord_id)
                     return (
                       <li key={w.id} className="flex justify-between items-center bg-slate-950/60 px-3 py-2 rounded-lg border border-slate-800 list-none">
                         <div>

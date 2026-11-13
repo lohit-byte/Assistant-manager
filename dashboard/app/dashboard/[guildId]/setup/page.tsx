@@ -18,7 +18,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { Alias, TeamCaptain } from '@/lib/types'
 
 /**
- * Staff-only Server setup page: the one place for per-subteam war/race channels, captains and
+ * Staff-only Server setup page: the one place for per-subteam war channels, captains and
  * the guild-level roles the bot treats as staff. TeamSetup owns every write; this page only
  * loads the extra data it needs and keeps it fresh after each save.
  */
@@ -33,7 +33,6 @@ function SetupContent() {
   const [captainsByTeam, setCaptainsByTeam] = useState<Record<number, TeamCaptain[]>>({})
   const [aliases, setAliases] = useState<Alias[]>([])
   const [detectedWarChannels, setDetectedWarChannels] = useState<string[]>([])
-  const [detectedRaceChannels, setDetectedRaceChannels] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -53,7 +52,6 @@ function SetupContent() {
         )
         setAliases(overview.aliases)
         setDetectedWarChannels(overview.detectedWarChannels)
-        setDetectedRaceChannels(overview.detectedRaceChannels)
       } catch (caught) {
         // A missing teams/team_captains migration (or any failed read) must not block the
         // role fields: keep the last snapshot and let TeamSetup show its empty state.
@@ -84,7 +82,7 @@ function SetupContent() {
       <PageHeader
         eyebrow="Manage"
         title="Server setup"
-        description="Everything server-wide in one place: each subteam’s war and race channels, its captains, and the staff and helper roles the bot reads. Changes apply in Discord immediately."
+        description="Everything server-wide in one place: each subteam’s war channel, its captains, and the staff and helper roles the bot reads. Changes apply in Discord immediately."
         actions={
           <>
             <Link href={`/dashboard/${guildId}`} className={buttonClass('ghost', 'sm')}>
@@ -119,7 +117,6 @@ function SetupContent() {
           captainsByTeam={captainsByTeam}
           aliases={aliases}
           detectedWarChannels={detectedWarChannels}
-          detectedRaceChannels={detectedRaceChannels}
           onChanged={onChanged}
         />
       )}

@@ -10,14 +10,13 @@ CREATE TABLE guilds (
     premium_status TEXT DEFAULT 'trial', -- 'trial', 'premium', 'expired'
     trial_ends_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '7 days'),
     premium_ends_at TIMESTAMP WITH TIME ZONE, -- NULL = lifetime/manual premium
-    max_teams INTEGER DEFAULT 1, -- war/race team channels allowed by the plan
+    max_teams INTEGER DEFAULT 1, -- war team channels allowed by the plan
     last_order_id TEXT, -- last processed payment order (webhook idempotency)
     last_renewal_ping INTEGER DEFAULT 0, -- 0 none, 3 three-day warning, 1 one-day warning, -1 expired
     required_attacks INTEGER DEFAULT 6, -- legacy; war_settings.attacks_required is authoritative
 
     -- Channel configurations
     war_channel_id BIGINT,
-    race_channel_id BIGINT,
     maze_channel_id BIGINT,
     absence_channel_id BIGINT,
 
@@ -78,51 +77,7 @@ CREATE TABLE wars (
     is_active BOOLEAN DEFAULT TRUE
 );
 
--- 7. RACE STATE TABLE (one active race per race channel)
-CREATE TABLE race_state (
-    channel_id BIGINT PRIMARY KEY,
-    guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
-    target_laps INTEGER DEFAULT 0,
-    current_lap INTEGER DEFAULT 0,
-    current_node INTEGER DEFAULT 0,
-    task_description TEXT,
-    ofa_holder_id BIGINT,
-    ofa_target TEXT,
-    ofa_done BOOLEAN DEFAULT FALSE,
-    dyp_progress INTEGER DEFAULT 0,
-    dyp_target INTEGER DEFAULT 0,
-    dyp_contributors JSONB DEFAULT '[]'::jsonb,
-    je_progress TEXT DEFAULT '0',
-    je_target TEXT DEFAULT '0',
-    je_done BOOLEAN DEFAULT FALSE,
-    pending_ofa_message_id BIGINT,
-    pending_ofa_user_id BIGINT,
-    is_event_active BOOLEAN DEFAULT FALSE,
-    active_race_sheet TEXT
-);
-
--- 8. RACE SHEETS & LOGS (task checklists and the activity feed in the dashboard)
-CREATE TABLE race_sheets (
-    id BIGSERIAL PRIMARY KEY,
-    guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    data JSONB,
-    UNIQUE(guild_id, name)
-);
-
-CREATE TABLE race_logs (
-    id BIGSERIAL PRIMARY KEY,
-    guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
-    discord_id BIGINT,
-    player_name TEXT,
-    action_type TEXT,
-    channel_id BIGINT, -- team race channel the action belongs to
-    lap INTEGER,
-    node INTEGER,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- 9. MAZE EVENTS TABLE (the shared maze: one row per event, not per server)
+-- 7. MAZE EVENTS TABLE (the shared maze: one row per event, not per server)
 -- The in-game monthly calendar predicts it, the first staff member who sees the
 -- maze countdown confirms or corrects it, and every server's discount pings are
 -- derived from this one row.  event_start/event_end are the maze open/close
@@ -181,7 +136,7 @@ CREATE TABLE maze_pings (
 );
 CREATE INDEX maze_pings_pending_idx ON maze_pings (created_at);
 
--- 10. PLAYER PING PREFERENCES (players choose channel @here, DM alerts, or off)
+-- 8. PLAYER PING PREFERENCES (players choose channel @here, DM alerts, or off)
 CREATE TABLE player_ping_settings (
     guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
     discord_id BIGINT REFERENCES users(discord_id) ON DELETE CASCADE,
@@ -246,10 +201,6 @@ CREATE TABLE IF NOT EXISTS maze_pings (
 );
 CREATE INDEX IF NOT EXISTS maze_pings_pending_idx ON maze_pings (created_at);
 ALTER TABLE player_ping_settings ADD COLUMN IF NOT EXISTS maze_alert_mode TEXT DEFAULT 'here';
-ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS channel_id BIGINT;
-ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS lap INTEGER;
-ALTER TABLE race_logs ADD COLUMN IF NOT EXISTS node INTEGER;
-CREATE INDEX IF NOT EXISTS race_logs_channel_idx ON race_logs (channel_id, created_at DESC);
 UPDATE player_ping_settings
    SET maze_alert_mode = 'off'
  WHERE maze_pings_enabled = FALSE AND maze_alert_mode = 'here';
@@ -261,13 +212,12 @@ UPDATE player_ping_settings
 -- Every statement is idempotent, so the whole block can be re-run.
 -- ----------------------------------------------------------------------------
 
--- Teams: a team pairs one war channel with one race channel and owns captains.
+-- Teams: a team owns one war channel and its captains.
 CREATE TABLE IF NOT EXISTS teams (
     id BIGSERIAL PRIMARY KEY,
     guild_id BIGINT REFERENCES guilds(guild_id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     war_channel_id BIGINT,
-    race_channel_id BIGINT,
     team_role_id BIGINT, -- role pinged by this team's war announcements (synced to wars.team_role_id)
     attacks_required INTEGER, -- NULL = inherit war_settings.attacks_required
     exempt_absent BOOLEAN, -- NULL = inherit war_settings.exempt_absent
@@ -278,8 +228,6 @@ ALTER TABLE teams ADD COLUMN IF NOT EXISTS attacks_required INTEGER;
 ALTER TABLE teams ADD COLUMN IF NOT EXISTS exempt_absent BOOLEAN;
 CREATE UNIQUE INDEX IF NOT EXISTS teams_guild_war_channel_key
     ON teams (guild_id, war_channel_id) WHERE war_channel_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS teams_guild_race_channel_key
-    ON teams (guild_id, race_channel_id) WHERE race_channel_id IS NOT NULL;
 
 -- Team roster: which players belong to which team. A player can be on one team
 -- per server; the bot moves them when they are added to another team. The roster
@@ -381,21 +329,6 @@ DROP POLICY IF EXISTS wars_authenticated ON wars;
 CREATE POLICY wars_authenticated ON wars
     FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
-ALTER TABLE race_state ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS race_state_authenticated ON race_state;
-CREATE POLICY race_state_authenticated ON race_state
-    FOR ALL TO authenticated USING (true) WITH CHECK (true);
-
-ALTER TABLE race_sheets ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS race_sheets_authenticated ON race_sheets;
-CREATE POLICY race_sheets_authenticated ON race_sheets
-    FOR ALL TO authenticated USING (true) WITH CHECK (true);
-
-ALTER TABLE race_logs ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS race_logs_authenticated ON race_logs;
-CREATE POLICY race_logs_authenticated ON race_logs
-    FOR ALL TO authenticated USING (true) WITH CHECK (true);
-
 ALTER TABLE maze_schedules ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS maze_schedules_authenticated ON maze_schedules;
 CREATE POLICY maze_schedules_authenticated ON maze_schedules
@@ -421,8 +354,8 @@ DROP POLICY IF EXISTS player_ping_settings_authenticated ON player_ping_settings
 CREATE POLICY player_ping_settings_authenticated ON player_ping_settings
     FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
--- Legacy single-team channel columns (guilds.war_channel_id / race_channel_id) are no
--- longer used by the bot; teams own those channels now. maze_channel_id and the
+-- The legacy single-team channel column (guilds.war_channel_id) is no
+-- longer used by the bot; teams own the war channel now. maze_channel_id and the
 -- leader / helper (co-lead) / staff role ids stay guild-level and are edited from the
 -- dashboard's Server setup page.
 
@@ -450,6 +383,6 @@ UPDATE guilds
 -- The dashboard keeps saving its server-config columns from the browser.
 REVOKE UPDATE ON public.guilds FROM authenticated, anon;
 REVOKE INSERT, DELETE ON public.guilds FROM authenticated, anon;
-GRANT UPDATE (war_channel_id, race_channel_id, maze_channel_id, absence_channel_id,
+GRANT UPDATE (war_channel_id, maze_channel_id, absence_channel_id,
               leader_role_id, colead_role_id, staff_role_id, member_role_id)
   ON public.guilds TO authenticated;

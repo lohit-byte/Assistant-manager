@@ -1,5 +1,5 @@
 import { MAZE_WINDOWS, type MazeWindow } from './constants'
-import type { War } from './types'
+import type { Alias, Id, War } from './types'
 
 export function cn(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(' ')
@@ -193,4 +193,43 @@ export function maskId(id: string | number | null | undefined): string {
   const value = String(id)
   if (value.length <= 8) return value
   return `${value.slice(0, 4)}…${value.slice(-4)}`
+}
+
+/** The words shown for a player the dashboard cannot name. Never a Discord id. */
+export const NO_ALIAS_LABEL = 'No alias'
+
+/** First alias name for a Discord user (a player with several aliases keeps the first row). */
+export function aliasForDiscordId(
+  aliases: ReadonlyArray<Pick<Alias, 'discord_id' | 'alias_name'>> | null | undefined,
+  discordId: Id | null | undefined,
+): string | null {
+  if (discordId === null || discordId === undefined) return null
+  const wanted = String(discordId).trim()
+  if (!wanted) return null
+  for (const alias of aliases ?? []) {
+    if (alias.discord_id === null || alias.discord_id === undefined) continue
+    if (String(alias.discord_id).trim() !== wanted) continue
+    const name = (alias.alias_name ?? '').trim()
+    if (name) return name
+  }
+  return null
+}
+
+/** A stored name that is really a raw snowflake or a `<@id>` / `<@!id>` mention. */
+function isIdLikeName(name: string): boolean {
+  return /^\d{17,20}$/.test(name) || /^<@!?\d{17,20}>$/.test(name)
+}
+
+/**
+ * Display label for a player. Precedence: the stored real name (trimmed; never a raw snowflake
+ * or a stored mention), then the alias for the Discord id, then `No alias`.
+ */
+export function playerLabel(
+  name: string | null | undefined,
+  aliases: ReadonlyArray<Pick<Alias, 'discord_id' | 'alias_name'>> | null | undefined,
+  discordId: Id | null | undefined,
+): string {
+  const stored = (name ?? '').trim()
+  if (stored && !isIdLikeName(stored)) return stored
+  return aliasForDiscordId(aliases, discordId) ?? NO_ALIAS_LABEL
 }

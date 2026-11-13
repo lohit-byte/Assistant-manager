@@ -11,17 +11,17 @@ export const site = {
   name: 'Legends Assistant',
   url: 'https://drlohithealth.com',
   description:
-    'Track alliance wars, race nodes (OFA, DYP and JE), maze island discounts and player aliases for your Monster Legends alliance, from one dashboard.',
+    'Track alliance wars, maze island discounts and player aliases for your Monster Legends alliance, from one dashboard.',
   supportEmail: 'warbot.support@gmail.com',
 } as const
 
 export const hero = {
   stamp: 'Alliance operations, tracked',
-  title: "Run your alliance's wars, races and mazes without spreadsheets.",
+  title: "Run your alliance's wars and mazes without spreadsheets.",
   // Rendered in the accent colour inside the headline.
   titleAccent: 'without spreadsheets.',
   lede:
-    'One dashboard for war phase timers, missing attacks, race nodes (OFA, DYP and JE), maze island discounts and player aliases. The board keeps the clock so your staff does not have to.',
+    'One dashboard for war phase timers, missing attacks, maze island discounts and player aliases. The board keeps the clock so your staff does not have to.',
   primaryCta: 'Start my free trial',
   // Returning staff already have a dashboard; the sign-in path must be as visible as the trial.
   loginCta: 'Sign in',
@@ -60,7 +60,7 @@ export const features = {
   stamp: '03 / On the board',
   title: 'Everything the alliance argues about, in one place.',
   lede:
-    'Six tools, one source of truth. No pinned spreadsheet, no guessing which timer is current.',
+    'Five tools, one source of truth. No pinned spreadsheet, no guessing which timer is current.',
   items: [
     {
       id: '01',
@@ -85,20 +85,13 @@ export const features = {
     },
     {
       id: '04',
-      name: 'Race nodes',
-      tag: 'Race',
-      description:
-        'Lap and node progress for OFA, DYP and JE, with live status and staff overrides when a screenshot is unclear.',
-    },
-    {
-      id: '05',
       name: 'Maze discounts',
       tag: 'Maze',
       description:
         'Every discount moment on the maze schedule, converted to your local time, with pings straight to the channel.',
     },
     {
-      id: '06',
+      id: '05',
       name: 'Aliases',
       tag: 'Roster',
       description:
@@ -156,11 +149,11 @@ export const faq = {
     },
     {
       q: 'Which parts of the game does it track?',
-      a: 'Alliance wars, race nodes (OFA, DYP and JE), maze island discounts and player aliases.',
+      a: 'Alliance wars, maze island discounts and player aliases.',
     },
     {
       q: 'Does the bot play the game for us?',
-      a: 'No. It tracks what you and your staff report in Discord: attack calls, absences, race uploads and maze timings. It does not automate gameplay.',
+      a: 'No. It tracks what you and your staff report in Discord: attack calls, absences and maze timings. It does not automate gameplay.',
     },
     {
       q: 'Can a player see the whole server?',
@@ -172,7 +165,7 @@ export const faq = {
 export const finale = {
   title: 'Put it on the board.',
   body:
-    'Sign in with Discord, start the trial and run the next war, race and maze from one place.',
+    'Sign in with Discord, start the trial and run the next war and maze from one place.',
   cta: 'Start my free trial',
   secondaryCta: 'Sign in to my dashboard',
 } as const

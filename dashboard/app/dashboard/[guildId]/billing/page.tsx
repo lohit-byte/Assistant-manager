@@ -187,11 +187,11 @@ function BillingContent() {
               <h2 className="text-2xl font-bold text-slate-50">Your Team is Flying Blind</h2>
               <p className="text-slate-400 mt-1">
                 Your subscription has ended. The bot is now paused for this server. 
-                <strong className="text-danger-300 ml-1">Your alliance is currently missing war timers, race tracking, and maze pings.</strong>
+                <strong className="text-danger-300 ml-1">Your alliance is currently missing war timers and maze pings.</strong>
               </p>
               <p className="text-xs text-slate-500 mt-2">
                 {premiumEnd ? `Tracking paused since ${formatDate(premiumEnd)}. ` : ''}
-                Nothing was deleted: teams, aliases, settings and war/race/maze history are kept.
+                Nothing was deleted: teams, aliases, settings and war and maze history are kept.
                 Reactivating takes one click — no setup again.
               </p>
             </div>
@@ -200,7 +200,6 @@ function BillingContent() {
             <h3 className="font-bold text-lg mb-2 text-slate-50">What you lose while paused:</h3>
             <ul className="space-y-2 text-slate-300 text-sm">
               <li className="flex items-center gap-2"><X className="w-4 h-4 text-danger-400" /> No War phase timers or missing attack lists</li>
-              <li className="flex items-center gap-2"><X className="w-4 h-4 text-danger-400" /> No automated Race node tracking</li>
               <li className="flex items-center gap-2"><X className="w-4 h-4 text-danger-400" /> No Maze discount pings</li>
               <li className="flex items-center gap-2"><X className="w-4 h-4 text-danger-400" /> Alias and warning data becomes inaccessible</li>
             </ul>
@@ -343,7 +342,7 @@ function BillingContent() {
           className="mb-6"
           title={`Trial ends in ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'}`}
         >
-          When the trial ends the board pauses and channel pings stop. Your war, race and maze
+          When the trial ends the board pauses and channel pings stop. Your war and maze
           history stays — pick a plan below to keep tracking without a gap.
         </Alert>
       ) : null}
@@ -448,7 +447,7 @@ function BillingContent() {
                   <li>
                     <span className="mono-label block text-steel-400">Day {TRIAL_DAYS}</span>
                     <span className="mt-0.5 block">
-                      The trial ends and the board pauses. Nothing is deleted: war, race and maze
+                      The trial ends and the board pauses. Nothing is deleted: war and maze
                       history stays.
                     </span>
                   </li>

@@ -11,7 +11,6 @@ export interface Guild {
   trial_ends_at: string | null
   required_attacks: number | null
   war_channel_id: Id | null
-  race_channel_id: Id | null
   maze_channel_id: Id | null
   absence_channel_id: Id | null
   leader_role_id: Id | null
@@ -45,28 +44,6 @@ export interface War {
   is_active: boolean | null
   status_message_id: Id | null
   team_role_id: Id | null
-}
-
-export interface RaceState {
-  guild_id: Id
-  channel_id: Id
-  target_laps: number | null
-  current_lap: number | null
-  current_node: number | null
-  task_description: string | null
-  ofa_holder_id: Id | null
-  ofa_target: string | null
-  ofa_done: boolean | null
-  dyp_progress: number | null
-  dyp_target: number | null
-  dyp_contributors: string[] | null
-  je_progress: string | null
-  je_target: string | null
-  je_done: boolean | null
-  pending_ofa_message_id: Id | null
-  pending_ofa_user_id: Id | null
-  is_event_active: boolean | null
-  active_race_sheet: string | null
 }
 
 /** Who the automatic maze discount pings mention (`maze_schedules.ping_mention`). */
@@ -121,15 +98,14 @@ export interface Warning {
 }
 
 /**
- * A team pairs one war channel with one race channel and owns its captains.
- * Either channel may be null (one-sided team, e.g. imported from a detected channel).
+ * A team is one war channel and owns its captains. The channel may be null (a team
+ * created before its channel is known).
  */
 export interface Team {
   id: number
   guild_id: Id
   name: string
   war_channel_id: Id | null
-  race_channel_id: Id | null
   team_role_id: Id | null
   created_at: string | null
 }
@@ -151,18 +127,5 @@ export interface WarLog {
   player_name: string | null
   attacks: number
   source: string
-  created_at: string | null
-}
-
-/** Race activity feed. Rows written before the migration have no channel/lap/node. */
-export interface RaceLog {
-  id: number
-  guild_id: Id
-  channel_id: Id | null
-  lap: number | null
-  node: number | null
-  discord_id: Id | null
-  player_name: string | null
-  action_type: string
   created_at: string | null
 }

@@ -261,12 +261,12 @@ export default function SettingsPage() {
           <Card>
             <CardHeader
               title="Server setup"
-              description="Subteam war and race channels, captains, and the staff roles the bot reads."
+              description="Subteam war channels, captains, and the staff roles the bot reads."
               icon={<ServerCog className="h-5 w-5" />}
             />
             <CardBody className="flex flex-wrap items-center justify-between gap-4">
               <p className="max-w-xl text-xs leading-relaxed text-slate-500">
-                Each subteam pairs one war channel with one race channel. The Leader, Helper
+                Each subteam is one war channel. The Leader, Helper
                 (co-lead) and Staff role IDs there all count as staff to the bot — use them to
                 split who gets its staff commands.
               </p>
