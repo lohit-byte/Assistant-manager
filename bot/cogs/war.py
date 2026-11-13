@@ -536,8 +536,12 @@ class WarTracker(commands.Cog):
 
         existing_war = await get_war(ctx.channel.id)
         if not existing_war or not existing_war.get("is_active"):
-            if not await check_team_limit(ctx.guild.id):
-                return await ctx.send("❌ **Team limit reached!** Your server's plan only allows a certain number of active teams. Upgrade on the dashboard to add more.")
+            allowed, plan, max_teams = await check_team_limit(ctx.guild.id)
+            if not allowed:
+                plan_name = PLAN_NAMES.get(plan, "current")
+                return await ctx.send(
+                    f"❌ **Team limit reached!** Your **{plan_name}** plan allows "
+                    f"**{max_teams}** active team(s). Upgrade on the dashboard to add more.")
 
         # The war timeline is fixed: defence 24h -> attack 24h. The command argument
         # is the time left in the phase the staff member names, so the war start is
