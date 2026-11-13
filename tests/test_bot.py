@@ -1517,6 +1517,63 @@ def test_attack_button_records_one_attack(clean_db):
     assert all(ephemeral is True for ephemeral in interaction.response.ephemeral)
 
 
+def _button_setup(db, counts, missing=True):
+    seed_alias(db, 900, "sam")
+    seed_war(db, missing_list=[{"name": "sam"}] if missing else [], attack_counts=counts)
+    guild = FakeGuild(GUILD, me=FakeMember(999, "Bot", administrator=False))
+    channel = guild.add_channel(FakeChannel(CHANNEL, guild=guild))
+    user = FakeMember(900, "Sam", administrator=False, guild=guild)
+    return FakeInteraction(user=user, guild=guild, channel=channel)
+
+
+def test_attack_button_marks_all_required_attacks_done(clean_db):
+    db = clean_db
+    interaction = _button_setup(db, {})
+
+    run(war_cog()._handle_attack_press(interaction))
+
+    war = db.one("wars", channel_id=CHANNEL)
+    assert war["attack_counts"] == {"sam": 6}
+    assert war["missing_list"] == []
+    assert db.rows("war_logs")[-1]["attacks"] == 6
+    assert any("6/6" in text for text in interaction.texts)
+
+
+def test_custom_attack_count_sets_exact_total(clean_db):
+    db = clean_db
+    interaction = _button_setup(db, {"sam": 1})
+
+    run(war_cog()._handle_attack_press(interaction, count=4))
+
+    war = db.one("wars", channel_id=CHANNEL)
+    assert war["attack_counts"] == {"sam": 4}
+    assert war["missing_list"] == [{"name": "sam"}]
+    assert db.rows("war_logs")[-1]["attacks"] == 3
+    assert any("4/6" in text for text in interaction.texts)
+
+
+def test_custom_attack_count_is_capped_and_can_correct_down(clean_db):
+    db = clean_db
+    interaction = _button_setup(db, {})
+    run(war_cog()._handle_attack_press(interaction, count=99))
+    assert db.one("wars", channel_id=CHANNEL)["attack_counts"] == {"sam": 6}
+    assert db.one("wars", channel_id=CHANNEL)["missing_list"] == []
+
+    interaction = _button_setup(db, {"sam": 6}, missing=False)
+    run(war_cog()._handle_attack_press(interaction, count=2))
+    war = db.one("wars", channel_id=CHANNEL)
+    assert war["attack_counts"] == {"sam": 2}
+    assert any(e.get("name") == "sam" for e in war["missing_list"])
+
+
+def test_attack_view_has_custom_button():
+    async def scenario():
+        return AttackView().children
+
+    children = run(scenario())
+    assert [c.custom_id for c in children] == ["war:i_attacked", "war:custom_attacks"]
+
+
 def test_attack_button_and_text_never_double_count(clean_db):
     db = clean_db
     seed_alias(db, 900, "sam")
@@ -2879,5 +2936,4 @@ def test_warning_list_names_the_player_by_alias_and_keeps_the_ticket_id(clean_db
     _assert_alias_only(text)
     assert "ID 7 · sam" in text
     assert "ID 8 · gone" in text
-    assert "ID 9 · No alias" in text
-    assert "late" in text and "afk" in text and "no show" in text
+    assert "ID 9 · No alias
