@@ -320,12 +320,41 @@ async def _log_attack_safely(*args, **kwargs):
         print(f"Failed to log war attack: {e}")
 
 
-class AttackView(discord.ui.View):
-    """The persistent "I attacked" button.
+class CustomAttackModal(discord.ui.Modal, title="Attacks done"):
+    """Pop-up asking for the exact number of attacks the player has done."""
 
-    ``timeout=None`` plus the fixed ``custom_id`` let Discord re-attach presses
-    to a button on a board/reminder that was posted before a bot restart, as
-    long as the view is registered again on startup (see cog_load).
+    amount = discord.ui.TextInput(
+        label="How many attacks have you done?",
+        placeholder="e.g. 4",
+        min_length=1,
+        max_length=3,
+        required=True,
+    )
+
+    def __init__(self, cog=None):
+        super().__init__(timeout=300)
+        self.cog = cog
+
+    async def on_submit(self, interaction):
+        raw = (self.amount.value or "").strip()
+        if not raw.isdigit():
+            if self.cog is not None:
+                await self.cog._reply_ephemeral(
+                    interaction, "❌ Enter a whole number, e.g. `4`.")
+            return
+        if self.cog is not None:
+            await self.cog._handle_attack_press(interaction, count=int(raw))
+
+
+class AttackView(discord.ui.View):
+    """The persistent attack buttons.
+
+    ``✅ I attacked`` marks every required attack (e.g. +6) as done;
+    ``✏️ Custom`` opens a pop-up to enter an exact number instead.
+
+    ``timeout=None`` plus the fixed ``custom_id`` values let Discord re-attach
+    presses to buttons on a board/reminder that was posted before a bot restart,
+    as long as the view is registered again on startup (see cog_load).
     """
 
     def __init__(self, cog=None):
@@ -337,6 +366,12 @@ class AttackView(discord.ui.View):
     async def i_attacked(self, interaction, button):
         if self.cog is not None:
             await self.cog._handle_attack_press(interaction)
+
+    @discord.ui.button(label="✏️ Custom", style=discord.ButtonStyle.secondary,
+                       custom_id="war:custom_attacks")
+    async def custom_attacks(self, interaction, button):
+        if self.cog is not None:
+            await interaction.response.send_modal(CustomAttackModal(self.cog))
 
 
 class WarTracker(commands.Cog):
@@ -1214,8 +1249,14 @@ class WarTracker(commands.Cog):
         except Exception as e:
             print(f"Could not answer attack button: {e}")
 
-    async def _handle_attack_press(self, interaction):
-        """One tap on "✅ I attacked": record exactly one attack for the presser."""
+    async def _handle_attack_press(self, interaction, count=None):
+        """Record attacks for the presser.
+
+        ``count=None`` is the "✅ I attacked" button: all required attacks
+        (+6 by default) are marked done. An int is the "✏️ Custom" pop-up: the
+        player's exact total, capped at the requirement (a lower number is a
+        correction and puts them back on the missing list).
+        """
         try:
             guild = getattr(interaction, "guild", None)
             user = getattr(interaction, "user", None)
@@ -1252,8 +1293,17 @@ class WarTracker(commands.Cog):
                     )
                 key = my_alias.lower()
                 old_total = int((war.get("attack_counts") or {}).get(key) or 0)
-                counts, missing = apply_attack(war, my_alias, 1, required)
+                if count is None:
+                    delta = required
+                else:
+                    delta = min(int(count), required) - old_total
+                counts, missing = apply_attack(war, my_alias, delta, required)
                 new_total = int(counts.get(key) or 0)
+                if count is not None and required and new_total < required:
+                    excused = {_entry_name(a) for a in war.get("absent_list") or []}
+                    if key not in excused and not any(
+                            _entry_name(entry) == key for entry in missing):
+                        missing = list(missing) + [{"name": my_alias, "id": user.id}]
                 await asyncio.to_thread(
                     supabase.table("wars").update(
                         {"attack_counts": counts, "missing_list": missing})
@@ -1269,7 +1319,7 @@ class WarTracker(commands.Cog):
         except Exception as e:
             print(f"Attack button failed: {e}")
             await self._reply_ephemeral(
-                interaction, "❌ Could not record that attack. Try `attacks done`.")
+                interaction, "❌ Could not record your attacks. Try `attacks done`.")
 
     async def _alias_target(self, ctx, raw):
         """Resolve an alias name or an @mention of an aliased member to its row."""
@@ -1848,7 +1898,7 @@ class WarTracker(commands.Cog):
             ),
             inline=False,
         )
-        embed.add_field(name="Public", value="`!war status` — live-style board with countdowns + ping schedule\n`!war missing list`\n`attacks done` or the **✅ I attacked** button (uses your alias)", inline=False)
+        embed.add_field(name="Public", value="`!war status` — live-style board with countdowns + ping schedule\n`!war missing list`\n`attacks done` or the **✅ I attacked** button (all attacks) or **✏️ Custom** (exact number) — uses your alias", inline=False)
         if is_staff: embed.add_field(name="Staff", value="`!war defence ends <time>`\n`!war attack ends <time>`\n`!war cancel`\n`!war missing add|remove <alias>`\n`!war absent add|remove <alias>`\n`!war attacks <alias> <count>`\n`!war check`\n`!war board` — live updating board\n`!war set attacks <number>` · `!war set exempt on|off` — this team's war rules\n`!war set role @Role` — role pinged by this channel's announcements\n`!war warning add @user <reason>`", inline=False)
         await ctx.send(embed=embed)
 
