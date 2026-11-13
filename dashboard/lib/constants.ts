@@ -2,7 +2,7 @@ export const BOT_CLIENT_ID = '1567228271915962499'
 
 export const BOT_INVITE_URL =
   `https://discord.com/oauth2/authorize?client_id=${BOT_CLIENT_ID}` +
-  '&permissions=257088&integration_type=0&scope=bot'
+  '&permissions=224320&integration_type=0&scope=bot'
 
 export const SUPPORT_EMAIL = 'warbot.support@gmail.com'
 
