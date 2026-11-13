@@ -348,14 +348,21 @@ export function Toggle({
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(
-          'relative h-7 w-12 shrink-0 rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950 disabled:opacity-50',
+          'relative h-7 w-[52px] shrink-0 overflow-hidden rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950 disabled:opacity-50',
           checked ? 'border-accent-500 bg-accent-500' : 'border-white/[0.14] bg-white/[0.06]',
         )}
       >
+        {/*
+         * The knob is pinned with `left`/`top`, never its static position: the button's
+         * default `text-align: center` centres the empty span, so a bare `translate-x`
+         * used to start from the middle of the track and slide the knob clean out of it.
+         * 22px knob + 2px offset inside the 1px border = a 3px inset all round; the
+         * checked slide is the remaining travel (52 - 22 - 2*3 = 24px).
+         */}
         <span
           className={cn(
-            'absolute top-1 h-5 w-5 rounded-full bg-paper shadow transition-transform',
-            checked ? 'translate-x-6' : 'translate-x-1',
+            'absolute left-[2px] top-[2px] h-[22px] w-[22px] rounded-full bg-paper shadow transition-transform duration-200 ease-out',
+            checked ? 'translate-x-[24px]' : 'translate-x-0',
           )}
         />
       </button>
