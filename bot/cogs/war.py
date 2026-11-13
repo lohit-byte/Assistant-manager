@@ -358,6 +358,13 @@ class WarTracker(commands.Cog):
         if self._attack_view is None:
             self._attack_view = AttackView(self)
         return self._attack_view
+        
+    def view_for_phase(self, war):
+        """The ✅ I attacked button exists only during the attack phase."""
+        start = to_utc(war.get("war_start")) if war else None
+        if start and phase_at(start, datetime.now(timezone.utc)) == "attack":
+            return self.attack_view
+        return None
 
     def register_persistent_views(self):
         """Register the fixed-custom_id views so messages survive a restart."""
@@ -867,7 +874,7 @@ class WarTracker(commands.Cog):
             "Use `attacks done` or the **✅ I attacked** button after attacking."
         )
         return await self._send_ping(channel, f"⏰ **{label}**", embed, war=war,
-                                     view=self.attack_view)
+                                     view=self.view_for_phase(war))
 
     async def _missing_mentions(self, war, guild=None, roster=None):
         def _present(discord_id):
@@ -1024,14 +1031,14 @@ class WarTracker(commands.Cog):
         if message_id:
             try:
                 message = await channel.fetch_message(int(message_id))
-                await message.edit(embed=embed, view=self.attack_view)
+                await message.edit(embed=embed, view=self.view_for_phase(war))
                 return
             except (discord.NotFound, discord.Forbidden, discord.HTTPException,
                     AttributeError, TypeError):
                 pass  # message deleted or bot lacks access -> post a fresh one
 
         try:
-            message = await channel.send(embed=embed, view=self.attack_view)
+            message = await channel.send(embed=embed, view=self.view_for_phase(war))
         except (discord.HTTPException, AttributeError, TypeError) as e:
             print(f"War board could not be posted in {channel_id}: {e}")
             return
@@ -1226,6 +1233,12 @@ class WarTracker(commands.Cog):
                 war = await get_war(channel_id)
                 if not war or not war.get("is_active"):
                     return await self._reply_ephemeral(interaction, "ℹ️ No active war here.")
+                start = to_utc(war.get("war_start"))
+                if phase_at(start, datetime.now(timezone.utc)) != "attack":
+                    return await self._reply_ephemeral(
+                        interaction,
+                        "🛡️ Attacks can only be reported during the attack phase.")
+
                 cfg = await get_settings(guild.id, channel_id)
                 required = cfg["attacks_required"]
                 my_alias = await self._pick_alias(
