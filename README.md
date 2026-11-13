@@ -78,8 +78,8 @@ Gateway Intents) before inviting the bot:
 | **Server Members** | member lists, staff/captain role checks, `!ids members`, `!roles` |
 
 The invite URL lives in `dashboard/lib/constants.ts` and requests the permissions the
-bot may use: View Channels, Send Messages, Manage Messages, Embed Links, Attach Files,
-Read Message History, Mention Everyone and Add Reactions (`permissions=257088`).
+bot may use: View Channels, Send Messages, Manage Messages, Embed Links,
+Read Message History, Mention Everyone and Add Reactions (`permissions=224320`).
 No bot command assigns roles, so **Manage Roles is not required** — `!war set role`
 only stores which role the channel's announcements ping.
 
